@@ -159,6 +159,7 @@ type t =
   { name            : Name.t
   ; root            : Path.Local.t
   ; version         : string option
+  ; github_project  : string option
   ; packages        : Package.t Package.Name.Map.t
   ; stanza_parser   : Stanza.t list Dune_lang.Decoder.t
   ; project_file    : Project_file.t
@@ -436,13 +437,14 @@ let interpret_lang_and_extensions ~(lang : Lang.Instance.t)
 
 let key =
   Univ_map.Key.create ~name:"dune-project"
-    (fun { name; root; version; project_file
+    (fun { name; root; version; project_file; github_project
          ; stanza_parser = _; packages = _ ; extension_args = _
          ; parsing_context ; implicit_transitive_deps ; dune_version
          ; allow_approx_merlin } ->
       Sexp.Encoder.record
         [ "name", Name.to_sexp name
         ; "root", Path.Local.to_sexp root
+        ; "github_project", Sexp.Encoder.(option string) github_project
         ; "version", Sexp.Encoder.(option string) version
         ; "project_file", Project_file.to_sexp project_file
         ; "parsing_context", Univ_map.to_sexp parsing_context
@@ -482,6 +484,7 @@ let anonymous = lazy (
   in
   { name          = name
   ; packages      = Package.Name.Map.empty
+  ; github_project = None
   ; root          = get_local_path Path.root
   ; version       = None
   ; implicit_transitive_deps = false
@@ -558,6 +561,7 @@ let parse ~dir ~lang ~packages ~file =
      { name
      ; root = get_local_path dir
      ; version
+     ; github_project
      ; packages
      ; stanza_parser
      ; project_file
@@ -588,6 +592,7 @@ let make_jbuilder_project ~dir packages =
   { name
   ; root = get_local_path dir
   ; version = None
+  ; github_project = None
   ; packages
   ; stanza_parser
   ; project_file
