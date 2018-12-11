@@ -38,11 +38,35 @@ module Project_file : sig
   type t
 end
 
+module Source_kind : sig
+  type t = 
+  |Github of string * string
+  |Url of string
+end
+
+module Opam_package : sig
+  type constr = string list
+  type pkg = {
+    name: string;
+    synopsis: string;
+    constraints: constr list;
+  }
+  type t = {
+    tags : string list;
+    constraints: constr list;
+    packages: pkg list;
+  }
+end
+
 type t
 
 val packages : t -> Package.t Package.Name.Map.t
 val version : t -> string option
 val name : t -> Name.t
+val source: t -> Source_kind.t option
+val opam : t -> Opam_package.t option
+val license : t -> string option
+val authors : t -> string list
 val root : t -> Path.Local.t
 val stanza_parser : t -> Stanza.t list Dune_lang.Decoder.t
 val allow_approx_merlin : t -> bool
