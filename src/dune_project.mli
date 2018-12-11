@@ -43,6 +43,9 @@ type t
 val packages : t -> Package.t Package.Name.Map.t
 val version : t -> string option
 val name : t -> Name.t
+val github_project: t -> string option
+val license : t -> string option
+val authors : t -> string list
 val root : t -> Path.Local.t
 val stanza_parser : t -> Stanza.t list Dune_lang.Decoder.t
 val allow_approx_merlin : t -> bool

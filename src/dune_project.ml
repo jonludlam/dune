@@ -160,6 +160,8 @@ type t =
   ; root            : Path.Local.t
   ; version         : string option
   ; github_project  : string option
+  ; license         : string option
+  ; authors         : string list
   ; packages        : Package.t Package.Name.Map.t
   ; stanza_parser   : Stanza.t list Dune_lang.Decoder.t
   ; project_file    : Project_file.t
@@ -175,6 +177,9 @@ let hash = Hashtbl.hash
 
 let packages t = t.packages
 let version t = t.version
+let github_project t = t.github_project
+let license t = t.license
+let authors t = t.authors
 let name t = t.name
 let root t = t.root
 let stanza_parser t = t.stanza_parser
@@ -438,12 +443,15 @@ let interpret_lang_and_extensions ~(lang : Lang.Instance.t)
 let key =
   Univ_map.Key.create ~name:"dune-project"
     (fun { name; root; version; project_file; github_project
+         ; license; authors
          ; stanza_parser = _; packages = _ ; extension_args = _
          ; parsing_context ; implicit_transitive_deps ; dune_version
          ; allow_approx_merlin } ->
       Sexp.Encoder.record
         [ "name", Name.to_sexp name
         ; "root", Path.Local.to_sexp root
+        ; "license", Sexp.Encoder.(option string) license
+        ; "authors", Sexp.Encoder.(list string) authors
         ; "github_project", Sexp.Encoder.(option string) github_project
         ; "version", Sexp.Encoder.(option string) version
         ; "project_file", Project_file.to_sexp project_file
@@ -485,6 +493,8 @@ let anonymous = lazy (
   { name          = name
   ; packages      = Package.Name.Map.empty
   ; github_project = None
+  ; license       = None
+  ; authors       = []
   ; root          = get_local_path Path.root
   ; version       = None
   ; implicit_transitive_deps = false
@@ -526,6 +536,9 @@ let parse ~dir ~lang ~packages ~file =
   fields
     (let+ name = name_field ~dir ~packages
      and+ version = field_o "version" string
+     and+ github_project = field_o "github_project" string
+     and+ authors = field ~default:[] "authors" (list string)
+     and+ license = field_o "license" string
      and+ explicit_extensions =
        multi_field "using"
          (let+ loc = loc
@@ -562,6 +575,8 @@ let parse ~dir ~lang ~packages ~file =
      ; root = get_local_path dir
      ; version
      ; github_project
+     ; license
+     ; authors
      ; packages
      ; stanza_parser
      ; project_file
@@ -593,6 +608,8 @@ let make_jbuilder_project ~dir packages =
   ; root = get_local_path dir
   ; version = None
   ; github_project = None
+  ; license = None
+  ; authors = []
   ; packages
   ; stanza_parser
   ; project_file
