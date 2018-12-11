@@ -537,7 +537,7 @@ let parse ~dir ~lang ~packages ~file =
     (let+ name = name_field ~dir ~packages
      and+ version = field_o "version" string
      and+ github_project = field_o "github_project" string
-     and+ authors = field ~default:[] "authors" (list string)
+     and+ authors = field ~default:[] "authors" (repeat string)
      and+ license = field_o "license" string
      and+ explicit_extensions =
        multi_field "using"
