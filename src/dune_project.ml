@@ -155,6 +155,19 @@ module Project_file = struct
         ])
 end
 
+module Opam_package = struct
+  type t =
+  {
+     tags: string list;
+  }
+
+  let to_sexp { tags } =
+    Sexp.Encoder.(
+      record
+      [ "tags", list string]
+    )
+end
+
 type t =
   { name            : Name.t
   ; root            : Path.Local.t
