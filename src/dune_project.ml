@@ -157,13 +157,25 @@ end
 
 module Source_kind = struct
   type t =
-   |Github of string * string
-   |Url of string
+   | Github of string * string
+   | Url of string
 
-   let pp fmt =
-   function
-   |Github (user,repo) -> Printf.sprintf "https://github.com/%s/%s.git" user repo
-   |Url u -> u
+   let pp fmt = function
+   | Github (user,repo) ->
+      Format.pp_print_string fmt (Printf.sprintf "https://github.com/%s/%s.git" user repo)
+   | Url u -> Format.pp_print_string fmt u
+
+   let to_sexp = function
+     | Github (user,repo) -> Sexp.(List [Atom "github"; Atom user; Atom repo])
+     | Url url -> Sexp.(List [Atom "url"; Atom url])
+     
+   let decode =
+     Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 7) >>> sum [
+        "github", plain_string (fun ~loc s ->
+          match String.split_on_char ~sep:'/' s with
+          | [user;repo] -> Github (user,repo)
+          | _ -> of_sexp_errorf loc "GitHub repository must be of form user/repo")
+      ; "uri", string >>| fun s -> Url s ])
 end
 
 module Opam_package = struct
@@ -172,10 +184,10 @@ module Opam_package = struct
      tags: string list;
   }
 
-  let to_sexp { tags } =
+  let _to_sexp { tags } =
     Sexp.Encoder.(
       record
-      [ "tags", Fmt.const Fmt.(list string) tags ]
+      [ "tags", list string tags ]
     )
 end
 
@@ -183,7 +195,7 @@ type t =
   { name            : Name.t
   ; root            : Path.Local.t
   ; version         : string option
-  ; github_project  : string option
+  ; source          : Source_kind.t option
   ; license         : string option
   ; authors         : string list
   ; packages        : Package.t Package.Name.Map.t
@@ -201,7 +213,7 @@ let hash = Hashtbl.hash
 
 let packages t = t.packages
 let version t = t.version
-let github_project t = t.github_project
+let source t = t.source
 let license t = t.license
 let authors t = t.authors
 let name t = t.name
@@ -211,7 +223,7 @@ let file t = t.project_file.file
 let implicit_transitive_deps t = t.implicit_transitive_deps
 let allow_approx_merlin t = t.allow_approx_merlin
 
-let pp fmt { name ; root ; version ; project_file ; parsing_context = _
+let pp fmt { name ; root ; version ;  source; license; authors; project_file ; parsing_context = _
            ; extension_args = _; stanza_parser = _ ; packages
            ; implicit_transitive_deps ; dune_version
            ; allow_approx_merlin } =
@@ -219,6 +231,9 @@ let pp fmt { name ; root ; version ; project_file ; parsing_context = _
     [ "name", Fmt.const Name.pp name
     ; "root", Fmt.const Path.Local.pp root
     ; "version", Fmt.const (Fmt.optional Format.pp_print_string) version
+    ; "source", Fmt.const (Fmt.optional Source_kind.pp) source
+    ; "license", Fmt.const (Fmt.optional Format.pp_print_string) license
+    ; "authors", Fmt.const (Fmt.list Format.pp_print_string) authors
     ; "project_file", Fmt.const Project_file.pp project_file
     ; "packages",
       Fmt.const
@@ -466,7 +481,7 @@ let interpret_lang_and_extensions ~(lang : Lang.Instance.t)
 
 let key =
   Univ_map.Key.create ~name:"dune-project"
-    (fun { name; root; version; project_file; github_project
+    (fun { name; root; version; project_file; source
          ; license; authors
          ; stanza_parser = _; packages = _ ; extension_args = _
          ; parsing_context ; implicit_transitive_deps ; dune_version
@@ -476,7 +491,7 @@ let key =
         ; "root", Path.Local.to_sexp root
         ; "license", Sexp.Encoder.(option string) license
         ; "authors", Sexp.Encoder.(list string) authors
-        ; "github_project", Sexp.Encoder.(option string) github_project
+        ; "source", Sexp.Encoder.(option Source_kind.to_sexp) source
         ; "version", Sexp.Encoder.(option string) version
         ; "project_file", Project_file.to_sexp project_file
         ; "parsing_context", Univ_map.to_sexp parsing_context
@@ -516,7 +531,7 @@ let anonymous = lazy (
   in
   { name          = name
   ; packages      = Package.Name.Map.empty
-  ; github_project = None
+  ; source        = None
   ; license       = None
   ; authors       = []
   ; root          = get_local_path Path.root
@@ -561,8 +576,8 @@ let parse ~dir ~lang ~packages ~file =
     (let+ name = name_field ~dir ~packages
      and+ version = field_o "version" string
      and+ github_project = field_o "github_project" string
-     and+ authors = field ~default:[] "authors" (repeat string)
-     and+ license = field_o "license" string
+     and+ authors = field ~default:[] "authors" (Syntax.since Stanza.syntax (1, 9) >>> repeat string)
+     and+ license = field_o "license" (Syntax.since Stanza.syntax (1, 9) >>> string)
      and+ explicit_extensions =
        multi_field "using"
          (let+ loc = loc
@@ -598,7 +613,7 @@ let parse ~dir ~lang ~packages ~file =
      { name
      ; root = get_local_path dir
      ; version
-     ; github_project
+     ; source
      ; license
      ; authors
      ; packages
@@ -631,7 +646,7 @@ let make_jbuilder_project ~dir packages =
   { name
   ; root = get_local_path dir
   ; version = None
-  ; source = Source_kind.t
+  ; source = None
   ; license = None
   ; authors = []
   ; packages

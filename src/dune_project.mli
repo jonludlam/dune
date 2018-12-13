@@ -38,12 +38,17 @@ module Project_file : sig
   type t
 end
 
+module Source_kind : sig
+  type t = 
+  |Github of string * string
+  |Url of string
+end
 type t
 
 val packages : t -> Package.t Package.Name.Map.t
 val version : t -> string option
 val name : t -> Name.t
-val github_project: t -> string option
+val source: t -> Source_kind.t option
 val license : t -> string option
 val authors : t -> string list
 val root : t -> Path.Local.t
