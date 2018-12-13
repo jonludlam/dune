@@ -155,6 +155,17 @@ module Project_file = struct
         ])
 end
 
+module Source_kind = struct
+  type t =
+   |Github of string * string
+   |Url of string
+
+   let pp fmt =
+   function
+   |Github (user,repo) -> Printf.sprintf "https://github.com/%s/%s.git" user repo
+   |Url u -> u
+end
+
 module Opam_package = struct
   type t =
   {
@@ -164,7 +175,7 @@ module Opam_package = struct
   let to_sexp { tags } =
     Sexp.Encoder.(
       record
-      [ "tags", list string]
+      [ "tags", Fmt.const Fmt.(list string) tags ]
     )
 end
 
@@ -620,7 +631,7 @@ let make_jbuilder_project ~dir packages =
   { name
   ; root = get_local_path dir
   ; version = None
-  ; github_project = None
+  ; source = Source_kind.t
   ; license = None
   ; authors = []
   ; packages

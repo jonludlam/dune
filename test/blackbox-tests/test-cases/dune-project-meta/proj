@@ -1,5 +1,5 @@
 (lang dune 1.0)
-(github_project foo/bar)
+(source github foo/bar)
 (license ISC)
 (authors "Anil Madhavapeddy" "Rudi Grinberg")
 (opam
