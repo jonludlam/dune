@@ -179,16 +179,40 @@ module Source_kind = struct
 end
 
 module Opam_package = struct
+
+  type constr = string list
+
+  let pp_constr fmt c = Format.pp_print_string fmt (String.concat ~sep:" " c) 
+
   type t =
   {
      tags: string list;
+     constraints: constr list;
   }
 
-  let _to_sexp { tags } =
+  let to_sexp { tags; constraints = _ } =
     Sexp.Encoder.(
       record
-      [ "tags", list string tags ]
+      [ "tags", list string tags
+      ; "constraints", list string ["TODO"] ]
     )
+
+  let pp fmt { tags; constraints } =
+    Fmt.record fmt 
+    [ "tags", Fmt.(const (list Format.pp_print_string) tags)
+    ; "constraints", Fmt.(const (list pp_constr) constraints) ]
+
+  let decode =
+    Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 7) >>>
+     fields (
+     let+ tags = field_o "tags" (repeat string) 
+     and+ constraints = field_o "constraints" (repeat (list string)) in
+     let tags = Option.value ~default:[] tags
+     and constraints = Option.value ~default:[] constraints in
+     { tags; constraints }
+     )
+    )
+
 end
 
 type t =
@@ -198,6 +222,7 @@ type t =
   ; source          : Source_kind.t option
   ; license         : string option
   ; authors         : string list
+  ; opam            : Opam_package.t option
   ; packages        : Package.t Package.Name.Map.t
   ; stanza_parser   : Stanza.t list Dune_lang.Decoder.t
   ; project_file    : Project_file.t
@@ -216,6 +241,7 @@ let version t = t.version
 let source t = t.source
 let license t = t.license
 let authors t = t.authors
+let opam t = t.opam
 let name t = t.name
 let root t = t.root
 let stanza_parser t = t.stanza_parser
@@ -223,7 +249,7 @@ let file t = t.project_file.file
 let implicit_transitive_deps t = t.implicit_transitive_deps
 let allow_approx_merlin t = t.allow_approx_merlin
 
-let pp fmt { name ; root ; version ;  source; license; authors; project_file ; parsing_context = _
+let pp fmt { name ; root ; version ;  source; license; authors; opam; project_file ; parsing_context = _
            ; extension_args = _; stanza_parser = _ ; packages
            ; implicit_transitive_deps ; dune_version
            ; allow_approx_merlin } =
@@ -234,6 +260,7 @@ let pp fmt { name ; root ; version ;  source; license; authors; project_file ; p
     ; "source", Fmt.const (Fmt.optional Source_kind.pp) source
     ; "license", Fmt.const (Fmt.optional Format.pp_print_string) license
     ; "authors", Fmt.const (Fmt.list Format.pp_print_string) authors
+    ; "opam", Fmt.const (Fmt.optional Opam_package.pp) opam
     ; "project_file", Fmt.const Project_file.pp project_file
     ; "packages",
       Fmt.const
@@ -482,7 +509,7 @@ let interpret_lang_and_extensions ~(lang : Lang.Instance.t)
 let key =
   Univ_map.Key.create ~name:"dune-project"
     (fun { name; root; version; project_file; source
-         ; license; authors
+         ; license; authors; opam
          ; stanza_parser = _; packages = _ ; extension_args = _
          ; parsing_context ; implicit_transitive_deps ; dune_version
          ; allow_approx_merlin } ->
@@ -493,6 +520,7 @@ let key =
         ; "authors", Sexp.Encoder.(list string) authors
         ; "source", Sexp.Encoder.(option Source_kind.to_sexp) source
         ; "version", Sexp.Encoder.(option string) version
+        ; "opam", Sexp.Encoder.(option Opam_package.to_sexp) opam
         ; "project_file", Project_file.to_sexp project_file
         ; "parsing_context", Univ_map.to_sexp parsing_context
         ; "implicit_transitive_deps", Sexp.Encoder.bool implicit_transitive_deps
@@ -537,6 +565,7 @@ let anonymous = lazy (
   ; root          = get_local_path Path.root
   ; version       = None
   ; implicit_transitive_deps = false
+  ; opam          = None
   ; stanza_parser
   ; project_file
   ; extension_args
@@ -575,7 +604,8 @@ let parse ~dir ~lang ~packages ~file =
   fields
     (let+ name = name_field ~dir ~packages
      and+ version = field_o "version" string
-     and+ github_project = field_o "github_project" string
+     and+ source = field_o "source" Source_kind.decode
+     and+ opam = field_o "opam" Opam_package.decode
      and+ authors = field ~default:[] "authors" (Syntax.since Stanza.syntax (1, 9) >>> repeat string)
      and+ license = field_o "license" (Syntax.since Stanza.syntax (1, 9) >>> string)
      and+ explicit_extensions =
@@ -617,6 +647,7 @@ let parse ~dir ~lang ~packages ~file =
      ; license
      ; authors
      ; packages
+     ; opam
      ; stanza_parser
      ; project_file
      ; extension_args
@@ -649,6 +680,7 @@ let make_jbuilder_project ~dir packages =
   ; source = None
   ; license = None
   ; authors = []
+  ; opam = None
   ; packages
   ; stanza_parser
   ; project_file

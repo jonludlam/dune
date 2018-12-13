@@ -43,12 +43,22 @@ module Source_kind : sig
   |Github of string * string
   |Url of string
 end
+
+module Opam_package : sig
+  type constr = string list
+  type t = {
+    tags : string list;
+    constraints: constr list;
+  }
+end
+
 type t
 
 val packages : t -> Package.t Package.Name.Map.t
 val version : t -> string option
 val name : t -> Name.t
 val source: t -> Source_kind.t option
+val opam : t -> Opam_package.t option
 val license : t -> string option
 val authors : t -> string list
 val root : t -> Path.Local.t
