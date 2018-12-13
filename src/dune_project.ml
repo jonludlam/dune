@@ -184,32 +184,62 @@ module Opam_package = struct
 
   let pp_constr fmt c = Format.pp_print_string fmt (String.concat ~sep:" " c) 
 
+  let decode_constraint =
+    Dune_lang.Decoder.(list string)
+
+  type pkg = {
+    name: string;
+    synopsis: string;
+    constraints: constr list;
+  }
+
+  let decode_pkg =
+    Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 7) >>>
+     fields (
+       let+ name = field "name" string 
+       and+ synopsis = field "synopsis" string
+       and+ constraints = field ~default:[] "constraints" (repeat decode_constraint) in
+       { name; synopsis; constraints }))
+
+  let pp_pkg fmt { name; synopsis; constraints } =
+    Fmt.record fmt
+    [ "name", Fmt.const Format.pp_print_string name
+    ; "synopsis", Fmt.const Format.pp_print_string synopsis
+    ; "constraints", Fmt.(const (list pp_constr) constraints)
+    ]
+  
   type t =
   {
      tags: string list;
      constraints: constr list;
+     packages: pkg list;
   }
 
-  let to_sexp { tags; constraints = _ } =
+  let pp fmt { tags; constraints; packages } =
+    Fmt.record fmt 
+    [ "tags", Fmt.(const (list Format.pp_print_string) tags)
+    ; "constraints", Fmt.(const (list pp_constr) constraints) 
+    ; "packages", Fmt.(const (list pp_pkg) packages)
+    ]
+
+  let to_sexp { tags; constraints = _ ; packages = _ } =
     Sexp.Encoder.(
       record
       [ "tags", list string tags
-      ; "constraints", list string ["TODO"] ]
+      ; "constraints", list string ["TODO"]
+      ; "packages", list string ["TODO"]
+      ]
     )
-
-  let pp fmt { tags; constraints } =
-    Fmt.record fmt 
-    [ "tags", Fmt.(const (list Format.pp_print_string) tags)
-    ; "constraints", Fmt.(const (list pp_constr) constraints) ]
 
   let decode =
     Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 7) >>>
      fields (
      let+ tags = field_o "tags" (repeat string) 
-     and+ constraints = field_o "constraints" (repeat (list string)) in
+     and+ constraints = field_o "constraints" (repeat decode_constraint)
+     and+ packages = multi_field "package" decode_pkg in
      let tags = Option.value ~default:[] tags
      and constraints = Option.value ~default:[] constraints in
-     { tags; constraints }
+     { tags; constraints; packages }
      )
     )
 

@@ -46,9 +46,15 @@ end
 
 module Opam_package : sig
   type constr = string list
+  type pkg = {
+    name: string;
+    synopsis: string;
+    constraints: constr list;
+  }
   type t = {
     tags : string list;
     constraints: constr list;
+    packages: pkg list;
   }
 end
 
