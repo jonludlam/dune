@@ -196,7 +196,7 @@ module Opam_package = struct
   let decode_pkg =
     Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 7) >>>
      fields (
-       let+ name = field "name" string 
+       let+ name = field "name" string
        and+ synopsis = field "synopsis" string
        and+ constraints = field ~default:[] "constraints" (repeat decode_constraint) in
        { name; synopsis; constraints }))
@@ -235,7 +235,7 @@ module Opam_package = struct
     Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 7) >>>
      fields (
      let+ tags = field ~default:[] "tags" (repeat string)
-     and+ constraints = field ~default:[] "constraints" (repeat decode_constraint) 
+     and+ constraints = field ~default:[] "constraints" (repeat decode_constraint)
      and+ packages = multi_field "package" decode_pkg in
      { tags; constraints; packages }
      ))
