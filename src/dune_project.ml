@@ -234,14 +234,11 @@ module Opam_package = struct
   let decode =
     Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 7) >>>
      fields (
-     let+ tags = field_o "tags" (repeat string) 
-     and+ constraints = field_o "constraints" (repeat decode_constraint)
+     let+ tags = field ~default:[] "tags" (repeat string)
+     and+ constraints = field ~default:[] "constraints" (repeat decode_constraint) 
      and+ packages = multi_field "package" decode_pkg in
-     let tags = Option.value ~default:[] tags
-     and constraints = Option.value ~default:[] constraints in
      { tags; constraints; packages }
-     )
-    )
+     ))
 
 end
 
@@ -279,7 +276,8 @@ let file t = t.project_file.file
 let implicit_transitive_deps t = t.implicit_transitive_deps
 let allow_approx_merlin t = t.allow_approx_merlin
 
-let pp fmt { name ; root ; version ;  source; license; authors; opam; project_file ; parsing_context = _
+let pp fmt { name ; root ; version ; source; license; authors
+           ; opam; project_file ; parsing_context = _
            ; extension_args = _; stanza_parser = _ ; packages
            ; implicit_transitive_deps ; dune_version
            ; allow_approx_merlin } =
