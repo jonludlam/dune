@@ -67,3 +67,25 @@ let absolutify_positions ~file_contents t =
   { file_contents = List.map t.file_contents ~f:map_item
   ; file_name = t.file_name
   }
+(*
+  let packages = Dune_project.packages project in
+  let fn =
+    match Package.Name.Map.find packages (Package.Name.of_string package.Dune_project.Opam_package.name) with
+    | Some pkg -> Some pkg.Package.path
+    | None -> None
+  in
+  match fn with
+  | Some fn ->
+    let rule =
+     { Dune_file.Rule.
+        targets = Infer
+      ; deps = Bindings.empty
+      ; action = (loc, Action_unexpanded.Write_file (String_with_vars.make_text loc (Path.to_string fn),String_with_vars.make_text loc "test"))
+      ; mode = Standard
+      ; locks = []
+      ; loc
+      ; enabled_if = Blang.true_
+      } in
+      ignore (Simple_rules.user_rule sctx rule ~dir ~expander
+              : Path.t list));
+    | None -> ()  *)
