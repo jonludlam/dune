@@ -180,12 +180,11 @@ end
 
 module Opam_package = struct
 
-  type constr = string list
+  type constr = Blang.t
 
-  let pp_constr fmt c = Format.pp_print_string fmt (String.concat ~sep:" " c) 
+  let pp_constr fmt _ = Format.fprintf fmt "<constraint>"
 
-  let decode_constraint =
-    Dune_lang.Decoder.(list string)
+  let decode_constraint = Blang_decode.decode
 
   type pkg = {
     name: string;
@@ -232,7 +231,7 @@ module Opam_package = struct
     )
 
   let decode =
-    Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 7) >>>
+    Dune_lang.Decoder.(Syntax.since Stanza.syntax (1, 9) >>>
      fields (
      let+ tags = field ~default:[] "tags" (repeat string)
      and+ constraints = field ~default:[] "constraints" (repeat decode_constraint)

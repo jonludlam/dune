@@ -45,7 +45,7 @@ module Source_kind : sig
 end
 
 module Opam_package : sig
-  type constr = string list
+  type constr = Blang.t
   type pkg = {
     name: string;
     synopsis: string;
