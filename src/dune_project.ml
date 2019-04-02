@@ -162,7 +162,7 @@ module Source_kind = struct
 
    let pp fmt = function
    | Github (user,repo) ->
-      Format.pp_print_string fmt (Printf.sprintf "https://github.com/%s/%s.git" user repo)
+      Format.pp_print_string fmt (Printf.sprintf "git+https://github.com/%s/%s.git" user repo)
    | Url u -> Format.pp_print_string fmt u
 
    let to_sexp = function
@@ -189,6 +189,7 @@ module Opam_package = struct
   type pkg = {
     name: string;
     synopsis: string;
+    description: string;
     constraints: constr list;
   }
 
@@ -197,13 +198,15 @@ module Opam_package = struct
      fields (
        let+ name = field "name" string
        and+ synopsis = field "synopsis" string
+       and+ description = field "description" string
        and+ constraints = field ~default:[] "constraints" (repeat decode_constraint) in
-       { name; synopsis; constraints }))
+       { name; synopsis; description; constraints }))
 
-  let pp_pkg fmt { name; synopsis; constraints } =
+  let pp_pkg fmt { name; synopsis; constraints; description } =
     Fmt.record fmt
     [ "name", Fmt.const Format.pp_print_string name
     ; "synopsis", Fmt.const Format.pp_print_string synopsis
+    ; "description", Fmt.const Format.pp_print_string description
     ; "constraints", Fmt.(const (list pp_constr) constraints)
     ]
   
@@ -268,6 +271,9 @@ let source t = t.source
 let license t = t.license
 let authors t = t.authors
 let opam t = t.opam
+let opam_package t name =
+  Option.bind (opam t) ~f:(fun o ->
+    List.find ~f:(fun p -> p.Opam_package.name = name) o.Opam_package.packages)
 let name t = t.name
 let root t = t.root
 let stanza_parser t = t.stanza_parser

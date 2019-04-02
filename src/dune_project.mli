@@ -42,6 +42,8 @@ module Source_kind : sig
   type t = 
   |Github of string * string
   |Url of string
+
+  val pp : t Fmt.t
 end
 
 module Opam_package : sig
@@ -49,6 +51,7 @@ module Opam_package : sig
   type pkg = {
     name: string;
     synopsis: string;
+    description: string;
     constraints: constr list;
   }
   type t = {
@@ -65,6 +68,7 @@ val version : t -> string option
 val name : t -> Name.t
 val source: t -> Source_kind.t option
 val opam : t -> Opam_package.t option
+val opam_package : t -> string -> Opam_package.pkg option
 val license : t -> string option
 val authors : t -> string list
 val root : t -> Path.Local.t
