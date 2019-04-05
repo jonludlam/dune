@@ -232,20 +232,32 @@ let setup_css_rule sctx =
 let sp = Printf.sprintf
 
 let setup_toplevel_index_rule sctx =
+  let ctx = Super_context.context sctx in
   let list_items =
     Super_context.packages sctx
     |> Package.Name.Map.to_list
-    |> List.filter_map ~f:(fun (name, pkg) ->
+    |> List.map ~f:(fun (name, pkg) ->
+      let path = pkg.Package.path |> Path.local_part in
+      let path = ctx.Context.build_dir ++ (Path.Local.to_string path) in 
       let name = Package.Name.to_string name in
+      let synopsis_opt =
+        let scope = Super_context.find_scope_by_dir sctx path in
+        let project = Scope.project scope in
+        let meta = Dune_project.opam_package project name in
+        Option.map ~f:(fun m -> sp " %s " (m.Dune_project.Opam_package.synopsis)) meta
+      in
+      let version_opt = pkg.Package.version_from_opam_file in
+      (name, version_opt, synopsis_opt))
+    |> List.map ~f:(fun (name, version_opt, synopsis_opt) ->
       let link = sp {|<a href="%s/index.html">%s</a>|} name name in
       let version_suffix =
-        match pkg.Package.version_from_opam_file with
+        match version_opt with
         | None ->
           ""
         | Some v ->
           sp {| <span class="version">%s</span>|} v
       in
-      Some (sp "<li>%s%s</li>" link version_suffix))
+      (sp "<li>%s%s%s</li>" link version_suffix (Option.value ~default:"" synopsis_opt)))
   in
   let list_items = String.concat ~sep:"\n      " list_items in
   let html = sp
@@ -453,10 +465,43 @@ let entry_modules sctx ~pkg =
     ))
   |> Lib.Map.of_list_exn
 
-let default_index ~pkg entry_modules =
+let default_index sctx ~pkg mlds entry_modules =
+  let ctx = Super_context.context sctx in
+  let package = Option.value_exn @@ Package.Name.Map.find (Super_context.packages sctx) pkg in
+  let path = package.Package.path |> Path.local_part in
+  let path = ctx.Context.build_dir ++ (Path.Local.to_string path) in 
+  let name = Package.Name.to_string pkg in
+  let scope = Super_context.find_scope_by_dir sctx path in
+  let project = Scope.project scope in
+  let meta =
+    let meta = Dune_project.opam_package project name in
+    Option.map ~f:(fun m -> Dune_project.Opam_package.(m.synopsis,m.description)) meta
+  in
   let b = Buffer.create 512 in
-  Printf.bprintf b "{0 %s index}\n"
-    (Package.Name.to_string pkg);
+  begin match meta with
+    | Some (synopsis,description) ->
+      Printf.bprintf b "{0 Package: %s}\n"
+        (Package.Name.to_string pkg);
+      Printf.bprintf b "%s\n\n%s\n" synopsis description;
+    | None -> 
+      Printf.bprintf b "{0 %s index}\n"
+        (Package.Name.to_string pkg);
+  end;
+  Printf.bprintf b "{1 Details}\n";
+  begin
+    match Dune_project.authors project with
+    | [] -> ()
+    | [x] ->
+      Printf.bprintf b "{2 Author}\n%s\n" x
+    | xs ->
+      Printf.bprintf b "{2 Authors}\n- %s\n\n" (String.concat ~sep:"\n- " xs)
+  end;
+  begin
+    match Dune_project.license project with
+    | Some x ->
+      Printf.bprintf b "{2 License}\n%s\n" x
+    | None -> ()
+  end;
   Lib.Map.to_list entry_modules
   |> List.sort ~compare:(fun (x, _) (y, _) ->
     Lib_name.compare (Lib.name x) (Lib.name y))
@@ -480,6 +525,9 @@ let default_index ~pkg entry_modules =
            |> String.concat ~sep:" ")
     );
   );
+  let mlds' = List.map ~f:(fun p ->
+    Printf.sprintf "{!page-%s}" p) mlds in
+  Printf.bprintf b "{2 Extra documentation}\n\n%s" (String.concat ~sep:"\n\n" mlds');
   Buffer.contents b
 
 let check_mlds_no_dupes ~pkg ~mlds =
@@ -533,11 +581,10 @@ let setup_package_odoc_rules_def =
          if String.Map.mem mlds "index" then
            mlds
          else
-           let entry_modules = entry_modules ~pkg in
+           let entry_modules = entry_modules ~pkg sctx in
            let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-           let entry_modules = entry_modules sctx in
            add_rule sctx
-             (Build.write_file gen_mld (default_index ~pkg entry_modules));
+             (Build.write_file gen_mld (default_index sctx ~pkg (String.Map.keys mlds) entry_modules));
            String.Map.add mlds "index" gen_mld in
        let odocs = List.map (String.Map.values mlds) ~f:(fun mld ->
          compile_mld sctx
