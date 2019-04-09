@@ -460,11 +460,24 @@ let setup_package_aliases sctx (pkg : Package.t) =
     |> Path.Set.of_list
   )
 
+type lib_modules =
+  | Wrapped of Per_module.key * (Module.t list)
+  | Unwrapped of Module.t list
 let entry_modules_by_lib sctx lib =
-  Dir_contents.get_without_rules sctx ~dir:(Lib.src_dir lib)
-  |> Dir_contents.modules_of_library ~name:(Lib.name lib)
-  |> Lib_modules.entry_modules
-
+  let lib_modules =
+    Dir_contents.get_without_rules sctx ~dir:(Lib.src_dir lib)
+    |> Dir_contents.modules_of_library ~name:(Lib.name lib)
+  in
+  try
+    let main = Option.value_exn (Lib_modules.main_module_name lib_modules) in
+    let aliased =
+      Vimpl.aliased_modules None lib_modules
+      |> Module.Name.Map.values
+    in
+    Wrapped (main, aliased)
+  with _ ->
+    Unwrapped (lib_modules |> Lib_modules.entry_modules)
+  
 let entry_modules sctx ~pkg =
   libs_of_pkg sctx ~pkg
   |> Lib.Set.to_list
@@ -513,6 +526,7 @@ let default_index sctx ~pkg mlds entry_modules =
       Printf.bprintf b "{2 License}\n%s\n" x
     | None -> ()
   end;
+  begin
   Lib.Map.to_list entry_modules
   |> List.sort ~compare:(fun (x, _) (y, _) ->
     Lib_name.compare (Lib.name x) (Lib.name y))
@@ -520,11 +534,21 @@ let default_index sctx ~pkg mlds entry_modules =
     Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string (Lib.name lib));
     Buffer.add_string b (
       match modules with
-      | [ x ] ->
+      | Wrapped (main, lib_modules) ->
+        let main_module_name = Module.Name.to_string main in
+        sprintf "The library exposes the following namespaced modules:\n{!modules:%s}"
+          (lib_modules
+           |> List.filter ~f:Module.is_public
+           |> List.sort ~compare:(fun x y ->
+             Module.Name.compare (Module.name x) (Module.name y))
+           |> List.map ~f:(fun m -> sprintf "%s.%s" main_module_name (Module.Name.to_string (Module.name m)))
+           |> String.concat ~sep:" ")
+           
+      | Unwrapped [ x ] ->
         sprintf
           "The entry point of this library is the module:\n{!module-%s}.\n"
           (Module.Name.to_string (Module.name x))
-      | _ ->
+      | Unwrapped modules ->
         sprintf
           "This library exposes the following toplevel modules:\n\
            {!modules:%s}\n"
@@ -533,9 +557,8 @@ let default_index sctx ~pkg mlds entry_modules =
            |> List.sort ~compare:(fun x y ->
              Module.Name.compare (Module.name x) (Module.name y))
            |> List.map ~f:(fun m -> Module.Name.to_string (Module.name m))
-           |> String.concat ~sep:" ")
-    );
-  );
+           |> String.concat ~sep:" ")))
+  end;
   let mlds' = List.map ~f:(fun p ->
     Printf.sprintf "{!page-%s}" p) mlds in
   Printf.bprintf b "{2 Extra documentation}\n\n%s" (String.concat ~sep:"\n\n" mlds');
