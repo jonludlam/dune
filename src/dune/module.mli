@@ -49,6 +49,10 @@ val to_dyn : t -> Dyn.t
 val of_source :
   ?obj_name:string -> visibility:Visibility.t -> kind:Kind.t -> Source.t -> t
 
+val of_installed_cmti : string -> t
+
+val of_installed_cmt : string -> t
+
 val name : t -> Module_name.t
 
 (** Real unit name once wrapped. This is always a valid module name. *)

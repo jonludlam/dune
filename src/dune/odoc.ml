@@ -2,7 +2,9 @@ open! Stdune
 open Import
 open Dune_file
 open Build.O
+
 module SC = Super_context
+module DDep = Dep
 
 let ( ++ ) = Path.Build.relative
 
@@ -46,6 +48,7 @@ let pkg_or_lnu lib =
 type target =
   | Lib of Lib.Local.t
   | Pkg of Package.Name.t
+  | ExternalLib of Lib.t
 
 type source =
   | Module
@@ -69,6 +72,8 @@ module Paths = struct
     | Lib lib ->
       let obj_dir = Lib.Local.obj_dir lib in
       Obj_dir.odoc_dir obj_dir
+    | ExternalLib lib ->
+      root ctx ++ sprintf "_odoc/external/%s" (Lib.name lib |> Lib_name.to_string)
     | Pkg pkg -> root ctx ++ sprintf "_odoc/pkg/%s" (Package.Name.to_string pkg)
 
   let html_root ctx = root ctx ++ "_html"
@@ -79,6 +84,7 @@ module Paths = struct
     match m with
     | Pkg pkg -> Package.Name.to_string pkg
     | Lib lib -> pkg_or_lnu (Lib.Local.to_lib lib)
+    | ExternalLib lib -> Lib_name.to_string (Lib.name lib)
 
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
 
@@ -198,7 +204,8 @@ let odoc_include_flags ctx pkg requires =
         |> List.fold_left
              ~f:(fun paths lib ->
                match Lib.Local.of_lib lib with
-               | None -> paths
+               | None ->
+                 Path.Set.add paths (Path.build (Paths.odocs ctx (ExternalLib lib)))
                | Some lib ->
                  Path.Set.add paths (Path.build (Paths.odocs ctx (Lib lib))))
              ~init:Path.Set.empty
@@ -208,9 +215,22 @@ let odoc_include_flags ctx pkg requires =
         | Some p -> Path.Set.add paths (Path.build (Paths.odocs ctx (Pkg p)))
         | None -> paths
       in
+      let id =
+        lazy
+          (let open Dyn.Encoder in
+          constr "Odoc_include_flags" [ string "odoc" ])
+      in
+      let predicate = Predicate.create ~id ~f:(fun p ->
+        Filename.extension p = "odoc")
+      in
+      let file_deps =
+        Path.Set.fold paths ~init:[] ~f:(fun dir l ->
+          let selector = File_selector.create ~dir predicate in
+          DDep.file_selector selector :: l) |> DDep.Set.of_list
+      in
       S
         (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
-             [ Command.Args.A "-I"; Path dir ])))
+             [ Command.Args.A "-I"; Path dir; Hidden_deps file_deps ])))
 
 let setup_html sctx (odoc_file : odoc) ~pkg ~requires =
   let ctx = Super_context.context sctx in
@@ -283,6 +303,18 @@ let setup_library_odoc_rules cctx (library : Library.t) ~dep_graphs =
   Dep.setup_deps ctx (Lib local_lib)
     ( List.map modules_and_odoc_files ~f:(fun (_, p) -> Path.build p)
     |> Path.Set.of_list )
+
+let setup_external_library_odoc_rules cctx lib_name =
+  let scope = Compilation_context.scope cctx in
+  let lib = Lib.DB.find (Scope.libs scope) lib_name |> Option.value_exn in
+  let lib_info = Lib.info lib in
+  let requires = Lib_info.requires lib_info in
+  let sctx = Compilation_context.super_context cctx in
+  let ctx = Super_context.context sctx in
+  let modules = Lib_info.modules lib_info in
+  let odoc_include_flags =
+    Command.Args.memo (odoc_include_flags ctx (Lib.package lib) requires)
+  in
 
 let setup_css_rule sctx =
   let ctx = Super_context.context sctx in
@@ -357,7 +389,8 @@ let load_all_odoc_rules_pkg sctx ~pkg =
 let create_odoc ctx ~target odoc_input =
   let html_base = Paths.html ctx target in
   match target with
-  | Lib _ ->
+  | Lib _ 
+  | ExternalLib _ ->
     let html_dir =
       html_base
       ++ ( Path.Build.basename odoc_input
@@ -428,6 +461,13 @@ let odocs sctx target =
     let obj_dir = Lib_info.obj_dir info in
     Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
         let odoc = Obj_dir.Module.odoc obj_dir m in
+        create_odoc ctx ~target odoc :: acc)
+  | ExternalLib lib ->
+    let info = Lib.info lib in
+    let modules = match Lib_info.modules info with | External m -> m | _ -> failwith "Inconceivable!" in
+    let path = Paths.odocs ctx target in
+    Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
+        let odoc = path ++ Module.obj_name m in
         create_odoc ctx ~target odoc :: acc)
 
 let setup_lib_html_rules_def =
@@ -665,6 +705,9 @@ let gen_rules sctx ~dir:_ rest =
         let info = Lib.info lib in
         let dir = Lib_info.src_dir info in
         Build_system.load_dir ~dir)
+  | "_odoc" :: "external" :: lib :: _ ->
+    let lib, lib_db = Scope_key.of_string sctx lib in
+    setup_external_library_odoc_rules sctx lib
   | "_html" :: lib_unique_name_or_pkg :: _ ->
     (* TODO we can be a better with the error handling in the case where
        lib_unique_name_or_pkg is neither a valid pkg or lnu *)

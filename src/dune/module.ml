@@ -157,6 +157,24 @@ let of_source ?obj_name ~visibility ~(kind : Kind.t) (source : Source.t) =
   in
   { source; obj_name; pp = None; visibility; kind }
 
+let of_installed_cmti file =
+    let p = Path.external_ (Path.External.of_string file) in
+    { source= Source.{ name = Module_name.of_string file; files = Ml_kind.Dict.{impl=None; intf=Some (File.{path=p; dialect=Dialect.ocaml})}}
+    ; obj_name= file
+    ; pp= None
+    ; visibility= Visibility.Public
+    ; kind= Kind.Intf_only
+    }
+
+let of_installed_cmt file =
+    let p = Path.external_ (Path.External.of_string file) in
+    { source= Source.{ name = Module_name.of_string file; files = Ml_kind.Dict.{impl=Some (File.{path=p; dialect=Dialect.ocaml}); intf=None}}
+    ; obj_name= file
+    ; pp= None
+    ; visibility= Visibility.Public
+    ; kind= Kind.Impl
+    }
+
 let real_unit_name t = Module_name.of_string (Filename.basename t.obj_name)
 
 let has t ~ml_kind =

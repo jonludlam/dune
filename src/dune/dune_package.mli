@@ -7,7 +7,7 @@ val fn : string
 module Lib : sig
   type t
 
-  val modules : t -> Modules.t option
+  val modules : t -> Modules.t
 
   val main_module_name : t -> Module_name.t option
 
@@ -20,7 +20,7 @@ module Lib : sig
   val make :
        info:Path.t Lib_info.t
     -> main_module_name:Module_name.t option
-    -> modules:Modules.t option
+    -> modules:Modules.t
     -> t
 
   val to_dyn : t Dyn.Encoder.t

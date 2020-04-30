@@ -197,6 +197,7 @@ type 'path t =
   ; virtual_deps : (Loc.t * Lib_name.t) list
   ; dune_version : Dune_lang.Syntax.Version.t option
   ; sub_systems : Sub_system_info.t Sub_system_name.Map.t
+  ; modules : Modules.t Source.t
   ; virtual_ : Modules.t Source.t option
   ; implements : (Loc.t * Lib_name.t) option
   ; variant : Variant.t option
@@ -259,6 +260,8 @@ let obj_dir t = t.obj_dir
 
 let virtual_ t = t.virtual_
 
+let modules t = t.modules
+
 let implements t = t.implements
 
 let synopsis t = t.synopsis
@@ -315,7 +318,7 @@ let create ~loc ~name ~kind ~status ~src_dir ~orig_src_dir ~obj_dir ~version
     ~synopsis ~main_module_name ~sub_systems ~requires ~foreign_objects ~plugins
     ~archives ~ppx_runtime_deps ~foreign_archives ~native_archives
     ~foreign_dll_files ~jsoo_runtime ~jsoo_archive ~pps ~enabled ~virtual_deps
-    ~dune_version ~virtual_ ~implements ~variant ~known_implementations
+    ~dune_version ~virtual_ ~modules ~implements ~variant ~known_implementations
     ~default_implementation ~modes ~wrapped ~special_builtin_support
     ~exit_module =
   { loc
@@ -344,6 +347,7 @@ let create ~loc ~name ~kind ~status ~src_dir ~orig_src_dir ~obj_dir ~version
   ; dune_version
   ; sub_systems
   ; virtual_
+  ; modules
   ; implements
   ; variant
   ; known_implementations
@@ -410,6 +414,7 @@ let to_dyn path
     ; dune_version
     ; sub_systems
     ; virtual_
+    ; modules
     ; implements
     ; variant
     ; known_implementations
@@ -447,6 +452,7 @@ let to_dyn path
     ; ("dune_version", option Dune_lang.Syntax.Version.to_dyn dune_version)
     ; ("sub_systems", Sub_system_name.Map.to_dyn Dyn.Encoder.opaque sub_systems)
     ; ("virtual_", option (Source.to_dyn Modules.to_dyn) virtual_)
+    ; ("modules", Source.to_dyn Modules.to_dyn modules)
     ; ("implements", option (snd Lib_name.to_dyn) implements)
     ; ("variant", option Variant.to_dyn variant)
     ; ( "known_implementation"

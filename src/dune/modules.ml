@@ -503,6 +503,21 @@ let lib ~src_dir ~main_module_name ~wrapped ~stdlib ~lib_name ~implements
     | (Simple true | Yes_with_transition _), None, _ ->
       Code_error.raise "Modules.lib: cannot wrap without main module name" [] )
 
+let of_findlib cmts cmtis =
+    let remove_extension = List.map ~f:(fun fn ->   
+      match String.index fn '.' with
+      | None -> fn
+      | Some i -> String.take fn i)
+    in
+    let cmtis = remove_extension cmtis in
+    let cmts = remove_extension cmts in
+
+    let cmtilibs = List.map ~f:Module.of_installed_cmti cmtis in
+    let cmts = List.filter ~f:(fun x -> not (List.mem x ~set:cmtis)) cmts in
+    let cmtlibs = List.map ~f:Module.of_installed_cmt cmts in
+    let modules = Module.Name_map.of_list_exn (cmtlibs @ cmtilibs) in
+    Unwrapped modules
+
 let impl impl ~vlib =
   match (impl, vlib) with
   | _, Impl _

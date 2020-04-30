@@ -9,7 +9,7 @@ let fn = "dune-package"
 module Lib = struct
   type t =
     { info : Path.t Lib_info.t
-    ; modules : Modules.t option
+    ; modules : Modules.t
     ; main_module_name : Module_name.t option
     }
 
@@ -85,7 +85,7 @@ module Lib = struct
        ; field_o "main_module_name" Module_name.encode main_module_name
        ; field_l "modes" sexp (Mode.Dict.Set.encode modes)
        ; field_l "obj_dir" sexp (Obj_dir.encode obj_dir)
-       ; field_o "modules" Modules.encode modules
+       ; field "modules" Modules.encode modules
        ; field_o "special_builtin_support"
            Lib_info.Special_builtin_support.encode special_builtin_support
        ]
@@ -146,7 +146,7 @@ module Lib = struct
        and+ orig_src_dir = field_o "orig_src_dir" path
        and+ modules =
          let src_dir = Obj_dir.dir obj_dir in
-         field_o "modules"
+         field "modules"
            (Modules.decode
               ~implements:(Option.is_some implements)
               ~src_dir ~version:lang.version)
@@ -172,22 +172,21 @@ module Lib = struct
          let dune_version = None in
          let virtual_ =
            if virtual_ then
-             let modules = Option.value_exn modules in
              Some (Lib_info.Source.External modules)
            else
              None
          in
          let variant = None in
          let wrapped =
-           Option.map modules ~f:Modules.wrapped
-           |> Option.map ~f:(fun w -> Lib_info.Inherited.This w)
+           Some (Lib_info.Inherited.This (Modules.wrapped modules))
          in
+         let modules = Lib_info.Source.External modules in
          Lib_info.create ~loc ~name ~kind ~status ~src_dir ~orig_src_dir
            ~obj_dir ~version ~synopsis ~main_module_name ~sub_systems ~requires
            ~foreign_objects ~plugins ~archives ~ppx_runtime_deps
            ~foreign_archives ~native_archives ~foreign_dll_files:[]
            ~jsoo_runtime ~jsoo_archive ~pps ~enabled ~virtual_deps ~dune_version
-           ~virtual_ ~implements ~variant ~known_implementations
+           ~virtual_ ~modules ~implements ~variant ~known_implementations
            ~default_implementation ~modes ~wrapped ~special_builtin_support
            ~exit_module:None
        in
@@ -197,7 +196,7 @@ module Lib = struct
 
   let main_module_name t = t.main_module_name
 
-  let wrapped t = Option.map t.modules ~f:Modules.wrapped
+  let wrapped t = Some (Modules.wrapped t.modules)
 
   let info dp = dp.info
 
@@ -205,7 +204,7 @@ module Lib = struct
     let open Dyn.Encoder in
     record
       [ ("info", Lib_info.to_dyn Path.to_dyn info)
-      ; ("modules", option Modules.to_dyn modules)
+      ; ("modules", Modules.to_dyn modules)
       ; ("main_module_name", option Module_name.to_dyn main_module_name)
       ]
 end

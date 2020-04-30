@@ -57,6 +57,8 @@ val map_user_written : t -> f:(Module.t -> Module.t) -> t
 (** Returns all the compatibility modules. *)
 val wrapped_compat : t -> Module.Name_map.t
 
+val of_findlib : string list -> string list -> t
+
 module Sourced_module : sig
   type t =
     | Normal of Module.t

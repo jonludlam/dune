@@ -255,7 +255,7 @@ module Package = struct
       else
         discovered
     in
-    let info : Path.t Lib_info.t =
+    let (modules, info) : Modules.t * Path.t Lib_info.t =
       let name = name t in
       let kind = kind t in
       let sub_systems = Sub_system_name.Map.empty in
@@ -290,7 +290,7 @@ module Package = struct
       let known_implementations = P.Map.empty in
       let default_implementation = None in
       let wrapped = None in
-      let foreign_archives, native_archives =
+      let foreign_archives, native_archives, cmtis, cmts =
         (* Here we scan [t.dir] and consider all files named [lib*.ext_lib] to
            be foreign archives, and all other files with the extension [ext_lib]
            to be native archives. The resulting lists of archives will be used
@@ -307,35 +307,40 @@ module Package = struct
              directory" ];
 
              But it seems to be too invasive *)
-          ([], [])
+          ([], [], [], [])
         | Ok res ->
-          let foreign_archives, native_archives =
-            List.rev_filter_partition_map res ~f:(fun f ->
-                let ext = Filename.extension f in
-                if ext = lib_config.ext_lib then
-                  let file = Path.relative t.dir f in
+          let foreign_archives, native_archives, _cmis, cmts, cmtis =
+            List.fold_left res ~init:([],[],[],[],[]) ~f:(fun (foreign, native, cmis, cmts, cmtis) f ->
+              let file = Path.relative t.dir f in
+              match Filename.extension f with
+                | ext when ext=lib_config.ext_lib ->
                   if
                     String.is_prefix f
                       ~prefix:Foreign.Archive.Name.lib_file_prefix
                   then
-                    Left file
+                    (file::foreign,native,cmis,cmts,cmtis)
                   else
-                    Right file
-                else
-                  Skip)
+                    (foreign,file::native,cmis,cmts,cmtis)
+                | "cmi" -> (foreign,native,Path.to_string file::cmis,cmts,cmtis)
+                | "cmt" -> (foreign,native,cmis,Path.to_string file::cmts,cmtis)
+                | "cmti" -> (foreign,native,cmis,cmts,Path.to_string file::cmtis)
+                |_ -> (foreign,native,cmis,cmts,cmtis))
           in
           let sort = List.sort ~compare:Path.compare in
-          (sort foreign_archives, sort native_archives)
+          (sort foreign_archives, sort native_archives, cmtis, cmts)
       in
+      let ms =Modules.of_findlib cmtis cmts in
+      let modules = Lib_info.Source.External (ms) in
+      ms,
       Lib_info.create ~loc ~name ~kind ~status ~src_dir ~orig_src_dir ~obj_dir
         ~version ~synopsis ~main_module_name ~sub_systems ~requires
         ~foreign_objects ~plugins ~archives ~ppx_runtime_deps ~foreign_archives
         ~native_archives ~foreign_dll_files:[] ~jsoo_runtime ~jsoo_archive ~pps
-        ~enabled ~virtual_deps ~dune_version ~virtual_ ~implements ~variant
+        ~enabled ~virtual_deps ~dune_version ~virtual_ ~modules ~implements ~variant
         ~known_implementations ~default_implementation ~modes ~wrapped
-        ~special_builtin_support ~exit_module:None
+        ~special_builtin_support  ~exit_module:None
     in
-    Dune_package.Lib.make ~info ~modules:None ~main_module_name:None
+    Dune_package.Lib.make ~info ~modules ~main_module_name:None
 
   (* XXX remove *)
 

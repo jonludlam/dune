@@ -116,6 +116,8 @@ val obj_dir : 'path t -> 'path Obj_dir.t
 
 val virtual_ : _ t -> Modules.t Source.t option
 
+val modules : _ t -> Modules.t Source.t
+
 val main_module_name : _ t -> Main_module_name.t
 
 val wrapped : _ t -> Wrapped.t Inherited.t option
@@ -200,6 +202,7 @@ val create :
   -> virtual_deps:(Loc.t * Lib_name.t) list
   -> dune_version:Dune_lang.Syntax.Version.t option
   -> virtual_:Modules.t Source.t option
+  -> modules: Modules.t Source.t
   -> implements:(Loc.t * Lib_name.t) option
   -> variant:Variant.t option
   -> known_implementations:(Loc.t * Lib_name.t) Variant.Map.t

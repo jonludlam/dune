@@ -1090,6 +1090,9 @@ module Library = struct
     let virtual_ =
       Option.map conf.virtual_modules ~f:(fun _ -> Lib_info.Source.Local)
     in
+    let modules =
+      Lib_info.Source.Local
+    in
     let foreign_objects = Lib_info.Source.Local in
     let archives, plugins =
       if virtual_library then
@@ -1146,7 +1149,7 @@ module Library = struct
       ~version ~synopsis ~main_module_name ~sub_systems ~requires
       ~foreign_objects ~plugins ~archives ~ppx_runtime_deps ~foreign_archives
       ~native_archives ~foreign_dll_files ~jsoo_runtime ~jsoo_archive ~pps
-      ~enabled ~virtual_deps ~dune_version ~virtual_ ~implements ~variant
+      ~enabled ~virtual_deps ~dune_version ~virtual_ ~modules ~implements ~variant
       ~known_implementations ~default_implementation ~modes ~wrapped
       ~special_builtin_support ~exit_module
 end
