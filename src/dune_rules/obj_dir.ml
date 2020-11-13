@@ -90,8 +90,6 @@ module External = struct
 
   let odoc_dir t = t.public_dir
 
-  let odocl_dir t = t.public_dir
-
   let all_obj_dirs t ~mode:_ = [ t.public_dir ]
 
   let all_cmis { public_dir; private_dir; public_cmi_dir } =
@@ -142,8 +140,6 @@ module Local = struct
   let native_dir t = t.native_dir
 
   let odoc_dir t = t.byte_dir
-
-  let odocl_dir t = t.byte_dir
 
   let all_obj_dirs t ~(mode : Mode.t) =
     let dirs = [ t.byte_dir; public_cmi_dir t ] in
@@ -273,8 +269,6 @@ let cm_public_dir t cm_kind =
     ~e:(fun e -> External.cm_public_dir e cm_kind)
 
 let odoc_dir t = get_path t ~l:Local.odoc_dir ~e:External.odoc_dir
-
-let odocl_dir t = get_path t ~l:Local.odocl_dir ~e:External.odocl_dir
 
 let need_dedicated_public_dir (t : Path.Build.t t) =
   match t with
@@ -406,7 +400,7 @@ module Module = struct
     let basename =
       Module_name.Unique.artifact_filename obj_name ~ext:".odocl"
     in
-    relative t (odocl_dir t) basename
+    relative t (odoc_dir t) basename
 
   module Dep = struct
     type t =
