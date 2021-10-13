@@ -401,11 +401,13 @@ module Module = struct
     in
     obj_file t m ~kind:Cmi ~ext
 
-  let odoc t m =
+  let odoc_files ext t m =
     let obj_name = Module.obj_name m in
-    let basename = Module_name.Unique.artifact_filename obj_name ~ext:".odoc" in
+    let basename = Module_name.Unique.artifact_filename obj_name ~ext in
     relative t (odoc_dir t) basename
 
+  let odoc t m = odoc_files ".odoc" t m 
+  let odocl t m = odoc_files ".odocl" t m
   module Dep = struct
     type t =
       | Immediate of Module.File.t
