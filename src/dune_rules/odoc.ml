@@ -59,7 +59,7 @@ type odoc_artefact =
   ; odocl_file : Path.Build.t
   ; html_dir : Path.Build.t
   ; html_file : Path.Build.t
-  ; source : source (*** source of the [odoc_file], either module or mld *)
+  ; source : source  (** source of the [odoc_file], either module or mld *)
   }
 
 let add_rule sctx =
