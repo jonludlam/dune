@@ -4,7 +4,6 @@ This test generates documentation using odoc for a library:
 
 This test if `.odocl` files are generated
   $ find _build/default/_doc/_odocls -name '*.odocl'
-  _build/default/_doc/_odocls/foo/foo3.odocl
   _build/default/_doc/_odocls/foo/foo_byte.odocl
   _build/default/_doc/_odocls/foo/page-index.odocl
   _build/default/_doc/_odocls/foo/foo2.odocl
