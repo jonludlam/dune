@@ -2,9 +2,8 @@ This test checks that there is no clash when two private libraries have the same
 
   $ dune build --display short @doc-private
           odoc _doc/_html/highlight.pack.js,_doc/_html/odoc.css
-        ocamlc a/.test.objs/byte/test.{cmi,cmo,cmt}
-        ocamlc b/.test.objs/byte/test.{cmi,cmo,cmt}
-          odoc a/.test.objs/byte/test.odoc
-          odoc b/.test.objs/byte/test.odoc
-          odoc _doc/_html/test@6aabb9861046/Test/.dummy,_doc/_html/test@6aabb9861046/Test/index.html
-          odoc _doc/_html/test@ea8c79305c05/Test/.dummy,_doc/_html/test@ea8c79305c05/Test/index.html
+  File "_doc/_html/test@6aabb9861046/Test/_unknown_", line 1, characters 0-0:
+  Error: No rule found for _doc/_odocls/test@6aabb9861046/test.odocl
+  File "_doc/_html/test@ea8c79305c05/Test/_unknown_", line 1, characters 0-0:
+  Error: No rule found for _doc/_odocls/test@ea8c79305c05/test.odocl
+  [1]
