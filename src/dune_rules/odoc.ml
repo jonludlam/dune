@@ -522,6 +522,25 @@ let odoc_artefacts sctx target =
       modules
     |> Memo.Build.return
 
+(** Non_hidden are files are ones without double underscores in their filenames. *)
+let keep_non_hidden_files odocs rules =
+  let is_hidden s =
+    let len = String.length s in
+    let rec aux i =
+      if i > len - 2 then
+        false
+      else if s.[i] = '_' && s.[i + 1] = '_' then
+        true
+      else
+        aux (i + 1)
+    in
+    aux 0
+  in
+  Memo.Build.parallel_iter odocs ~f:(fun odoc ->
+      match is_hidden (Path.Build.to_string odoc.odoc_file) with
+      | true -> Memo.Build.return ()
+      | false -> rules odoc)
+
 let setup_lib_odocl_rules_def =
   let module Input = struct
     module Super_context = Super_context.As_memo_key
@@ -546,8 +565,8 @@ let setup_lib_odocl_rules_def =
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let pkg = Lib_info.package (Lib.Local.info lib) in
     let* () =
-      Memo.Build.parallel_iter odocs ~f:(fun odoc ->
-          link_odoc_rules sctx ~pkg ~requires odoc)
+      let rules = link_odoc_rules sctx ~pkg ~requires in
+      keep_non_hidden_files odocs rules
     in
     let odocl_files = List.map ~f:(fun o -> Path.build o.odocl_file) odocs in
     Rules.Produce.Alias.add_deps
@@ -599,14 +618,12 @@ let setup_pkg_odocl_rules_def =
     let ctx = Super_context.context sctx in
     let* () =
       Memo.Build.parallel_iter libs ~f:(setup_lib_odocl_rules sctx ~requires)
-    and* pkg_odocs =
-      let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-      let pkg = Some pkg in
-      let+ () =
-        Memo.Build.parallel_iter pkg_odocs ~f:(fun odoc ->
-            link_odoc_rules sctx ~pkg ~requires odoc)
-      in
-      pkg_odocs
+    in
+    let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
+    let pkg = pkg in
+    let* () =
+      let rules = link_odoc_rules sctx ~pkg:(Some pkg) ~requires in
+      keep_non_hidden_files pkg_odocs rules
     and* lib_odocs =
       Memo.Build.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
     in
@@ -638,7 +655,8 @@ let setup_lib_html_rules_def =
     let ctx = Super_context.context sctx in
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let* () =
-      Memo.Build.parallel_iter odocs ~f:(fun odoc -> setup_html sctx odoc)
+      let rules = setup_html sctx in
+      keep_non_hidden_files odocs rules
     in
     let html_files = List.map ~f:(fun o -> Path.build o.html_file) odocs in
     let static_html = List.map ~f:Path.build (static_html ctx) in
@@ -657,13 +675,11 @@ let setup_lib_html_rules sctx lib =
 let setup_pkg_html_rules_def =
   let f (sctx, pkg, (libs : Lib.Local.t list)) =
     let ctx = Super_context.context sctx in
-    let* () = Memo.Build.parallel_iter libs ~f:(setup_lib_html_rules sctx)
-    and* pkg_odocs =
-      let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-      let+ () =
-        Memo.Build.parallel_iter pkg_odocs ~f:(fun o -> setup_html sctx o)
-      in
-      pkg_odocs
+    let* () = Memo.Build.parallel_iter libs ~f:(setup_lib_html_rules sctx) in
+    let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
+    let* () =
+      let rules = setup_html sctx in
+      keep_non_hidden_files pkg_odocs rules
     and* lib_odocs =
       Memo.Build.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
     in
@@ -798,38 +814,6 @@ let global_rules sctx =
     (Action_builder.deps action)
 
 let gen_rules sctx ~dir:_ rest =
-  let setup_pkg_rules pkg_rules lib_unique_name_or_pkg =
-    (* TODO we can be a better with the error handling in the case where
-       lib_unique_name_or_pkg is neither a valid pkg or lnu *)
-    let lib, lib_db = Scope_key.of_string sctx lib_unique_name_or_pkg in
-    let pkg_rules pkg =
-      let* pkg_libs = load_all_odoc_rules_pkg sctx ~pkg in
-      pkg_rules sctx ~pkg ~libs:pkg_libs
-    in
-    (* jeremiedimino: why isn't [None] some kind of error here? *)
-    let* lib =
-      let+ lib = Lib.DB.find lib_db lib in
-      Option.bind ~f:Lib.Local.of_lib lib
-    in
-    let+ () =
-      match lib with
-      | None -> Memo.Build.return ()
-      | Some lib -> (
-        match Lib_info.package (Lib.Local.info lib) with
-        | None -> setup_lib_html_rules sctx lib
-        | Some pkg -> pkg_rules pkg)
-    and+ () =
-      match
-        Package.Name.Map.find (SC.packages sctx)
-          (Package.Name.of_string lib_unique_name_or_pkg)
-      with
-      | None -> Memo.Build.return ()
-      | Some pkg ->
-        let name = Package.name pkg in
-        pkg_rules name
-    in
-    ()
-  in
   match rest with
   | [ "_html" ] -> setup_css_rule sctx >>> setup_toplevel_index_rule sctx
   | "_mlds" :: pkg :: _
@@ -852,7 +836,68 @@ let gen_rules sctx ~dir:_ rest =
       let dir = Lib_info.src_dir info in
       Build_system.load_dir ~dir)
   | "_odocls" :: lib_unique_name_or_pkg :: _ ->
-    setup_pkg_rules setup_pkg_odocl_rules lib_unique_name_or_pkg
+    (* setup_pkg_rules setup_pkg_odocl_rules lib_unique_name_or_pkg *)
+    (* TODO we can be a better with the error handling in the case where
+       lib_unique_name_or_pkg is neither a valid pkg or lnu *)
+    let lib, lib_db = Scope_key.of_string sctx lib_unique_name_or_pkg in
+    let setup_pkg_odocl_rules pkg =
+      let* pkg_libs = load_all_odoc_rules_pkg sctx ~pkg in
+      setup_pkg_odocl_rules sctx ~pkg ~libs:pkg_libs
+    in
+    (* jeremiedimino: why isn't [None] some kind of error here? *)
+    let* lib =
+      let+ lib = Lib.DB.find lib_db lib in
+      Option.bind ~f:Lib.Local.of_lib lib
+    in
+    let+ () =
+      match lib with
+      | None -> Memo.Build.return ()
+      | Some lib -> (
+        match Lib_info.package (Lib.Local.info lib) with
+        | None ->
+          let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false in
+          setup_lib_odocl_rules sctx lib ~requires
+        | Some pkg -> setup_pkg_odocl_rules pkg)
+    and+ () =
+      match
+        Package.Name.Map.find (SC.packages sctx)
+          (Package.Name.of_string lib_unique_name_or_pkg)
+      with
+      | None -> Memo.Build.return ()
+      | Some pkg ->
+        let name = Package.name pkg in
+        setup_pkg_odocl_rules name
+    in
+    ()
   | "_html" :: lib_unique_name_or_pkg :: _ ->
-    setup_pkg_rules setup_pkg_html_rules lib_unique_name_or_pkg
+    (* TODO we can be a better with the error handling in the case where
+       lib_unique_name_or_pkg is neither a valid pkg or lnu *)
+    let lib, lib_db = Scope_key.of_string sctx lib_unique_name_or_pkg in
+    let setup_pkg_html_rules pkg =
+      let* pkg_libs = load_all_odoc_rules_pkg sctx ~pkg in
+      setup_pkg_html_rules sctx ~pkg ~libs:pkg_libs
+    in
+    (* jeremiedimino: why isn't [None] some kind of error here? *)
+    let* lib =
+      let+ lib = Lib.DB.find lib_db lib in
+      Option.bind ~f:Lib.Local.of_lib lib
+    in
+    let+ () =
+      match lib with
+      | None -> Memo.Build.return ()
+      | Some lib -> (
+        match Lib_info.package (Lib.Local.info lib) with
+        | None -> setup_lib_html_rules sctx lib
+        | Some pkg -> setup_pkg_html_rules pkg)
+    and+ () =
+      match
+        Package.Name.Map.find (SC.packages sctx)
+          (Package.Name.of_string lib_unique_name_or_pkg)
+      with
+      | None -> Memo.Build.return ()
+      | Some pkg ->
+        let name = Package.name pkg in
+        setup_pkg_html_rules name
+    in
+    ()
   | _ -> Memo.Build.return ()
