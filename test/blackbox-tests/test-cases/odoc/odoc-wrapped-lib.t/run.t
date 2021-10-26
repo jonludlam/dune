@@ -3,10 +3,6 @@ This test generates documentation for non-hidden modules only for a library:
   $ ocamlc -c -bin-annot foo__.ml
 
   $ dune build @doc
-  Error: No rule found for _doc/_html/foo/Foo__private/index.html
-  -> required by alias _doc/_html/foo/doc
-  -> required by alias doc
-  [1]
 
  Hidden modules should be compiled
   $ find _build/default -name '*.odoc'
