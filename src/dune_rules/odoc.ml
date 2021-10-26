@@ -514,32 +514,26 @@ let odoc_artefacts sctx target =
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
-    let* modules = entry_modules_by_lib sctx lib in
-    List.map
-      ~f:(fun m ->
-        let odoc_file = Obj_dir.Module.odoc obj_dir m in
-        create_odoc ctx ~target odoc_file)
-      modules
-    |> Memo.Build.return
-
-(** Non_hidden are files are ones without double underscores in their filenames. *)
-let keep_non_hidden_files odocs rules =
-  let is_hidden s =
-    let len = String.length s in
-    let rec aux i =
-      if i > len - 2 then
-        false
-      else if s.[i] = '_' && s.[i + 1] = '_' then
-        true
-      else
-        aux (i + 1)
+    let is_hidden s =
+      let len = String.length s in
+      let rec aux i =
+        if i > len - 2 then
+          false
+        else if s.[i] = '_' && s.[i + 1] = '_' then
+          true
+        else
+          aux (i + 1)
+      in
+      aux 0
     in
-    aux 0
-  in
-  Memo.Build.parallel_iter odocs ~f:(fun odoc ->
-      match is_hidden (Path.Build.to_string odoc.odoc_file) with
-      | true -> Memo.Build.return ()
-      | false -> rules odoc)
+    let* modules = entry_modules_by_lib sctx lib in
+    List.filter
+      ~f:(fun m -> not (is_hidden (Module_name.to_string (Module.name m))))
+      modules
+    |> List.map ~f:(fun m ->
+           let odoc_file = Obj_dir.Module.odoc obj_dir m in
+           create_odoc ctx ~target odoc_file)
+    |> Memo.Build.return
 
 let setup_lib_odocl_rules_def =
   let module Input = struct
@@ -565,8 +559,8 @@ let setup_lib_odocl_rules_def =
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let pkg = Lib_info.package (Lib.Local.info lib) in
     let* () =
-      let rules = link_odoc_rules sctx ~pkg ~requires in
-      keep_non_hidden_files odocs rules
+      Memo.Build.parallel_iter odocs ~f:(fun odoc ->
+          link_odoc_rules sctx ~pkg ~requires odoc)
     in
     let odocl_files = List.map ~f:(fun o -> Path.build o.odocl_file) odocs in
     Rules.Produce.Alias.add_deps
@@ -618,12 +612,14 @@ let setup_pkg_odocl_rules_def =
     let ctx = Super_context.context sctx in
     let* () =
       Memo.Build.parallel_iter libs ~f:(setup_lib_odocl_rules sctx ~requires)
-    in
-    let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-    let pkg = pkg in
-    let* () =
-      let rules = link_odoc_rules sctx ~pkg:(Some pkg) ~requires in
-      keep_non_hidden_files pkg_odocs rules
+    and* pkg_odocs =
+      let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
+      let pkg = Some pkg in
+      let+ () =
+        Memo.Build.parallel_iter pkg_odocs ~f:(fun odoc ->
+            link_odoc_rules sctx ~pkg ~requires odoc)
+      in
+      pkg_odocs
     and* lib_odocs =
       Memo.Build.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
     in
@@ -655,8 +651,7 @@ let setup_lib_html_rules_def =
     let ctx = Super_context.context sctx in
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let* () =
-      let rules = setup_html sctx in
-      keep_non_hidden_files odocs rules
+      Memo.Build.parallel_iter odocs ~f:(fun odoc -> setup_html sctx odoc)
     in
     let html_files = List.map ~f:(fun o -> Path.build o.html_file) odocs in
     let static_html = List.map ~f:Path.build (static_html ctx) in
@@ -675,11 +670,13 @@ let setup_lib_html_rules sctx lib =
 let setup_pkg_html_rules_def =
   let f (sctx, pkg, (libs : Lib.Local.t list)) =
     let ctx = Super_context.context sctx in
-    let* () = Memo.Build.parallel_iter libs ~f:(setup_lib_html_rules sctx) in
-    let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-    let* () =
-      let rules = setup_html sctx in
-      keep_non_hidden_files pkg_odocs rules
+    let* () = Memo.Build.parallel_iter libs ~f:(setup_lib_html_rules sctx)
+    and* pkg_odocs =
+      let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
+      let+ () =
+        Memo.Build.parallel_iter pkg_odocs ~f:(fun o -> setup_html sctx o)
+      in
+      pkg_odocs
     and* lib_odocs =
       Memo.Build.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
     in
