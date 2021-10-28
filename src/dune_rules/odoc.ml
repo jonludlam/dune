@@ -833,7 +833,6 @@ let gen_rules sctx ~dir:_ rest =
       let dir = Lib_info.src_dir info in
       Build_system.load_dir ~dir)
   | "_odocls" :: lib_unique_name_or_pkg :: _ ->
-    (* setup_pkg_rules setup_pkg_odocl_rules lib_unique_name_or_pkg *)
     (* TODO we can be a better with the error handling in the case where
        lib_unique_name_or_pkg is neither a valid pkg or lnu *)
     let lib, lib_db = Scope_key.of_string sctx lib_unique_name_or_pkg in
