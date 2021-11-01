@@ -105,8 +105,6 @@ module Dep : sig
       produced by odoc for [target] *)
   val html_alias : Context.t -> target -> Alias.t
 
-  val odocl_alias : Context.t -> target -> Alias.t
-
   (** [deps ctx pkg libraries] returns all odoc dependencies of [libraries]. If
       [libraries] are all part of a package [pkg], then the odoc dependencies of
       the package are also returned*)
@@ -121,8 +119,6 @@ module Dep : sig
   val setup_deps : Context.t -> target -> Path.Set.t -> unit Memo.Build.t
 end = struct
   let html_alias ctx m = Alias.doc ~dir:(Paths.html ctx m)
-
-  let odocl_alias ctx m = Alias.doc ~dir:(Paths.odocl ctx m)
 
   let alias = Alias.make (Alias.Name.of_string ".odoc-all")
 
@@ -555,17 +551,10 @@ let setup_lib_odocl_rules_def =
     let to_dyn _ = Dyn.Opaque
   end in
   let f (sctx, lib, requires) =
-    let ctx = Super_context.context sctx in
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let pkg = Lib_info.package (Lib.Local.info lib) in
-    let* () =
       Memo.Build.parallel_iter odocs ~f:(fun odoc ->
           link_odoc_rules sctx ~pkg ~requires odoc)
-    in
-    let odocl_files = List.map ~f:(fun o -> Path.build o.odocl_file) odocs in
-    Rules.Produce.Alias.add_deps
-      (Dep.odocl_alias ctx (Lib lib))
-      (Action_builder.paths (List.rev odocl_files))
   in
   Memo.With_implicit_output.create "setup_library_odocls_rules"
     ~implicit_output:Rules.implicit_output
@@ -609,10 +598,9 @@ let setup_pkg_odocl_rules_def =
       let libs = (libs :> Lib.t list) in
       Lib.closure libs ~linking:false
     in
-    let ctx = Super_context.context sctx in
     let* () =
       Memo.Build.parallel_iter libs ~f:(setup_lib_odocl_rules sctx ~requires)
-    and* pkg_odocs =
+    and* _ =
       let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
       let pkg = Some pkg in
       let+ () =
@@ -620,14 +608,10 @@ let setup_pkg_odocl_rules_def =
             link_odoc_rules sctx ~pkg ~requires odoc)
       in
       pkg_odocs
-    and* lib_odocs =
+    and* _ =
       Memo.Build.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
     in
-    let odocs = List.concat (pkg_odocs :: lib_odocs) in
-    let odocl_files = List.map ~f:(fun o -> Path.build o.odocl_file) odocs in
-    Rules.Produce.Alias.add_deps
-      (Dep.odocl_alias ctx (Pkg pkg))
-      (Action_builder.paths (List.rev odocl_files))
+    Memo.Build.return ()
   in
   setup_pkg_rules_def "setup-package-odocls-rules" f
 
