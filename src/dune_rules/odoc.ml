@@ -113,10 +113,14 @@ module Paths = struct
 
   let css_file ctx = html_root ctx ++ "odoc.css"
 
+  let support_files_targets ctx = html_root ctx ++ ".support-files-targets"
+
   let highlight_pack_js ctx = html_root ctx ++ "highlight.pack.js"
 
   let toplevel_index ctx = html_root ctx ++ "index.html"
 end
+
+let dep_set_of_files = Dep.Set.of_files
 
 module Dep : sig
   (** [html_alias ctx target] returns the alias that depends on all html targets
@@ -193,7 +197,7 @@ let odoc_base_flags sctx build_dir =
   | Fatal -> Command.Args.A "--warn-error"
   | Nonfatal -> S []
 
-let run_odoc sctx ~dir command ~flags_for args =
+let run_odoc sctx ~dir command ?stdout_to ~flags_for args =
   let build_dir = (Super_context.context sctx).build_dir in
   let open Memo.O in
   let* program =
@@ -208,7 +212,7 @@ let run_odoc sctx ~dir command ~flags_for args =
   let deps = Action_builder.env_var "ODOC_SYNTAX" in
   let open Action_builder.With_targets.O in
   Action_builder.with_no_targets deps
-  >>> Command.run ~dir program [ A command; base_flags; S args ]
+  >>> Command.run ~dir ?stdout_to program [ A command; base_flags; S args ]
 
 let module_deps (m : Module.t) ~obj_dir ~(dep_graphs : Dep_graph.Ml_kind.t) =
   Action_builder.dyn_paths_unit
@@ -368,15 +372,37 @@ let setup_html sctx (odoc_file : odoc_artefact) =
                    ])))
        :: run_odoc :: dummy))
 
+let support_files_targets sctx =
+  let ctx = Super_context.context sctx in
+  let output = Paths.support_files_targets ctx in
+  let open Memo.O in
+  let* run_odoc =
+    run_odoc sctx ~dir:(Path.build ctx.build_dir) "support-files-targets"
+      ~stdout_to:output ~flags_for:None [ As ["-o"; "."];
+        Hidden_targets [ output ]] 
+  in
+  add_rule sctx run_odoc
+
+let read_support_files_targets sctx =
+  let ctx = Super_context.context sctx in
+  let output = Paths.support_files_targets ctx in
+  Action_builder.with_no_targets
+    (Action_builder.map ~f:(List.map ~f:(fun line -> Paths.html_root ctx ++ line))
+     (Action_builder.lines_of (Path.build output)))
+
+
 let setup_css_rule sctx =
   let open Memo.O in
   let ctx = Super_context.context sctx in
   let* run_odoc =
+    let targets = read_support_files_targets sctx in
+
     run_odoc sctx ~dir:(Path.build ctx.build_dir) "support-files"
       ~flags_for:None
       [ A "-o"
       ; Path (Path.build (Paths.html_root ctx))
-      ; Hidden_targets [ Paths.css_file ctx; Paths.highlight_pack_js ctx ]
+      ; Hidden_deps (dep_set_of_files [ Path.build (Paths.support_files_targets ctx) ])
+      ; Hidden_targets targets
       ]
   in
   add_rule sctx run_odoc
@@ -818,7 +844,7 @@ let gen_rules sctx ~dir:_ rest =
          ; directory_targets = Path.Build.Map.empty
          })
   | [ "_html" ] ->
-    has_rules (setup_css_rule sctx >>> setup_toplevel_index_rule sctx)
+    has_rules (support_files_targets sctx >>> setup_css_rule sctx >>> setup_toplevel_index_rule sctx)
   | [ "_mlds"; pkg ] ->
     with_package pkg ~f:(fun pkg ->
         let* _mlds, rules = package_mlds sctx ~pkg in
