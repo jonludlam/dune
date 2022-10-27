@@ -2,6 +2,29 @@ open Import
 open Dune_file
 open Memo.O
 
+type mld_source =
+  | MS_File
+  | MS_Renamed_file of Path.Build.t
+  | MS_String of string
+
+type asource =
+  | S_Module of (Module.t * Path.Build.t Obj_dir.t)
+  | S_Mld of Path.Build.t * mld_source
+
+type artefact_tree = {
+  source : asource;
+  mld_children : string list; (* e.g. "package" or "vendored" *)
+  subdir : string;
+  odoc_dir : Path.Build.t;
+  odoc_file : string;
+  odocl_dir : Path.Build.t;
+  odocl_file : string;
+  html_dir : Path.Build.t;
+  html_file : string;
+  parent : artefact_tree option;
+}
+
+
 let ( ++ ) = Path.Build.relative
 
 let find_project_by_key =
@@ -94,9 +117,13 @@ module Paths = struct
       Obj_dir.odoc_dir obj_dir
     | Pkg pkg -> root ctx ++ sprintf "_odoc/pkg/%s" (Package.Name.to_string pkg)
 
+  let odocs_root ctx = root ctx ++ "_odoc"
+
   let html_root ctx = root ctx ++ "_html"
 
   let odocl_root ctx = root ctx ++ "_odocls"
+
+  let mld_root ctx = root ctx ++ "_mlds"
 
   let add_pkg_lnu base m =
     base
@@ -116,8 +143,350 @@ module Paths = struct
   let highlight_pack_js ctx = html_root ctx ++ "highlight.pack.js"
 
   let toplevel_index ctx = html_root ctx ++ "index.html"
+
+  let docs_mld_path ctx = mld_root ctx ++ "docs.mld"
+
+  let packages_mld_path ctx = mld_root ctx ++ "docs/packages.mld"
+  
+  let package_mld_path ctx pkg = mld_root ctx ++ "docs/packages" ++ (let n = Package.Name.to_string pkg in sprintf "%s.mld" n)
+
+  let private_libraries_mld_path ctx = mld_root ctx ++ "docs/private_libraries.mld"
+
+  let private_library_mld_path ctx lib =
+    let name = lib_unique_name lib in
+    mld_root ctx ++ "docs/private_library" ++ (sprintf "%s.mld" name)
+
+
 end
 
+
+let odoc_ext = ".odoc"
+let odocl_ext = ".odoc"
+
+
+let mknode ctx ~source ~mld_children ~parent =
+  let odoc_dir, odoc_file =
+    match source with
+    | S_Module (m, obj_dir) ->
+      let obj_name = Module.obj_name m in
+      let basename = Module_name.Unique.artifact_filename obj_name ~ext:odoc_ext in
+      (Obj_dir.odoc_dir obj_dir), basename
+    | S_Mld (f, _) ->
+      let t = Filename.chop_extension (Path.Build.basename f) in
+      let dir =
+        Option.value ~default:(Paths.odocs_root ctx)
+          (Option.map parent ~f:(fun p -> p.odoc_dir ++ p.subdir)) in
+      dir, (sprintf "page-%s%s" t odoc_ext)
+  in
+  let odocl_dir, odocl_file =
+    let dir =
+      Option.value ~default:(Paths.odocl_root ctx)
+        (Option.map parent ~f:(fun p -> p.odocl_dir ++ p.subdir)) in
+    match source with
+    | S_Module (m, _) ->
+      let obj_name = Module.obj_name m in
+      let basename = Module_name.Unique.artifact_filename obj_name ~ext:odocl_ext in
+      dir, basename
+    | S_Mld (f, _) ->
+      let t = Filename.chop_extension (Path.Build.basename f) in
+      dir, (sprintf "page-%s%s" t odocl_ext) in
+  let html_dir, html_file =
+    let dir =
+      Option.value ~default:(Paths.html_root ctx)
+        (Option.map parent ~f:(fun p -> p.html_dir ++ p.subdir)) in
+    match source with
+    | S_Module (f, _) ->
+      let basename = Module.name f |> Module_name.to_string in
+      let subdir = Stdune.String.capitalize basename in
+      dir, sprintf "%s/index.html" subdir
+    | S_Mld (f,_) ->
+      let basename = Path.Build.basename f |> Filename.chop_extension in
+      let dir =
+        Option.value ~default:(Paths.html_root ctx)
+          (Option.map parent ~f:(fun p -> p.html_dir ++ p.subdir)) in
+      match mld_children with
+      | [] -> dir, sprintf "%s.html" basename
+      | _ -> dir, sprintf "%s/index.html" basename
+  in
+  let subdir =
+    match source with
+    | S_Module (f, _) ->
+      Module.name f |> Module_name.to_string |> String.capitalize
+    | S_Mld (f, _) ->
+      Path.Build.basename f |> Filename.chop_extension
+  in
+  {
+    source;
+    mld_children;
+    subdir;
+    odoc_dir;
+    odoc_file;
+    odocl_dir;
+    odocl_file;
+    html_dir;
+    html_file;
+    parent;
+  }
+
+  module StdMlds = struct
+
+    let docs ctx =
+      let sp = sprintf in
+      let* packages = Only_packages.get () in
+      let list_items = 
+        Package.Name.Map.to_list packages
+        |> List.filter_map ~f:(fun (name, pkg) ->
+                let name = Package.Name.to_string name in
+                let link = sp {|{!page-%s}%s}|} name name in
+                let version_suffix =
+                  match pkg.Package.version with
+                  | None -> ""
+                  | Some v -> sp {| (version %s)|} v
+                in
+                Some (sp "- %s%s" link version_suffix))
+        |> String.concat ~sep:"\n"
+      in
+      let doc_contents = sp {|{0 Docs}
+      
+      %s
+  
+      |} list_items in
+      let source = S_Mld (Paths.docs_mld_path ctx, MS_String doc_contents) in
+      let mld_children = ["packages"] in
+      Memo.return (mknode ctx ~source ~mld_children ~parent:None)
+  
+    let packages ctx =
+      Log.info [ Pp.textf "StdMlds.packages" ];
+      let* packages = Only_packages.get () in
+      let mld_children = Package.Name.Map.to_list_map packages ~f:(fun n _ ->
+          Package.Name.to_string n) in
+      let source = S_Mld (Paths.packages_mld_path ctx, MS_String "packages mld") in
+      let+ docs = docs ctx in
+      mknode ctx ~source ~mld_children ~parent:(Some docs)
+  
+  
+  let libs_of_pkg ctx ~pkg =
+    let+ entries = Scope.DB.lib_entries_of_package ctx pkg in
+    (* Filter out all implementations of virtual libraries *)
+    List.filter_map entries ~f:(fun (entry : Scope.DB.Lib_entry.t) ->
+      match entry with
+      | Library lib ->
+        let is_impl =
+          Lib.Local.to_lib lib |> Lib.info |> Lib_info.implements
+          |> Option.is_some
+        in
+        Option.some_if (not is_impl) lib
+      | Deprecated_library_name _ -> None)
+  
+  let entry_modules_by_lib sctx lib =
+    let info = Lib.Local.info lib in
+    let obj_dir = Lib_info.obj_dir info in
+    let dir = Lib_info.src_dir info in
+    let name = Lib.name (Lib.Local.to_lib lib) in
+    let+ x = Dir_contents.get sctx ~dir >>= Dir_contents.ocaml
+    >>| Ml_sources.modules ~for_:(Library name)
+    >>| Modules.entry_modules in
+    (x, obj_dir)
+  
+  let entry_modules sctx ~pkg =
+    let* l =
+      libs_of_pkg (Super_context.context sctx) ~pkg
+      >>| List.filter ~f:(fun lib ->
+              Lib.Local.info lib |> Lib_info.status |> Lib_info.Status.is_private
+              |> not)
+    in
+    let+ l =
+      Memo.parallel_map l ~f:(fun l ->
+          let+ m = entry_modules_by_lib sctx l in
+          (l, m))
+    in
+    Lib.Local.Map.of_list_exn l
+        
+  let default_index ~pkg (entry_modules : (Module.t list * Path.Build.t Obj_dir.t) Lib.Local.Map.t) =
+    let b = Buffer.create 512 in
+    Printf.bprintf b "{0 %s index}\n" (Package.Name.to_string pkg);
+    Lib.Local.Map.to_list entry_modules
+    |> List.sort ~compare:(fun (x, _) (y, _) ->
+            let name lib = Lib.name (Lib.Local.to_lib lib) in
+            Lib_name.compare (name x) (name y))
+    |> List.iter ~f:(fun (lib, (modules, _)) ->
+            let lib = Lib.Local.to_lib lib in
+            Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string (Lib.name lib));
+            Buffer.add_string b
+              (match modules with
+              | [ x ] ->
+                sprintf
+                  "The entry point of this library is the module:\n{!module-%s}.\n"
+                  (Module_name.to_string (Module.name x))
+              | _ ->
+                sprintf
+                  "This library exposes the following toplevel modules:\n\
+                  {!modules:%s}\n"
+                  (modules
+                  |> List.filter ~f:(fun m ->
+                        Module.visibility m = Visibility.Public)
+                  |> List.sort ~compare:(fun x y ->
+                        Module_name.compare (Module.name x) (Module.name y))
+                  |> List.map ~f:(fun m -> Module_name.to_string (Module.name m))
+                  |> String.concat ~sep:" ")));
+    Buffer.contents b
+    let check_mlds_no_dupes ~pkg ~mlds =
+      match
+        List.map mlds ~f:(fun mld ->
+            (Filename.chop_extension (Path.Build.basename mld), mld))
+        |> String.Map.of_list
+      with
+      | Ok m -> m
+      | Error (_, p1, p2) ->
+        User_error.raise
+          [ Pp.textf "Package %s has two mld's with the same basename %s, %s"
+              (Package.Name.to_string pkg)
+              (Path.to_string_maybe_quoted (Path.build p1))
+              (Path.to_string_maybe_quoted (Path.build p2))
+          ]
+  
+        
+      let package =
+
+        let memo =
+          Memo.create "package-mlds"
+            ~input:(module Super_context.As_memo_key.And_package)
+            (fun (sctx, pkg) ->      
+              Log.info [ Pp.textf "StdMlds.package %s" (Package.Name.to_string (Package.name pkg))];
+
+                  (* CR-someday jeremiedimino: it is weird that we drop the
+                      [Package.t] and go back to a package name here. Need to try and
+                      change that one day. *)
+                  let pkg = Package.name pkg in
+                  let* mlds = Packages.mlds sctx pkg in
+                  let mlds = check_mlds_no_dupes ~pkg ~mlds in
+                  let ctx = Super_context.context sctx in
+                  let index_exists = String.Map.mem mlds "index" in
+                  let pkg_mld = Paths.package_mld_path ctx pkg in
+                  let* entry_modules = entry_modules sctx ~pkg in
+                  let source =
+                    if index_exists then MS_Renamed_file (String.Map.find_exn mlds "index") else MS_String (default_index ~pkg entry_modules) in
+                  let mlds = String.Map.remove mlds "index" in
+                  let mld_children = String.Map.fold ~init:[] ~f:(fun mld list ->
+                    let name = Path.Build.basename mld |> Filename.chop_extension in
+                    name::list) mlds in
+                 
+                  let+ parent = packages ctx in
+                  let pkg = mknode ctx ~source:(S_Mld (pkg_mld, source)) ~mld_children ~parent:(Some parent) in
+                  let children = String.Map.fold ~init:[] ~f:(fun mld list ->
+                    let source = MS_File in
+                    mknode ctx ~source:(S_Mld (mld, source)) ~mld_children:[] ~parent:(Some pkg) :: list ) mlds in
+                  let module_children = Lib.Local.Map.fold ~init:[] ~f:(fun (modules, obj_dir) l ->
+                      List.fold_left ~init:l ~f:(fun l m ->
+                        let source = S_Module (m, obj_dir) in
+                        mknode ctx ~source ~mld_children:[] ~parent:(Some pkg) :: l) modules) entry_modules in
+                    (pkg, children @ module_children))
+        in
+        fun sctx ~pkg -> Memo.exec memo (sctx, pkg)
+      
+    let _private_libraries ctx =
+      let source = S_Mld (Paths.private_libraries_mld_path ctx, MS_String "libraries mld") in
+      let mld_children = [] in
+      let+ docs = docs ctx in
+      mknode ctx ~source ~mld_children ~parent:(Some docs)
+  
+    let _private_library ctx lib =
+      let source = S_Mld (Paths.private_library_mld_path ctx lib, MS_String "library mld") in
+      let mld_children = [] in
+      let+ docs = docs ctx in
+      mknode ctx ~source ~mld_children ~parent:(Some docs)
+  
+    let _library sctx lib =
+      match Lib_info.package (Lib.info lib) with
+      | Some pkg_name -> (
+        let* packages = Only_packages.get () in
+        match Package.Name.Map.find packages pkg_name with
+        | Some pkg ->
+          let+ result = package sctx ~pkg in
+          [result]
+        | None -> Memo.return [])
+      | None -> Memo.return []
+  end
+
+  let odoc_base_flags sctx build_dir =
+    let open Memo.O in
+    let+ conf = Super_context.odoc sctx ~dir:build_dir in
+    match conf.Env_node.Odoc.warnings with
+    | Fatal -> Command.Args.A "--warn-error"
+    | Nonfatal -> S []
+  
+  let run_odoc sctx ~dir command ~flags_for args =
+    let build_dir = (Super_context.context sctx).build_dir in
+    let open Memo.O in
+    let* program =
+      Super_context.resolve_program sctx ~dir:build_dir "odoc" ~loc:None
+        ~hint:"opam install odoc"
+    in
+    let+ base_flags =
+      match flags_for with
+      | None -> Memo.return Command.Args.empty
+      | Some path -> odoc_base_flags sctx path
+    in
+    let deps = Action_builder.env_var "ODOC_SYNTAX" in
+    let open Action_builder.With_targets.O in
+    Action_builder.with_no_targets deps
+    >>> Command.run ~dir program [ A command; base_flags; S args ]
+  
+  
+  
+  let compile_mld sctx (artefact : artefact_tree) =
+    let open Memo.O in
+    let odoc_input = match artefact.source with | S_Mld (f, _) -> f | _ -> failwith "Invalid artefact" in
+    let odoc_reference (a : artefact_tree) = Filename.chop_extension a.odoc_file in
+    let children = List.fold_left
+      ~init:[]
+      ~f:(fun args mld ->
+          (Command.Args.A "--child") :: (A (sprintf "page-\"%s\"" mld)) :: args)
+      artefact.mld_children in
+    let parent = Option.map artefact.parent ~f:(
+      fun m ->
+        [ Command.Args.A "-I";
+          Path (Path.build (m.odoc_dir));
+          A "--parent";
+          A (odoc_reference m);
+          Hidden_deps (Import.Dep.Set.of_files [Path.build (m.odoc_dir ++ m.odoc_file)])
+           ]) in
+    let parent_args = Option.value ~default:[] parent in
+    Log.info [ Pp.textf "target: %s" (Path.Build.to_string (artefact.odoc_dir ++ artefact.odoc_file))];
+    let* run_odoc =
+      run_odoc sctx ~dir:(Path.build (artefact.odoc_dir)) "compile"
+        ~flags_for:(Some odoc_input)
+        ([ Command.Args.A "-o"
+        ; Target (artefact.odoc_dir ++ artefact.odoc_file)
+        ; Dep (Path.build odoc_input)
+        ] @ parent_args @ children)
+    in
+    add_rule sctx run_odoc
+
+let mld_rules sctx (artefacts : artefact_tree list) =
+  let test artefact =
+    (artefact.mld_children, artefact.html_file, artefact.html_file, artefact.odocl_file, artefact.odocl_dir, artefact.odoc_file, artefact.parent) in
+  let mld_rule (a : artefact_tree) = (* mld rule *)
+    ignore (test a);
+    match a.source with
+    | S_Mld (f, MS_String s) ->
+      Log.info [ Pp.textf "write file - path: %s" (Path.Build.to_string f)];
+      Some (Action_builder.write_file f s)
+    | S_Mld (f, MS_Renamed_file orig) ->
+      Log.info [ Pp.textf "symlink - path: %s" (Path.Build.to_string f)];
+      Some (Action_builder.symlink ~src:(Path.build orig) ~dst:f)
+    | S_Mld (_, _) -> None
+    | S_Module _ -> None
+  in
+  List.filter_map ~f:mld_rule artefacts |> Memo.List.iter ~f:(add_rule sctx)
+
+let odoc_rules sctx artefacts =
+  let odoc_rule (a : artefact_tree) =
+    match a.source with | S_Mld _ -> compile_mld sctx a | _ -> Memo.return ()
+  in
+  Memo.List.iter ~f:odoc_rule artefacts
+
+  
 module Dep : sig
   (** [html_alias ctx target] returns the alias that depends on all html targets
       produced by odoc for [target] *)
@@ -247,7 +616,7 @@ let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
     add_rule sctx action_with_targets
   in
   (m, odoc_file)
-
+   
 let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
   let open Memo.O in
   let odoc_file = Mld.odoc_file m ~doc_dir in
@@ -807,6 +1176,7 @@ let with_package pkg ~f =
   | Some pkg -> has_rules (f pkg)
 
 let gen_rules sctx ~dir:_ rest =
+  Log.info [Pp.textf "rules for: %s" (String.concat ~sep:"/" rest)];
   match rest with
   | [] ->
     Memo.return
@@ -817,12 +1187,47 @@ let gen_rules sctx ~dir:_ rest =
          })
   | [ "_html" ] ->
     has_rules (setup_css_rule sctx >>> setup_toplevel_index_rule sctx)
-  | [ "_mlds"; pkg ] ->
+  | ["_mlds"; "docs" ] ->
+    let* doc = StdMlds.packages (Super_context.context sctx) in
+    has_rules (mld_rules sctx [doc])
+  | ["_mlds"; "docs"; "packages"  ] ->
+    let* packages = Only_packages.get () in
+    let packages = Package.Name.Map.to_list packages in
+    let rules =
+      Memo.List.iter packages ~f:(fun (_, pkg) ->
+        let* (r1, rs) = StdMlds.package sctx ~pkg in
+        (mld_rules sctx (r1 :: rs)))
+    in has_rules rules
+  | [ "_mlds"; pkg ] -> 
     with_package pkg ~f:(fun pkg ->
         let* _mlds, rules = package_mlds sctx ~pkg in
         Rules.produce rules)
+  | [ "_mlds" ] ->
+    let* doc = StdMlds.docs (Super_context.context sctx) in
+    has_rules (mld_rules sctx [doc])
+
+    | ["_odoc"; "docs" ] ->
+      let* doc = StdMlds.packages (Super_context.context sctx) in
+      has_rules (odoc_rules sctx [doc])
+    | ["_odoc"; "docs"; "packages"  ] ->
+      let* packages = Only_packages.get () in
+      let packages = Package.Name.Map.to_list packages in
+      let rules =
+        Memo.List.iter packages ~f:(fun (_, pkg) ->
+          let* (r1, rs) = StdMlds.package sctx ~pkg in
+          (odoc_rules sctx (r1 :: rs)))
+      in has_rules rules
+    | [ "_odoc"; pkg ] -> 
+      with_package pkg ~f:(fun pkg ->
+          let* _mlds, rules = package_mlds sctx ~pkg in
+          Rules.produce rules)
+    | [ "_odoc" ] ->
+      let* doc = StdMlds.docs (Super_context.context sctx) in
+      has_rules (odoc_rules sctx [doc])
+  
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg -> setup_package_odoc_rules sctx ~pkg)
+
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
     has_rules
       ((* TODO we can be a better with the error handling in the case where
