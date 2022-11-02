@@ -129,14 +129,16 @@ type target =
   | Findlib of Path.t
 
 type output_type =
-  | Directory
-  | File
+  | Directory of Path.Build.t
+  | File of Path.Build.t
+
+let file_of_output_type = function
+  | Directory x -> x ++ "index.html"
+  | File f -> f
 
 type odoc_artefact =
   { odoc_file : Path.Build.t
   ; odocl_file : Path.Build.t
-  ; html_dir : Path.Build.t
-  ; html_file : Path.Build.t
   ; output_type : output_type
   }
 
@@ -853,13 +855,13 @@ let setup_html sctx (odoc_file : odoc_artefact) =
   let ctx = Super_context.context sctx in
   let to_remove, dummy =
     match odoc_file.output_type with
-    | File _ -> (odoc_file.html_file, [])
-    | Directory ->
+    | File f -> (f, [])
+    | Directory d ->
       (* Dummy target so that the bellow rule as at least one target. We do this
          because we don't know the targets of odoc in this case. The proper way
          to support this would be to have directory targets. *)
-      let dummy = Action_builder.create_file (odoc_file.html_dir ++ ".dummy") in
-      (odoc_file.html_dir, [ dummy ])
+      let dummy = Action_builder.create_file (d ++ ".dummy") in
+      (d, [ dummy ])
   in
   let open Memo.O in
   let* run_odoc =
@@ -869,7 +871,7 @@ let setup_html sctx (odoc_file : odoc_artefact) =
       [ A "-o"
       ; Path (Path.build (Paths.html_root ctx))
       ; Dep (Path.build odoc_file.odocl_file)
-      ; Hidden_targets [ odoc_file.html_file ]
+      ; Hidden_targets [ file_of_output_type odoc_file.output_type ]
       ]
   in
   add_rule sctx
@@ -879,7 +881,7 @@ let setup_html sctx (odoc_file : odoc_artefact) =
              (Action.Full.make
                 (Action.Progn
                    [ Action.Remove_tree to_remove
-                   ; Action.Mkdir (Path.build odoc_file.html_dir)
+                   (* ; Action.Mkdir (Path.build to_remove) *)
                    ])))
        :: run_odoc :: dummy))
 
@@ -993,19 +995,14 @@ let create_odoc ctx ~target odoc_file =
     let html_dir = html_base ++ Stdune.String.capitalize basename in
     { odoc_file
     ; odocl_file
-    ; html_dir
-    ; html_file = html_dir ++ "index.html"
-    ; output_type = Directory
+    ; output_type = Directory (html_dir)
     }
   | Pkg _ ->
     { odoc_file
     ; odocl_file
-    ; html_dir = html_base
-    ; html_file =
-        html_base
-        ++ sprintf "%s.html"
-             (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
-    ; output_type = File
+    ; output_type = File (html_base
+    ++ sprintf "%s.html"
+         (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn))
     }
   | _ -> failwith "bad"
 
@@ -1160,7 +1157,7 @@ let setup_lib_html_rules_def =
     let ctx = Super_context.context sctx in
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let* () = Memo.parallel_iter odocs ~f:(fun odoc -> setup_html sctx odoc) in
-    let html_files = List.map ~f:(fun o -> Path.build o.html_file) odocs in
+    let html_files = List.map ~f:(fun o -> Path.build (file_of_output_type o.output_type)) odocs in
     let static_html = List.map ~f:Path.build (static_html ctx) in
     Rules.Produce.Alias.add_deps
       (OdocDep.html_alias ctx (Lib lib))
@@ -1186,7 +1183,7 @@ let setup_pkg_html_rules_def =
       Memo.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
     in
     let odocs = List.concat (pkg_odocs :: lib_odocs) in
-    let html_files = List.map ~f:(fun o -> Path.build o.html_file) odocs in
+    let html_files = List.map ~f:(fun o -> Path.build (file_of_output_type o.output_type)) odocs in
     let static_html = List.map ~f:Path.build (static_html ctx) in
     Rules.Produce.Alias.add_deps
       (OdocDep.html_alias ctx (Pkg pkg))
