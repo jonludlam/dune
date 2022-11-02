@@ -174,7 +174,7 @@ module Paths = struct
   let external_findlib_root ctx obj_dir =
     let local = local_external_dir ctx obj_dir in
     root ctx ++ "_external" ++ local
-
+ 
   let external_findlib_odoc ctx obj_dir =
     external_findlib_root ctx obj_dir ++ "_odoc"
 
@@ -641,7 +641,7 @@ module OdocDep : sig
     -> Lib.t list Resolve.t
     -> unit Action_builder.t
 
-  val alias : Context.t -> target -> Alias.t
+  (* val alias : Context.t -> target -> Alias.t *)
 
   (*** [setup_deps ctx target odocs] Adds [odocs] as dependencies for [target].
     These dependencies may be used using the [deps] function *)
@@ -1359,7 +1359,10 @@ module ExternalDeps = struct
   let deps_graph sctx findlib_deps =
     let ctx = Super_context.context sctx in
     let open Action_builder.O in
+    Log.info [Pp.textf "here we are, findlib_deps len=%d = [%s]" (List.length findlib_deps) (String.concat ~sep:"," (List.map ~f:Path.to_string findlib_deps))];
+    let deps = List.map ~f:(fun dir -> Path.build (Paths.deps_filename ctx dir)) findlib_deps |> Dep.Set.of_files in
     let+ all_deps =
+      Action_builder.deps deps >>>
       Action_builder.List.fold_left ~init:[] findlib_deps
         ~f:(fun list obj_dir ->
           let+ lines =
@@ -1481,8 +1484,14 @@ let obj_info_of_cma (sctx : Super_context.t) obj_dir cma =
     (Command.run ocamlobjinfo
        ~dir:(Path.build (Paths.root ctx))
        ~stdout_to:destination [ Dep cma ])
-
-let compile_external_odoc sctx dir cmas findlib_deps cmti_file odoc_file =
+(* 
+type compile_ty =
+  | External of {
+    cmas : (Dune_package.Lib.t * Path.t) list;
+    findlib_deps : Path.t list;
+    source : Path.t;
+  } *)
+let compile_external_odoc sctx dir obj_dirs cmas db cmti_file odoc_file =
   Log.info
     [ Pp.textf "Rule for: %s (depending on %s)"
         (Path.Build.to_string odoc_file)
@@ -1490,7 +1499,6 @@ let compile_external_odoc sctx dir cmas findlib_deps cmti_file odoc_file =
     ];
   let ctx = Super_context.context sctx in
   let output_dir = Paths.external_findlib_odoc ctx dir in
-  let db = ExternalDeps.deps_graph sctx findlib_deps in
   let deps =
     let open Action_builder.O in
     let* db = db in
@@ -1507,7 +1515,7 @@ let compile_external_odoc sctx dir cmas findlib_deps cmti_file odoc_file =
              Path.build p)
       |> Dep.Set.of_files |> Action_builder.deps
   in
-  let other_deps =
+  (* let other_deps =
     List.filter_map
       ~f:(fun d ->
         if d = dir then None
@@ -1518,10 +1526,10 @@ let compile_external_odoc sctx dir cmas findlib_deps cmti_file odoc_file =
           Some (OdocDep.alias ctx (Findlib d) |> Dep.alias)))
       findlib_deps
     |> Dep.Set.of_list
-  in
+  in *)
 
   let iflags =
-    List.map findlib_deps ~f:(fun dir ->
+    List.map obj_dirs ~f:(fun dir ->
         let odoc_path = Paths.external_findlib_odoc ctx dir in
         Command.Args.[ A "-I"; Path (Path.build odoc_path) ])
     |> List.concat
@@ -1580,7 +1588,7 @@ let compile_external_odoc sctx dir cmas findlib_deps cmti_file odoc_file =
            ; A "-o"
            ; Target odoc_file
            ; Dep cmti_file
-           ; Hidden_deps other_deps
+           (* ; Hidden_deps other_deps *)
            ]
         @ iflags)
     in
@@ -1699,7 +1707,7 @@ let external_pkg_odoc_rules sctx package_name =
   in
   add_rule sctx run_odoc
 
-let compile_rules_of_findlib_dir sctx dir cmas deps =
+let compile_rules_of_findlib_dir sctx dir obj_dirs cmas =
   let ctx = Super_context.context sctx in
   let* dir_res = Fs_memo.dir_contents (Path.as_outside_build_dir_exn dir) in
   match dir_res with
@@ -1728,6 +1736,8 @@ let compile_rules_of_findlib_dir sctx dir cmas deps =
           mod_name ^ Option.value_exn best_extension)
         modules
     in
+    let db = ExternalDeps.deps_graph sctx obj_dirs in
+
     Memo.parallel_map
       ~f:(fun m ->
         let odoc_file_base = Filename.chop_extension m in
@@ -1736,12 +1746,12 @@ let compile_rules_of_findlib_dir sctx dir cmas deps =
           ++ sprintf "%s.odoc" odoc_file_base
         in
         let+ () =
-          compile_external_odoc sctx dir cmas deps (Path.relative dir m) odoc_file
+          compile_external_odoc sctx dir obj_dirs cmas db (Path.relative dir m) odoc_file
         in
         odoc_file)
       modules
 
-let link_rules_of_findlib_dir sctx odocs dir findlib_deps =
+let link_rules_of_findlib_dir sctx odocs dir obj_dirs =
   let ctx = Super_context.context sctx in
   let contains_double_underscore s =
     let len = String.length s in
@@ -1757,13 +1767,12 @@ let link_rules_of_findlib_dir sctx odocs dir findlib_deps =
         not (contains_double_underscore (Path.Build.basename p)))
   in
   let iflags =
-    List.map findlib_deps ~f:(fun dir ->
+    List.map obj_dirs ~f:(fun dir ->
         let odoc_path = Paths.external_findlib_odoc ctx dir in
         Command.Args.[ A "-I"; Path (Path.build odoc_path) ])
     |> List.concat
   in
   Memo.List.iter non_hidden ~f:(fun odoc_file ->
-      let odoc_dir = Path.Build.parent_exn odoc_file in
       let odoc_file_base =
         Path.Build.basename odoc_file |> Filename.chop_extension
       in
@@ -1777,9 +1786,7 @@ let link_rules_of_findlib_dir sctx odocs dir findlib_deps =
           run_odoc sctx ~dir:(Path.build build_dir) "link"
             ~flags_for:(Some odocl_file)
             (Command.Args.
-               [ A "-I"
-               ; Path (Path.build odoc_dir)
-               ; A "-o"
+               [ A "-o"
                ; Target odocl_file
                ; Dep (Path.build odoc_file)
                ; Hidden_deps (Dep.Set.of_files (List.map ~f:Path.build odocs))
@@ -1851,7 +1858,7 @@ let external_rules sctx dir =
           let+ entry = Findlib.find findlib pkg in
           match entry with
           | Ok (Dune_package.Entry.Library l) ->
-            (* Log.info [Pp.textf "XXX Build rules for library: %s" (Lib_name.to_string (Dune_package.Lib.info l |> Lib_info.name))]; *)
+            Log.info [Pp.textf "XXX Build rules for library: %s" (Lib_name.to_string (Dune_package.Lib.info l |> Lib_info.name))];
             Some l
           | _ -> None)
     in
@@ -1883,14 +1890,17 @@ let external_rules sctx dir =
               if
                 List.exists packages ~f:(fun p ->
                     Dune_package.Lib.info p |> Lib_info.name = l)
-              then None
+              then
+                (Log.info [Pp.textf "removing dependency for %s" (Lib_name.to_string l)]; None)
               else
                 (* Avoid self-dependencies *)
                 Some
                   (l, Obj_dir.dir (Lib_info.obj_dir (Dune_package.Lib.info l')))
             | _ -> None)
-          | Re_export _ -> Memo.return None
-          | Select _ -> Memo.return None)
+          | Re_export _ ->
+            (Log.info [Pp.textf "Ignoring reexport"]; Memo.return None)
+          | Select _ ->
+            (Log.info [Pp.textf "Ignoring select"]; Memo.return None))
         deps
     in
     let* deps =
@@ -1906,13 +1916,11 @@ let external_rules sctx dir =
 
         let* () = deps_of_findlib_dir sctx obj_dir in
         let* odocs =
-          compile_rules_of_findlib_dir sctx obj_dir cmas
-            (ctx.stdlib_dir :: Path.Set.to_list deps)
-
+          compile_rules_of_findlib_dir sctx obj_dir (ctx.stdlib_dir :: Path.Set.to_list deps @ obj_dirs_list) cmas
         in
         let* _odocls =
-          link_rules_of_findlib_dir sctx odocs obj_dir
-            (ctx.stdlib_dir :: Path.Set.to_list deps)
+          link_rules_of_findlib_dir sctx odocs obj_dir 
+            (ctx.stdlib_dir :: obj_dirs_list @ Path.Set.to_list deps)
         in
         OdocDep.setup_deps ctx (Findlib obj_dir)
           (Path.Set.of_list_map ~f:Path.build odocs))
