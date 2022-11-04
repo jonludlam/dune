@@ -1683,31 +1683,36 @@ let external_pkg_module_children sctx package_name =
     | _ -> None) in
 
   (* Find all obj_dirs and cmas *)
-  let cmas =
-    List.fold_left ~init:[] packages ~f:(fun acc pkg ->
+  let* cmas =
+    Memo.List.fold_left ~init:[] packages ~f:(fun acc pkg ->
         let info = Dune_package.Lib.info pkg in
         let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
         let cmas = Mode.Dict.get (Lib_info.archives info) Byte in
         let pkg_name = Lib_info.name info |> Lib_name.to_string |> String.split ~on:'.' |> List.hd in
         List.iter ~f:(fun cma ->
-          Log.info [Pp.textf "Checking package %s cma %s" (Lib_info.name info |> Lib_name.to_string) (Path.to_string cma)]) cmas;
-        let cmas = (pkg_name, (obj_dir, cmas)) in
+          Log.info [Pp.textf "xx Checking package %s cma %s" (Lib_info.name info |> Lib_name.to_string) (Path.to_string cma)]) cmas;
+        let+ (_, modules) = modules_of_dir obj_dir in
+        let cmas = (pkg_name, (obj_dir, List.map ~f:Module_name.of_string modules, cmas)) in
         cmas :: acc)
   in
 
-  let cmas =
+  let* cmas =
     if package_name = "stdlib"
-    then ("stdlib", (ctx.stdlib_dir, [Path.relative ctx.stdlib_dir "stdlib.cma"])) :: cmas
-    else cmas
+    then (
+      let+ (_, modules) = modules_of_dir ctx.stdlib_dir in
+      ("stdlib", (ctx.stdlib_dir, List.map ~f:Module_name.of_string modules, [Path.relative ctx.stdlib_dir "stdlib.cma"])) :: cmas)
+    else (Memo.return cmas)
   in
 
   let children =
     let open Action_builder.O in
-    let+ mods = List.fold_left ~f:(fun acc (pkg, (obj_dir, cmas)) ->
+    let+ mods = List.fold_left ~f:(fun acc (pkg, (obj_dir, modules_from_dir, cmas)) ->
         List.fold_left ~f:(fun acc cma ->
           let src = Paths.objinfo_filename ctx obj_dir cma in
           let* lines = Action_builder.lines_of (Path.build src) in
-          let modules = ExternalDeps.parse_ooi lines in 
+          let modules = ExternalDeps.parse_ooi lines in
+          let modules = List.filter ~f:(fun x -> List.mem modules_from_dir x ~equal:Module_name.equal) modules in
+          Log.info [Pp.textf "Got %d modules from %s" (List.length modules) (Path.to_string cma) ];
           let deps = (pkg, (obj_dir, cma), modules) in
           let+ acc = acc in
           (deps::acc)
@@ -1923,11 +1928,13 @@ let ext_package_html_rules sctx pkg_name =
       let obj_dir = Lib_info.obj_dir info in
       let dir = Obj_dir.dir obj_dir in
       (l,dir)) |> List.sort_uniq ~compare:(fun (_,d1) (_,d2) -> Path.compare d1 d2) in
+  
   Memo.List.iter obj_dirs ~f:(fun (lib, obj_dir) ->
     let* (_list, modules) = modules_of_dir obj_dir in
+    Log.info [Pp.textf "modules_of_dir returned %d modules for obj_dir %s" (List.length modules) (Path.to_string obj_dir)];
     let modules = List.filter modules ~f:(fun x -> not (contains_double_underscore x)) in
     Memo.List.iter modules ~f:(fun m ->
-      Log.info [Pp.textf "Chopping extension from '%s'" m];
+      Log.info [Pp.textf "yy Chopping extension from '%s'" m];
       let odoc_file_base = m in (*Filename.chop_extension m in*)
       let odocl_file =
         Paths.external_findlib_odocl ctx obj_dir
