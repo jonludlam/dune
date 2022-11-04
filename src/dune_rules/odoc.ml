@@ -170,7 +170,10 @@ module Paths = struct
         findlib_paths
     in
     let prefix =
-      List.find ~f:(fun prefix -> String.starts_with ~prefix obj_dir_str) paths
+      List.find ~f:(fun prefix ->
+        try
+          String.sub obj_dir_str ~pos:0 ~len:(String.length prefix) = prefix
+        with _ -> false) paths
       |> Option.value_exn
     in
     let local =
