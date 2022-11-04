@@ -1667,9 +1667,11 @@ let external_pkg_module_children sctx package_name =
     List.fold_left ~init:[] packages ~f:(fun acc pkg ->
         let info = Dune_package.Lib.info pkg in
         let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
-        let cma = Mode.Dict.get (Lib_info.archives info) Byte in
+        let cmas = Mode.Dict.get (Lib_info.archives info) Byte in
         let pkg_name = Lib_info.name info |> Lib_name.to_string |> String.split ~on:'.' |> List.hd in
-        let cmas = (pkg_name, (obj_dir, cma)) in
+        List.iter ~f:(fun cma ->
+          Log.info [Pp.textf "Checking package %s cma %s" (Lib_info.name info |> Lib_name.to_string) (Path.to_string cma)]) cmas;
+        let cmas = (pkg_name, (obj_dir, cmas)) in
         cmas :: acc)
   in
 
@@ -1682,12 +1684,17 @@ let external_pkg_module_children sctx package_name =
   let children =
     let open Action_builder.O in
     let+ mods = List.fold_left ~f:(fun acc (pkg, (obj_dir, cmas)) ->
-        let res = List.fold_left ~f:(fun acc cma ->
+        Log.info [Pp.textf "%d cmas to check" (List.length cmas)];
+        List.fold_left ~f:(fun acc cma ->
           let src = Paths.objinfo_filename ctx obj_dir cma in
-          let lines = Action_builder.lines_of (Path.build src) in
-          let deps = Action_builder.map lines ~f:(fun lines -> (pkg, (obj_dir, cma), ExternalDeps.parse_ooi lines)) in
-          Action_builder.map2 acc deps ~f:(fun acc y -> y :: acc)) ~init:acc cmas in
-        Action_builder.map2 acc res ~f:(fun acc y -> y @ acc)) ~init:(Action_builder.return []) cmas in
+          let* lines = Action_builder.lines_of (Path.build src) in
+          let modules = ExternalDeps.parse_ooi lines in 
+          Log.info [Pp.textf "Parsed %s to get %d modules" (Path.to_string cma) (List.length modules)];
+          let deps = (pkg, (obj_dir, cma), modules) in
+          let+ acc = acc in
+          (deps::acc)
+          ) ~init:acc cmas) ~init:(Action_builder.return []) cmas in
+      Log.info [Pp.textf "Got %d entries" (List.length mods)];
       mods
   in
   Memo.return children
