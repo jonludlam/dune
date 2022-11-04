@@ -1768,7 +1768,7 @@ let external_pkg_odoc_rules sctx package_name =
     let args = List.map ~f:(fun m -> Command.Args.[A "--child"; A (Module_name.to_string m)]) mods |> List.concat in
     Action_builder.return (Command.Args.S args)
   in
-  
+
   let* run_odoc =
     run_odoc sctx
       ~extra_args:(children_args)
@@ -1922,8 +1922,8 @@ let ext_package_html_rules sctx pkg_name =
       let info = Dune_package.Lib.info l in
       let obj_dir = Lib_info.obj_dir info in
       let dir = Obj_dir.dir obj_dir in
-      (l,dir)) in
-  Memo.List.iter obj_dirs ~f:(fun (_lib, obj_dir) ->
+      (l,dir)) |> List.sort_uniq ~compare:(fun (_,d1) (_,d2) -> Path.compare d1 d2) in
+  Memo.List.iter obj_dirs ~f:(fun (lib, obj_dir) ->
     let* (_list, modules) = modules_of_dir obj_dir in
     let modules = List.filter modules ~f:(fun x -> not (contains_double_underscore x)) in
     Memo.List.iter modules ~f:(fun m ->
@@ -1935,6 +1935,8 @@ let ext_package_html_rules sctx pkg_name =
       in
       let html_file =
         dir ++ (Module_name.to_string (Module_name.of_string m)) ++ "index.html" in
+      Log.info [Pp.textf "Generating rule for %s (lib=%s obj_dir=%s)" (Path.Build.to_string html_file) (Dune_package.Lib.info lib |> Lib_info.name |> Lib_name.to_string) (Path.to_string obj_dir)];
+
       let* action =
         run_odoc sctx ~dir:(Path.build (Paths.html_root ctx))
         "html-generate" ~flags_for:None
