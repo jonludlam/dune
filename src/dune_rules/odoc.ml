@@ -2,6 +2,15 @@ open Import
 open Dune_file
 open Memo.O
 
+let starts_with ~prefix s =
+  let open String in
+  let len_s = length s
+  and len_pre = length prefix in
+  let rec aux i =
+    if i = len_pre then true
+    else if unsafe_get s i <> unsafe_get prefix i then false
+    else aux (i + 1)
+  in len_s >= len_pre && aux 0
 (*
 
    layout:
@@ -170,10 +179,7 @@ module Paths = struct
         findlib_paths
     in
     let prefix =
-      List.find ~f:(fun prefix ->
-        try
-          String.sub obj_dir_str ~pos:0 ~len:(String.length prefix) = prefix
-        with _ -> false) paths
+      List.find ~f:(fun prefix -> starts_with ~prefix obj_dir_str) paths
       |> Option.value_exn
     in
     let local =
@@ -1349,7 +1355,7 @@ module ExternalDeps = struct
     let prefix = "Unit name: " in
     let pos = String.length prefix in
     let parse line =
-      if String.starts_with ~prefix line then
+      if starts_with ~prefix line then
         Some
           (String.sub line ~pos ~len:(String.length line - pos)
           |> Module_name.of_string)
@@ -1829,7 +1835,7 @@ let packages_of_local_dir sctx =
           let obj_dir_str = Path.to_string obj_dir in
           let prefix =
             List.find
-              ~f:(fun prefix -> String.starts_with ~prefix obj_dir_str)
+              ~f:(fun prefix -> starts_with ~prefix obj_dir_str)
               findlib_paths
             |> Option.value_exn
           in
