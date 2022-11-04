@@ -11,6 +11,18 @@ let starts_with ~prefix s =
     else if unsafe_get s i <> unsafe_get prefix i then false
     else aux (i + 1)
   in len_s >= len_pre && aux 0
+
+let ends_with ~suffix s =
+  let open String in
+  let len_s = length s
+  and len_suf = length suffix in
+  let diff = len_s - len_suf in
+  let rec aux i =
+    if i = len_suf then true
+    else if unsafe_get s (diff + i) <> unsafe_get suffix i then false
+    else aux (i + 1)
+  in diff >= 0 && aux 0
+  
 (*
 
    layout:
@@ -1625,7 +1637,7 @@ let external_pkg_mld_rules sctx pkg_str =
         | Ok contents -> 
           let mlds = List.filter_map (Fs_cache.Dir_contents.to_list contents)
             ~f:(fun (x, _) ->
-              if String.ends_with ~suffix:".mld" x
+              if ends_with ~suffix:".mld" x
               then Some (Path.relative (Path.outside_build_dir path) x)
             else None) in
           Memo.return (Some mlds))
@@ -1731,9 +1743,9 @@ let modules_of_dir d =
     List.filter_map
       ~f:(fun (x, ty) ->
         if
-          (ty = Unix.S_REG && String.ends_with ~suffix:".cmti" x)
-          || String.ends_with ~suffix:".cmt" x
-          || String.ends_with ~suffix:".cmi" x
+          (ty = Unix.S_REG && ends_with ~suffix:".cmti" x)
+          || ends_with ~suffix:".cmt" x
+          || ends_with ~suffix:".cmi" x
         then Some (Filename.chop_extension x)
         else None)
       list
