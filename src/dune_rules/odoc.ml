@@ -1434,6 +1434,26 @@ let deps_of_findlib_dir (sctx : Super_context.t) (dir : Path.t) =
        ~stdout_to:deps_destination
        [ A "compile-deps-dir"; A (Path.to_string dir) ])
 
+let modules_of_dir d =
+  let* dir_res = Fs_memo.dir_contents (Path.as_outside_build_dir_exn d) in
+  match dir_res with
+  | Error _ -> Memo.return ([],[])
+  | Ok d ->
+  let list = Fs_cache.Dir_contents.to_list d in
+  let modules =
+    List.filter_map
+      ~f:(fun (x, ty) ->
+        if
+          (ty = Unix.S_REG && ends_with ~suffix:".cmti" x)
+          || ends_with ~suffix:".cmt" x
+          || ends_with ~suffix:".cmi" x
+        then Some (Filename.chop_extension x)
+        else None)
+      list
+    |> List.sort_uniq ~compare:String.compare
+  in 
+  Memo.return (list, modules)
+
 let findlib_package_mld_rule (sctx : Super_context.t) (package_name : string) _mlds =
   let ctx = Super_context.context sctx in
   let* findlib =
@@ -1460,7 +1480,7 @@ let findlib_package_mld_rule (sctx : Super_context.t) (package_name : string) _m
         let cmas = (pkg, (obj_dir, cma)) in
         cmas :: acc)
   in
-  
+
   let action =
     let open Action_builder.O in
     let+ mods = List.fold_left ~f:(fun acc (pkg, (obj_dir, cmas)) ->
@@ -1684,17 +1704,14 @@ let external_pkg_module_children sctx package_name =
   let children =
     let open Action_builder.O in
     let+ mods = List.fold_left ~f:(fun acc (pkg, (obj_dir, cmas)) ->
-        Log.info [Pp.textf "%d cmas to check" (List.length cmas)];
         List.fold_left ~f:(fun acc cma ->
           let src = Paths.objinfo_filename ctx obj_dir cma in
           let* lines = Action_builder.lines_of (Path.build src) in
           let modules = ExternalDeps.parse_ooi lines in 
-          Log.info [Pp.textf "Parsed %s to get %d modules" (Path.to_string cma) (List.length modules)];
           let deps = (pkg, (obj_dir, cma), modules) in
           let+ acc = acc in
           (deps::acc)
           ) ~init:acc cmas) ~init:(Action_builder.return []) cmas in
-      Log.info [Pp.textf "Got %d entries" (List.length mods)];
       mods
   in
   Memo.return children
@@ -1718,15 +1735,40 @@ let external_pkg_odoc_rules sctx package_name =
         ]
   in
 
-  let* children = external_pkg_module_children sctx package_name in
+  let* findlib =
+    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
+  in
+  let* all_packages = Findlib.all_packages findlib in
+
+  (* Find all packages that start with 'package_name' *)
+  let packages = List.filter_map all_packages ~f:(fun entry ->
+  match entry with
+  | Dune_package.Entry.Library entry ->
+    let info = Dune_package.Lib.info entry in
+    let name = Lib_info.name info |> Lib_name.to_string in
+    let fst = String.split ~on:'.' name |> List.hd in
+    if fst = package_name then Some entry else None
+  | _ -> None) in
+  
+  (* Find all obj_dirs and cmas *)
+  let cmas =
+    List.fold_left ~init:[] packages ~f:(fun acc pkg ->
+        let info = Dune_package.Lib.info pkg in
+        let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
+        let cma = Mode.Dict.get (Lib_info.archives info) Byte in
+        let cmas = (pkg, (obj_dir, cma)) in
+        cmas :: acc)
+  in
+  let dirs = List.map ~f:(fun (_, (d, _)) -> d) cmas in
+  let* modules = Memo.List.map ~f:modules_of_dir dirs in
+  let all_modules = List.map ~f:(fun (_, ms) -> List.map ~f:Module_name.of_string ms) modules |> List.concat in
 
   let children_args =
-    let open Action_builder.O in
-    let+ children = children in
-    let mods = List.map ~f:(fun (_, _, x) -> x) children |> List.concat in
+    let mods = all_modules in
     let args = List.map ~f:(fun m -> Command.Args.[A "--child"; A (Module_name.to_string m)]) mods |> List.concat in
-    Command.Args.S args
+    Action_builder.return (Command.Args.S args)
   in
+  
   let* run_odoc =
     run_odoc sctx
       ~extra_args:(children_args)
@@ -1740,25 +1782,6 @@ let external_pkg_odoc_rules sctx package_name =
   in
   add_rule sctx run_odoc
 
-let modules_of_dir d =
-  let* dir_res = Fs_memo.dir_contents (Path.as_outside_build_dir_exn d) in
-  match dir_res with
-  | Error _ -> Memo.return ([],[])
-  | Ok d ->
-  let list = Fs_cache.Dir_contents.to_list d in
-  let modules =
-    List.filter_map
-      ~f:(fun (x, ty) ->
-        if
-          (ty = Unix.S_REG && ends_with ~suffix:".cmti" x)
-          || ends_with ~suffix:".cmt" x
-          || ends_with ~suffix:".cmi" x
-        then Some (Filename.chop_extension x)
-        else None)
-      list
-    |> List.sort_uniq ~compare:String.compare
-  in 
-  Memo.return (list, modules)
 
 let compile_rules_of_findlib_dir sctx dir obj_dirs cmas =
   let ctx = Super_context.context sctx in
