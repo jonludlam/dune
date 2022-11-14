@@ -81,7 +81,8 @@ type artefact_tree =
 
 let ( ++ ) = Path.Build.relative
 
-let contains_double_underscore s =
+let contains_double_underscore m =
+  let s = Module_name.to_string m in
   let len = String.length s in
   let rec aux i =
     if i > len - 2 then false
@@ -204,18 +205,12 @@ module Paths = struct
     let local = local_external_dir ctx obj_dir in
     root ctx ++ "_external" ++ local
  
-  let external_findlib_odoc ctx obj_dir =
-    external_findlib_root ctx obj_dir ++ "_odoc"
-
-  let external_findlib_odocl ctx obj_dir =
-    external_findlib_root ctx obj_dir ++ "_odocl"
-
   let odocs ctx = function
     | Lib lib ->
       let obj_dir = Lib.Local.obj_dir lib in
       Obj_dir.odoc_dir obj_dir
     | Pkg pkg -> root ctx ++ sprintf "_odoc/pkg/%s" (Package.Name.to_string pkg)
-    | FindlibPath p -> external_findlib_odoc ctx p
+    | FindlibPath p -> external_findlib_root ctx p
     | FindlibPackage _ -> failwith "Invalid"
 
   let odocs_root ctx = root ctx ++ "_odoc"
@@ -726,9 +721,9 @@ end = struct
     | FindlibPath p ->
       Log.info
         [ Pp.textf "Adding alias for path %s"
-            (Paths.external_findlib_odoc ctx p |> Path.Build.to_string)
+            (Paths.external_findlib_root ctx p |> Path.Build.to_string)
         ];
-      alias ~dir:(Paths.external_findlib_odoc ctx p)
+      alias ~dir:(Paths.external_findlib_root ctx p)
     | _ -> alias ~dir:(Paths.odocs ctx m)
 
   let setup_deps ctx m files =
@@ -845,7 +840,7 @@ let odoc_include_flags ctx pkg requires =
           match Lib.Local.of_lib lib with
           | None ->
             let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.obj_dir in
-            Path.Set.add paths (Path.build (Paths.external_findlib_odoc ctx obj_dir))
+            Path.Set.add paths (Path.build (Paths.external_findlib_root ctx obj_dir))
           | Some lib ->
             Path.Set.add paths (Path.build (Paths.odocs ctx (Lib lib))))
     in
@@ -1426,7 +1421,7 @@ module ExternalDeps = struct
               let odoc_filename =
                 Path.basename filename |> Filename.chop_extension
               in
-              let odoc_path = Paths.external_findlib_odoc ctx obj_dir in
+              let odoc_path = Paths.external_findlib_root ctx obj_dir in
               try Module_name.Map.add_exn map module_name (odoc_path ++ sprintf "%s.odoc" odoc_filename, deps)
               with _ -> map)
             dict
@@ -1475,22 +1470,26 @@ let deps_of_findlib_dir (sctx : Super_context.t) (dir : Path.t) =
 let modules_of_dir d =
   let* dir_res = Fs_memo.dir_contents (Path.as_outside_build_dir_exn d) in
   match dir_res with
-  | Error _ -> Memo.return ([],[])
-  | Ok d ->
-  let list = Fs_cache.Dir_contents.to_list d in
+  | Error _ -> Memo.return []
+  | Ok dc ->
+  let list = Fs_cache.Dir_contents.to_list dc in
+  let extensions = [ ".cmti", `Cmti; ".cmt", `Cmt; ".cmi", `Cmi] in
   let modules =
     List.filter_map
       ~f:(fun (x, ty) ->
-        if
-          (ty = Unix.S_REG && ends_with ~suffix:".cmti" x)
-          || ends_with ~suffix:".cmt" x
-          || ends_with ~suffix:".cmi" x
-        then Some (Filename.chop_extension x)
-        else None)
-      list
-    |> List.sort_uniq ~compare:String.compare
-  in 
-  Memo.return (list, modules)
+        match ty, List.assoc extensions (Filename.extension x) with
+        | Unix.S_REG, Some _ -> Some (Filename.chop_extension x)
+        | _, _ -> None) list |> List.sort_uniq ~compare:String.compare
+  in
+  List.map ~f:(fun m ->
+    let (ext,ty) =
+      List.find_exn
+        ~f:(fun (ext, _ty) -> List.exists list ~f:(fun (n,_) -> n = (m ^ ext)))
+        extensions
+    in
+    (Module_name.of_string m, (Path.relative d (m^ext), ty))) modules
+  |>
+  Memo.return
 
 let findlib_package_mld_rule (sctx : Super_context.t) (package_name : string) _mlds =
   let ctx = Super_context.context sctx in
@@ -1607,7 +1606,7 @@ let compile_external_odoc sctx dir obj_dirs cmas db cmti_file default_parent odo
         (Path.to_string cmti_file)
     ];
   let ctx = Super_context.context sctx in
-  let output_dir = Paths.external_findlib_odoc ctx dir in
+  let output_dir = Paths.external_findlib_root ctx dir in
   let deps =
     let open Action_builder.O in
     let* db = db in
@@ -1639,7 +1638,7 @@ let compile_external_odoc sctx dir obj_dirs cmas db cmti_file default_parent odo
 
   let iflags =
     List.map (Path.Set.to_list obj_dirs) ~f:(fun dir ->
-        let odoc_path = Paths.external_findlib_odoc ctx dir in
+        let odoc_path = Paths.external_findlib_root ctx dir in
         Command.Args.[ A "-I"; Path (Path.build odoc_path) ])
     |> List.concat
   in
@@ -1743,27 +1742,27 @@ let external_pkg_module_children sctx package_name =
         let pkg_name = Lib_info.name info |> Lib_name.to_string |> String.split ~on:'.' |> List.hd in
         List.iter ~f:(fun cma ->
           Log.info [Pp.textf "xx Checking package %s cma %s" (Lib_info.name info |> Lib_name.to_string) (Path.to_string cma)]) cmas;
-        let+ (_, modules) = modules_of_dir obj_dir in
-        let cmas = (pkg_name, (obj_dir, List.map ~f:Module_name.of_string modules, cmas)) in
+        let+ modules = modules_of_dir obj_dir in
+        let cmas = (pkg_name, (obj_dir, modules, cmas)) in
         cmas :: acc)
   in
 
   let* cmas =
     if package_name = "stdlib"
     then (
-      let+ (_, modules) = modules_of_dir ctx.stdlib_dir in
-      ("stdlib", (ctx.stdlib_dir, List.map ~f:Module_name.of_string modules, [Path.relative ctx.stdlib_dir "stdlib.cma"])) :: cmas)
+      let+ modules = modules_of_dir ctx.stdlib_dir in
+      ("stdlib", (ctx.stdlib_dir, modules, [Path.relative ctx.stdlib_dir "stdlib.cma"])) :: cmas)
     else (Memo.return cmas)
   in
 
   let children =
     let open Action_builder.O in
-    let+ mods = List.fold_left ~f:(fun acc (pkg, (obj_dir, modules_from_dir, cmas)) ->
+    let+ mods = List.fold_left ~f:(fun acc (pkg, (obj_dir, dir_modules, cmas)) ->
         List.fold_left ~f:(fun acc cma ->
           let src = Paths.objinfo_filename ctx obj_dir cma in
           let* lines = Action_builder.lines_of (Path.build src) in
           let modules = ExternalDeps.parse_ooi lines in
-          let modules = List.filter ~f:(fun x -> List.mem modules_from_dir x ~equal:Module_name.equal) modules in
+          let modules = List.filter ~f:(fun x -> List.mem_assoc ~map:dir_modules x) modules in
           Log.info [Pp.textf "Got %d modules from %s" (List.length modules) (Path.to_string cma) ];
           let deps = (pkg, (obj_dir, cma), modules) in
           let+ acc = acc in
@@ -1866,11 +1865,11 @@ let external_pkg_odoc_rules sctx package_name =
   in
   let dirs = List.map ~f:(fun (_, (d, _)) -> d) cmas in
   let* modules = Memo.List.map ~f:modules_of_dir dirs in
-  let all_modules = List.map ~f:(fun (_, ms) -> List.map ~f:Module_name.of_string ms) modules |> List.concat in
+  let all_modules = List.concat modules in
 
   let children_args =
     let mods = all_modules in
-    let args = List.map ~f:(fun m -> Command.Args.[A "--child"; A (Module_name.to_string m)]) mods |> List.concat in
+    let args = List.map ~f:(fun (m,_) -> Command.Args.[A "--child"; A (Module_name.to_string m)]) mods |> List.concat in
     Action_builder.return (Command.Args.S args)
   in
 
@@ -1890,55 +1889,45 @@ let external_pkg_odoc_rules sctx package_name =
 
 let compile_rules_of_findlib_dir sctx dir obj_dirs default_parent cmas =
   let ctx = Super_context.context sctx in
-  let* (list, modules) = modules_of_dir dir in
-  let modules =
-    List.map
-      ~f:(fun mod_name ->
-        let best_extension =
-          List.find [ ".cmti"; ".cmt"; ".cmi" ] ~f:(fun ext ->
-              List.exists ~f:(fun (x, _) -> x = mod_name ^ ext) list)
-        in
-        mod_name ^ Option.value_exn best_extension)
-      modules
-  in
+  let* modules = modules_of_dir dir in
   
   let db = ExternalDeps.deps_graph sctx obj_dirs in
 
   Memo.parallel_map
-    ~f:(fun m ->
-      let odoc_file_base = Filename.chop_extension m in
+    ~f:(fun (m, (path, _)) ->
+      let odoc_file_base = Module_name.to_string m in
       let odoc_file =
-        Paths.external_findlib_odoc ctx dir
+        Paths.external_findlib_root ctx dir
         ++ sprintf "%s.odoc" odoc_file_base
       in
       let+ () =
-        compile_external_odoc sctx dir obj_dirs cmas db (Path.relative dir m) default_parent odoc_file
+        compile_external_odoc sctx dir obj_dirs cmas db path default_parent odoc_file
       in
-      odoc_file)
+      (m,odoc_file))
     modules
 
 let link_rules_of_findlib_dir sctx odocs dir obj_dirs =
   let ctx = Super_context.context sctx in
 
   let non_hidden =
-    List.filter odocs ~f:(fun p ->
-        not (contains_double_underscore (Path.Build.basename p)))
+    List.filter odocs ~f:(fun (m, _) ->
+        not (contains_double_underscore m))
   in
   let iflags =
     List.map (Path.Set.to_list obj_dirs) ~f:(fun dir ->
-        let odoc_path = Paths.external_findlib_odoc ctx dir in
+        let odoc_path = Paths.external_findlib_root ctx dir in
         Command.Args.[ A "-I"; Path (Path.build odoc_path) ])
     |> List.concat
   in
-  Memo.List.iter non_hidden ~f:(fun odoc_file ->
+  Memo.List.iter non_hidden ~f:(fun (_, odoc_file) ->
       let odoc_file_base =
         Path.Build.basename odoc_file |> Filename.chop_extension
       in
       let odocl_file =
-        Paths.external_findlib_odocl ctx dir
+        Paths.external_findlib_root ctx dir
         ++ sprintf "%s.odocl" odoc_file_base
       in
-      let build_dir = Paths.external_findlib_odocl ctx dir in
+      let build_dir = Paths.external_findlib_root ctx dir in
       let* action =
         let+ run_odoc =
           run_odoc sctx ~dir:(Path.build build_dir) "link"
@@ -1947,7 +1936,7 @@ let link_rules_of_findlib_dir sctx odocs dir obj_dirs =
                [ A "-o"
                ; Target odocl_file
                ; Dep (Path.build odoc_file)
-               ; Hidden_deps (Dep.Set.of_files (List.map ~f:Path.build odocs))
+               ; Hidden_deps (Dep.Set.of_files (List.map ~f:Path.build (List.map ~f:snd odocs)))
                ]
             @ iflags)
         in
@@ -2101,16 +2090,16 @@ let ext_package_html_rules sctx pkg_name =
   add_rule sctx action >>>
 
   Memo.List.iter obj_dirs ~f:(fun (_lib, obj_dir) ->
-    let* (_list, modules) = modules_of_dir obj_dir in
-    let modules = List.filter modules ~f:(fun x -> not (contains_double_underscore x)) in
-    Memo.List.iter modules ~f:(fun m ->
-      let odoc_file_base = m in (*Filename.chop_extension m in*)
+    let* modules = modules_of_dir obj_dir in
+    let modules = List.filter modules ~f:(fun (x,_) -> not (contains_double_underscore x)) in
+    Memo.List.iter modules ~f:(fun (m, _) ->
+      let odoc_file_base = Module_name.to_string m in
       let odocl_file =
-        Paths.external_findlib_odocl ctx obj_dir
+        Paths.external_findlib_root ctx obj_dir
         ++ sprintf "%s.odocl" odoc_file_base
       in
       let html_file =
-        dir ++ (Module_name.to_string (Module_name.of_string m)) ++ "index.html" in
+        dir ++ (Module_name.to_string m) ++ "index.html" in
 
       let* action =
         run_odoc sctx ~dir:(Path.build (Paths.html_root ctx))
@@ -2217,20 +2206,20 @@ let setup_external_html_rules sctx package_name =
     in
 
     Memo.List.iter obj_dirs ~f:(fun (_lib, obj_dir) ->
-      let* (_list, modules) = modules_of_dir obj_dir in
+      let* modules = modules_of_dir obj_dir in
 
-      let modules = List.filter modules ~f:(fun x -> not (contains_double_underscore x)) in
+      let modules = List.filter modules ~f:(fun (x,_) -> not (contains_double_underscore x)) in
 
       let cmas = List.filter_map ~f:(fun (pkg, d, cma) ->
         if d=obj_dir then Some (pkg, cma) else None) cmas in
 
       let deps = Action_builder.List.fold_left modules
         ~init:Dep.Set.empty
-        ~f:(fun acc module_name ->
+        ~f:(fun acc (module_name, _) ->
           let open Action_builder.O in
-          let+ p = get_parent ctx obj_dir cmas default_parent (Module_name.of_string module_name) in
+          let+ p = get_parent ctx obj_dir cmas default_parent module_name in
           let parent_dir = match p.output_type with | Directory d -> d | _ -> failwith "bad structure" in
-          let html_file = parent_dir ++ (Module_name.to_string (Module_name.of_string module_name)) ++ "index.html" in
+          let html_file = parent_dir ++ (Module_name.to_string module_name) ++ "index.html" in
           let pred =
             let main = Paths.html_root ctx ++ "docs" ++ (Package.Name.to_string package_name) in
             let result = Path.Build.is_descendant html_file ~of_:main in
@@ -2272,8 +2261,7 @@ let _setup_external_html_rules2 sctx package_name =
     let+ children = children in
     let visible_modules_l = List.map children ~f:(fun (_, _, ms) ->
       List.filter ms ~f:(fun n ->
-        let n_str = Module_name.to_string n in
-        not (contains_double_underscore n_str))) |> List.concat
+        not (contains_double_underscore n))) |> List.concat
     in
     visible_modules_l
   in
@@ -2400,7 +2388,7 @@ let external_rules sctx dir =
             all_dirs
         in
         OdocDep.setup_deps ctx (FindlibPath obj_dir)
-          (Path.Set.of_list_map ~f:Path.build odocs))
+          (Path.Set.of_list_map ~f:Path.build (List.map ~f:snd odocs)))
 
 
 let external_deps_rules sctx dir =
