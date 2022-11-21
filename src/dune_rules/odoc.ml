@@ -111,11 +111,13 @@ module Paths = struct
 
   let odocl ctx m = add_pkg_lnu (odocl_root ctx) m
 
-  let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
-
   let odoc_support ctx = html_root ctx ++ odoc_support_dirname
 
   let toplevel_index ctx = html_root ctx ++ "index.html"
+
+  let package_index_mld ctx pkg =
+    let p = Package.Name.to_string pkg in
+    root ctx ++ "_index_pages" ++ p ++ (p ^ ".mld")
 end
 
 module Dep : sig
@@ -530,14 +532,12 @@ let odoc_artefacts sctx target =
   | Pkg pkg ->
     let+ mlds =
       let+ mlds = Packages.mlds sctx pkg in
-      let mlds = check_mlds_no_dupes ~pkg ~mlds in
-      if String.Map.mem mlds "index" then mlds
-      else
-        let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-        String.Map.add_exn mlds "index" gen_mld
+      check_mlds_no_dupes ~pkg ~mlds
     in
-    String.Map.to_list_map mlds ~f:(fun _ mld ->
-        Mld.create mld |> Mld.odoc_file ~doc_dir:dir |> create_odoc ctx ~target)
+    String.Map.values mlds
+    |> List.map ~f:(fun mld ->
+           Mld.create mld |> Mld.odoc_file ~doc_dir:dir
+           |> create_odoc ctx ~target)
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
@@ -737,29 +737,18 @@ let package_mlds =
     Memo.create "package-mlds"
       ~input:(module Super_context.As_memo_key.And_package)
       (fun (sctx, pkg) ->
-        Rules.collect (fun () ->
             (* CR-someday jeremiedimino: it is weird that we drop the
                [Package.t] and go back to a package name here. Need to try and
                change that one day. *)
             let pkg = Package.name pkg in
             let* mlds = Packages.mlds sctx pkg in
             let mlds = check_mlds_no_dupes ~pkg ~mlds in
-            let ctx = Super_context.context sctx in
-            if String.Map.mem mlds "index" then Memo.return mlds
-            else
-              let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-              let* entry_modules = entry_modules sctx ~pkg in
-              let+ () =
-                add_rule sctx
-                  (Action_builder.write_file gen_mld
-                     (default_index ~pkg entry_modules))
-              in
-              String.Map.set mlds "index" gen_mld))
+            Memo.return (String.Map.remove mlds "index"))
   in
   fun sctx ~pkg -> Memo.exec memo (sctx, pkg)
 
 let setup_package_odoc_rules sctx ~pkg =
-  let* mlds = package_mlds sctx ~pkg >>| fst in
+  let* mlds = package_mlds sctx ~pkg in
   let ctx = Super_context.context sctx in
   (* CR-someday jeremiedimino: it is weird that we drop the [Package.t] and go
      back to a package name here. Need to try and change that one day. *)
@@ -792,6 +781,20 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Dune_file.Library.t) =
     Rules.Produce.Alias.add_deps (Alias.private_doc ~dir)
       (lib |> Dep.html_alias ctx |> Dune_engine.Dep.alias |> Action_builder.dep)
 
+let setup_pkg_index_rules sctx pkg =
+  let pkg = Package.name pkg in
+  let* mlds = Packages.mlds sctx pkg in
+  let mlds = check_mlds_no_dupes ~pkg ~mlds in
+  let ctx = Super_context.context sctx in
+  let index_path = Paths.package_index_mld ctx pkg in
+  match String.Map.find mlds "index" with
+  | Some mld -> add_rule sctx (Action_builder.symlink ~src:(Path.build mld) ~dst:index_path)
+  | None -> 
+    let* entry_modules = entry_modules sctx ~pkg in
+    add_rule sctx
+      (Action_builder.write_file index_path
+          (default_index ~pkg entry_modules))
+  
 let has_rules ?(directory_targets = Path.Build.Map.empty) m =
   let rules = Rules.collect_unit (fun () -> m) in
   Memo.return
@@ -833,10 +836,9 @@ let gen_rules sctx ~dir rest =
     in
     has_rules ~directory_targets
       (setup_css_rule sctx >>> setup_toplevel_index_rule sctx)
-  | [ "_mlds"; pkg ] ->
+  | [ "_index_pages"; pkg ] ->
     with_package pkg ~f:(fun pkg ->
-        let* _mlds, rules = package_mlds sctx ~pkg in
-        Rules.produce rules)
+        setup_pkg_index_rules sctx pkg)
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg -> setup_package_odoc_rules sctx ~pkg)
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
