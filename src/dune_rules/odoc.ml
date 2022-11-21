@@ -177,6 +177,10 @@ module Mld : sig
 
   val odoc_file : Context.t -> t -> Path.Build.t
 
+  val reference : t -> string
+
+  val odoc_dir : Context.t -> t -> Path.Build.t
+
   val odoc_input : t -> Path.Build.t
 end = struct
   type ty = PkgIndex | PkgPage
@@ -185,14 +189,18 @@ end = struct
 
   let create pkg ty p = (pkg, ty, p)
 
-  let odoc_file ctx (pkg, ty, t) =
-    let doc_dir =
-      match ty with
-      | PkgPage -> Paths.odocs ctx (Pkg pkg)
-      | PkgIndex -> Path.Build.parent_exn (Paths.package_index_mld ctx pkg)
-    in
+  let odoc_dir ctx (pkg, ty, _) =
+    match ty with
+    | PkgPage -> Paths.odocs ctx (Pkg pkg)
+    | PkgIndex -> Path.Build.parent_exn (Paths.package_index_mld ctx pkg)
+  
+  let reference (_, _, t) =
     let t = Filename.chop_extension (Path.Build.basename t) in
-    Path.Build.relative doc_dir (sprintf "page-%s%s" t odoc_ext)
+    sprintf "page-%s" t
+
+  let odoc_file ctx t =
+    let doc_dir = odoc_dir ctx t in
+    Path.Build.relative doc_dir (sprintf "%s%s" (reference t) odoc_ext)
 
   let odoc_input (_, _, t) = t
 end
@@ -263,11 +271,22 @@ let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
 
 type mld_child = Module of Module_name.t | Page of string
 
-let compile_mld sctx (m : Mld.t) ~doc_dir ~pkg ~children =
+let compile_mld sctx (m : Mld.t) ~doc_dir ~parent ~children =
   let open Memo.O in
   let ctx = Super_context.context sctx in
   let odoc_file = Mld.odoc_file ctx m in
+  Log.info [Pp.textf "compile_mld: output_file: %s" (Path.Build.to_string odoc_file)];
   let odoc_input = Mld.odoc_input m in
+  let parent_args = match parent with
+    | None -> []
+    | Some mld ->
+      let dir = Mld.odoc_dir ctx mld in
+      let reference = Mld.reference mld in
+      let odoc_file = Mld.odoc_file ctx mld |> Path.build |> Dune_engine.Dep.file |> Dune_engine.Dep.Set.singleton in
+      Command.Args.[
+        A "-I"; Path (Path.build dir); A "--parent"; A reference; Hidden_deps odoc_file
+      ]
+  in
   let child_args = List.fold_left children ~init:[] ~f:(
     fun args child ->
       match child with
@@ -277,11 +296,10 @@ let compile_mld sctx (m : Mld.t) ~doc_dir ~pkg ~children =
   let* run_odoc =
     run_odoc sctx ~dir:(Path.build doc_dir) "compile"
       ~flags_for:(Some odoc_input)
-      [ As [ "--pkg"; Package.Name.to_string pkg ]
-      ; A "-o"
-      ; Target odoc_file
-      ; Dep (Path.build odoc_input)
-      ; As child_args]
+      ( A "-o"
+      :: Target odoc_file
+      :: Dep (Path.build odoc_input)
+      :: As child_args :: parent_args )
   in
   let+ () = add_rule sctx run_odoc in
   odoc_file
@@ -761,9 +779,10 @@ let setup_package_odoc_rules sctx ~pkg =
   (* CR-someday jeremiedimino: it is weird that we drop the [Package.t] and go
      back to a package name here. Need to try and change that one day. *)
   let pkg = Package.name pkg in
+  let index = Mld.create pkg (PkgIndex) (Paths.package_index_mld ctx pkg) in
   let* odocs =
     Memo.parallel_map (String.Map.values mlds) ~f:(fun mld ->
-        compile_mld sctx (Mld.create pkg PkgPage mld) ~pkg
+        compile_mld sctx (Mld.create pkg PkgPage mld) ~parent:(Some index)
           ~doc_dir:(Paths.odocs ctx (Pkg pkg))
           ~children:[])
   in
@@ -813,7 +832,7 @@ let setup_pkg_index_rules sctx pkg =
     let children = Lib.Local.Map.fold ~init:pchildren entry_modules ~f:(fun ms children ->
       let lchildren = List.map ~f:(fun m -> Module (Module.name m)) ms in
       lchildren @ children) in
-    compile_mld sctx (Mld.create pkg PkgIndex index_path) ~doc_dir:(Path.Build.parent_exn index_path) ~pkg ~children
+    compile_mld sctx (Mld.create pkg PkgIndex index_path) ~doc_dir:(Path.Build.parent_exn index_path) ~parent:None ~children
   in 
 
   Memo.return ()
