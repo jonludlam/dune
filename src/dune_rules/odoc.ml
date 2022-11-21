@@ -252,15 +252,14 @@ let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
   in
   (m, odoc_file)
 
-let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
+let compile_mld sctx (m : Mld.t) ~doc_dir ~pkg =
   let open Memo.O in
   let odoc_file = Mld.odoc_file m ~doc_dir in
   let odoc_input = Mld.odoc_input m in
   let* run_odoc =
     run_odoc sctx ~dir:(Path.build doc_dir) "compile"
       ~flags_for:(Some odoc_input)
-      [ Command.Args.dyn includes
-      ; As [ "--pkg"; Package.Name.to_string pkg ]
+      [ As [ "--pkg"; Package.Name.to_string pkg ]
       ; A "-o"
       ; Target odoc_file
       ; Dep (Path.build odoc_input)
@@ -748,8 +747,7 @@ let setup_package_odoc_rules sctx ~pkg =
   let* odocs =
     Memo.parallel_map (String.Map.values mlds) ~f:(fun mld ->
         compile_mld sctx (Mld.create mld) ~pkg
-          ~doc_dir:(Paths.odocs ctx (Pkg pkg))
-          ~includes:(Action_builder.return []))
+          ~doc_dir:(Paths.odocs ctx (Pkg pkg)))
   in
   Dep.setup_deps ctx (Pkg pkg) (Path.set_of_build_paths_list odocs)
 
