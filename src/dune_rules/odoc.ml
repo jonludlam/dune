@@ -118,6 +118,9 @@ module Paths = struct
   let package_index_mld ctx pkg =
     let p = Package.Name.to_string pkg in
     root ctx ++ "_index_pages" ++ p ++ (p ^ ".mld")
+
+  let package_index_mld_lnu ctx lnu =
+    root ctx ++ "_index_private" ++ lnu ++ (lnu ^ ".mld")
 end
 
 module Dep : sig
@@ -169,11 +172,11 @@ end
 let odoc_ext = ".odoc"
 
 module Mld : sig
-  type ty = PkgIndex | PkgPage 
+  type ty = PkgIndex of Package.Name.t | PrivateIndex of string | PkgPage of Package.Name.t
 
   type t
 
-  val create : Package.Name.t -> ty -> Path.Build.t -> t
+  val create : ty -> Path.Build.t -> t
 
   val odoc_file : Context.t -> t -> Path.Build.t
 
@@ -183,26 +186,30 @@ module Mld : sig
 
   val odoc_input : t -> Path.Build.t
 end = struct
-  type ty = PkgIndex | PkgPage
+  type ty = PkgIndex of Package.Name.t | PrivateIndex of string | PkgPage of Package.Name.t 
 
-  type t = Package.Name.t * ty * Path.Build.t
+  type t = ty * Path.Build.t
 
-  let create pkg ty p = (pkg, ty, p)
+  let create ty p = (ty, p)
 
-  let odoc_dir ctx (pkg, ty, _) =
+  let odoc_dir ctx (ty, _) =
     match ty with
-    | PkgPage -> Paths.odocs ctx (Pkg pkg)
-    | PkgIndex -> Path.Build.parent_exn (Paths.package_index_mld ctx pkg)
+    | PkgPage pkg -> Paths.odocs ctx (Pkg pkg)
+    | PkgIndex pkg -> Path.Build.parent_exn (Paths.package_index_mld ctx pkg)
+    | PrivateIndex lnu -> Path.Build.parent_exn (Paths.package_index_mld_lnu ctx lnu)
   
-  let reference (_, _, t) =
+  let reference (_, t) =
     let t = Filename.chop_extension (Path.Build.basename t) in
-    sprintf "page-%s" t
+    sprintf "page-\"%s\""
+    t
 
   let odoc_file ctx t =
     let doc_dir = odoc_dir ctx t in
-    Path.Build.relative doc_dir (sprintf "%s%s" (reference t) odoc_ext)
+    let (_, f) = t in
+    let r = Filename.chop_extension (Path.Build.basename f) in
+    Path.Build.relative doc_dir (sprintf "page-%s%s" r odoc_ext)
 
-  let odoc_input (_, _, t) = t
+  let odoc_input (_, t) = t
 end
 
 let odoc_base_flags sctx build_dir =
@@ -240,23 +247,34 @@ let module_deps (m : Module.t) ~obj_dir ~(dep_graphs : Dep_graph.Ml_kind.t) =
     in
     List.map deps ~f:(fun m -> Path.build (Obj_dir.Module.odoc obj_dir m)))
 
+let parent_args ctx parent_opt = match parent_opt with
+    | None -> []
+    | Some mld ->
+      let dir = Mld.odoc_dir ctx mld in
+      let reference = Mld.reference mld in
+      let odoc_file = Mld.odoc_file ctx mld |> Path.build |> Dune_engine.Dep.file |> Dune_engine.Dep.Set.singleton in
+      Command.Args.[
+        A "-I"; Path (Path.build dir); A "--parent"; A reference; Hidden_deps odoc_file
+      ]
+
 let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
-    ~dep_graphs ~pkg_or_lnu =
+    ~dep_graphs ~parent_opt =
   let odoc_file = Obj_dir.Module.odoc obj_dir m in
   let open Memo.O in
+  let ctx = Super_context.context sctx in
+  let parent_args = parent_args ctx parent_opt in
   let+ () =
     let* action_with_targets =
       let doc_dir = Path.build (Obj_dir.odoc_dir obj_dir) in
       let+ run_odoc =
         run_odoc sctx ~dir:doc_dir "compile" ~flags_for:(Some odoc_file)
-          [ A "-I"
+          ([ Command.Args.A "-I"
           ; Path doc_dir
           ; iflags
-          ; As [ "--pkg"; pkg_or_lnu ]
           ; A "-o"
           ; Target odoc_file
           ; Dep (Path.build (Obj_dir.Module.cmti_file obj_dir m))
-          ]
+          ] @ parent_args)
       in
       let open Action_builder.With_targets.O in
       Action_builder.with_no_targets file_deps
@@ -269,22 +287,13 @@ let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
 
 type mld_child = Module of Module_name.t | Page of string
 
-let compile_mld sctx (m : Mld.t) ~doc_dir ~parent ~children =
+let compile_mld sctx (m : Mld.t) ~doc_dir ~parent_opt ~children =
   let open Memo.O in
   let ctx = Super_context.context sctx in
   let odoc_file = Mld.odoc_file ctx m in
   Log.info [Pp.textf "compile_mld: output_file: %s" (Path.Build.to_string odoc_file)];
   let odoc_input = Mld.odoc_input m in
-  let parent_args = match parent with
-    | None -> []
-    | Some mld ->
-      let dir = Mld.odoc_dir ctx mld in
-      let reference = Mld.reference mld in
-      let odoc_file = Mld.odoc_file ctx mld |> Path.build |> Dune_engine.Dep.file |> Dune_engine.Dep.Set.singleton in
-      Command.Args.[
-        A "-I"; Path (Path.build dir); A "--parent"; A reference; Hidden_deps odoc_file
-      ]
-  in
+  let parent_args = parent_args ctx parent_opt in
   let child_args = List.fold_left children ~init:[] ~f:(
     fun args child ->
       match child with
@@ -340,13 +349,18 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
     (let open Action_builder.With_targets.O in
     Action_builder.with_no_targets deps >>> run_odoc)
 
+let pkg_or_lnu_parent ctx lib =
+  match Lib_info.package (Lib.info lib) with
+  | Some p -> Mld.create (PkgIndex p) (Paths.package_index_mld ctx p)
+  | None ->
+    let lnu = (lib_unique_name lib) in
+    Mld.create (PrivateIndex lnu) (Paths.package_index_mld_lnu ctx lnu)
+
 let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let open Memo.O in
-  (* Using the proper package name doesn't actually work since odoc assumes that
-     a package contains only 1 library *)
-  let pkg_or_lnu = pkg_or_lnu (Lib.Local.to_lib local_lib) in
   let sctx = Compilation_context.super_context cctx in
   let ctx = Super_context.context sctx in
+  let parent = pkg_or_lnu_parent ctx (Lib.Local.to_lib local_lib) in
   let* requires = Compilation_context.requires_compile cctx in
   let info = Lib.Local.info local_lib in
   let package = Lib_info.package info in
@@ -356,12 +370,18 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let obj_dir = Compilation_context.obj_dir cctx in
   let modules = Compilation_context.modules cctx in
   let includes = (Dep.deps ctx package requires, odoc_include_flags) in
+  let entry_modules = Modules.entry_modules modules in
   let modules_and_odoc_files =
     Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
+        let parent_opt =
+          if List.mem entry_modules m ~equal:(fun m1 m2 -> Module_name.equal (Module.name m1) (Module.name m2))
+          then Some parent
+          else None
+        in
         let compiled =
           compile_module sctx ~includes
             ~dep_graphs:(Compilation_context.dep_graphs cctx)
-            ~obj_dir ~pkg_or_lnu m
+            ~obj_dir ~parent_opt m
         in
         compiled :: acc)
   in
@@ -503,9 +523,8 @@ let entry_modules sctx ~pkg =
   in
   Lib.Local.Map.of_list_exn l
 
-let create_odoc ctx ~target odoc_file =
+let create_odoc ctx ~target ~odocl_base odoc_file =
   let html_base = Paths.html ctx target in
-  let odocl_base = Paths.odocl ctx target in
   let basename = Path.Build.basename odoc_file |> Filename.chop_extension in
   let odocl_file = odocl_base ++ (basename ^ ".odocl") in
   match target with
@@ -555,18 +574,20 @@ let odoc_artefacts sctx target =
       let+ mlds = Packages.mlds sctx pkg in
       check_mlds_no_dupes ~pkg ~mlds
     in
+    let odocl_base = Paths.odocl ctx target in
     String.Map.values mlds
     |> List.map ~f:(fun mld ->
-           Mld.create pkg PkgPage mld |> Mld.odoc_file ctx
-           |> create_odoc ctx ~target)
+           Mld.create (PkgPage pkg) mld |> Mld.odoc_file ctx
+           |> create_odoc ctx ~odocl_base ~target)
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
     let* modules = entry_modules_by_lib sctx lib in
     List.map
       ~f:(fun m ->
+        let odocl_base = Paths.odocl ctx target in
         let odoc_file = Obj_dir.Module.odoc obj_dir m in
-        create_odoc ctx ~target odoc_file)
+        create_odoc ctx ~target ~odocl_base odoc_file)
       modules
     |> Memo.return
 
@@ -756,6 +777,28 @@ let default_index ~pkg entry_modules =
                |> String.concat ~sep:" ")));
   Buffer.contents b
 
+let default_private_index l entry_modules =
+  let b = Buffer.create 512 in
+  Printf.bprintf b "{0 %s index}\n" (Lib.Local.info l |> Lib_info.name |> Lib_name.to_string);
+  Buffer.add_string b
+    (match entry_modules with
+    | [ x ] ->
+      sprintf
+        "The entry point of this library is the module:\n{!module-%s}.\n"
+        (Module_name.to_string (Module.name x))
+    | _ ->
+      sprintf
+        "This library exposes the following toplevel modules:\n\
+        {!modules:%s}\n"
+        (entry_modules
+        |> List.filter ~f:(fun m ->
+              Module.visibility m = Visibility.Public)
+        |> List.sort ~compare:(fun x y ->
+              Module_name.compare (Module.name x) (Module.name y))
+        |> List.map ~f:(fun m -> Module_name.to_string (Module.name m))
+        |> String.concat ~sep:" "));
+  Buffer.contents b
+
 let package_mlds =
   let memo =
     Memo.create "package-mlds"
@@ -777,10 +820,10 @@ let setup_package_odoc_rules sctx ~pkg =
   (* CR-someday jeremiedimino: it is weird that we drop the [Package.t] and go
      back to a package name here. Need to try and change that one day. *)
   let pkg = Package.name pkg in
-  let index = Mld.create pkg (PkgIndex) (Paths.package_index_mld ctx pkg) in
+  let index = Mld.create (PkgIndex pkg) (Paths.package_index_mld ctx pkg) in
   let* odocs =
     Memo.parallel_map (String.Map.values mlds) ~f:(fun mld ->
-        compile_mld sctx (Mld.create pkg PkgPage mld) ~parent:(Some index)
+        compile_mld sctx (Mld.create (PkgPage pkg) mld) ~parent_opt:(Some index)
           ~doc_dir:(Paths.odocs ctx (Pkg pkg))
           ~children:[])
   in
@@ -806,6 +849,26 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Dune_file.Library.t) =
     Rules.Produce.Alias.add_deps (Alias.private_doc ~dir)
       (lib |> Dep.html_alias ctx |> Dune_engine.Dep.alias |> Action_builder.dep)
 
+ let setup_lnu_index_rules sctx lnu =
+  let ctx = Super_context.context sctx in
+  let index_path = Paths.package_index_mld_lnu ctx lnu in
+  let* lib, lib_db = Scope_key.of_string ctx lnu in
+  let* lib =
+    let+ lib = Lib.DB.find lib_db lib in
+    Option.bind ~f:Lib.Local.of_lib lib
+  in
+  match lib with
+  | None -> Memo.return ()
+  | Some l ->
+    let* entry_modules = entry_modules_by_lib sctx l in
+    let* () = add_rule sctx (Action_builder.write_file index_path
+      (default_private_index l entry_modules))
+    in
+    let children = List.fold_left ~init:[] entry_modules ~f:(fun children m ->
+      Module (Module.name m) :: children) in
+    let* _ = compile_mld sctx (Mld.create (PrivateIndex lnu) index_path) ~doc_dir:(Path.Build.parent_exn index_path) ~parent_opt:None ~children in
+    Memo.return ()
+
 let setup_pkg_index_rules sctx pkg =
   let pkg = Package.name pkg in
   let* mlds = Packages.mlds sctx pkg in
@@ -813,6 +876,7 @@ let setup_pkg_index_rules sctx pkg =
   let ctx = Super_context.context sctx in
   let index_path = Paths.package_index_mld ctx pkg in
   let* entry_modules = entry_modules sctx ~pkg in
+  let mld = Mld.create (PkgIndex pkg) index_path in
 
   (* Rule to create index pages - either symlinked from index.mld in a pacage or created by us. *)
   let* () =
@@ -830,11 +894,21 @@ let setup_pkg_index_rules sctx pkg =
     let children = Lib.Local.Map.fold ~init:pchildren entry_modules ~f:(fun ms children ->
       let lchildren = List.map ~f:(fun m -> Module (Module.name m)) ms in
       lchildren @ children) in
-    compile_mld sctx (Mld.create pkg PkgIndex index_path) ~doc_dir:(Path.Build.parent_exn index_path) ~parent:None ~children
+    compile_mld sctx mld ~doc_dir:(Path.Build.parent_exn index_path) ~parent_opt:None ~children
   in 
 
+  let* _ =
+    let* libs = libs_of_pkg ctx ~pkg in
+    let* requires = Lib.closure (libs :> Lib.t list) ~linking:true in
+    let index =
+      let odocl_base = Paths.package_index_mld ctx pkg |> Path.Build.parent_exn in
+      Mld.odoc_file ctx mld |> create_odoc ctx ~target:(Pkg pkg) ~odocl_base
+    in
+    link_odoc_rules sctx index ~pkg:(Some pkg) ~requires
+  in
+
   Memo.return ()
-  
+
 let has_rules m =
   let rules = Rules.collect_unit (fun () -> m) in
   Memo.return
@@ -871,6 +945,8 @@ let gen_rules sctx ~dir:_ rest =
   | [ "_index_pages"; pkg ] ->
     with_package pkg ~f:(fun pkg ->
         setup_pkg_index_rules sctx pkg)
+  | [ "_index_private"; lnu ] ->
+    has_rules (setup_lnu_index_rules sctx lnu)
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg -> setup_package_odoc_rules sctx ~pkg)
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
