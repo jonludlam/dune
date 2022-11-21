@@ -250,10 +250,18 @@ let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
   in
   (m, odoc_file)
 
-let compile_mld sctx (m : Mld.t) ~doc_dir ~pkg =
+type mld_child = Module of Module_name.t | Page of string
+
+let compile_mld sctx (m : Mld.t) ~doc_dir ~pkg ~children =
   let open Memo.O in
   let odoc_file = Mld.odoc_file m ~doc_dir in
   let odoc_input = Mld.odoc_input m in
+  let child_args = List.fold_left children ~init:[] ~f:(
+    fun args child ->
+      match child with
+      | Module mname -> "--child" :: ("module-" ^ Module_name.to_string mname) :: args
+      | Page pname -> "--child" :: (sprintf "page-\"%s\"" pname) :: args
+  ) in
   let* run_odoc =
     run_odoc sctx ~dir:(Path.build doc_dir) "compile"
       ~flags_for:(Some odoc_input)
@@ -261,7 +269,7 @@ let compile_mld sctx (m : Mld.t) ~doc_dir ~pkg =
       ; A "-o"
       ; Target odoc_file
       ; Dep (Path.build odoc_input)
-      ]
+      ; As child_args]
   in
   let+ () = add_rule sctx run_odoc in
   odoc_file
@@ -745,7 +753,8 @@ let setup_package_odoc_rules sctx ~pkg =
   let* odocs =
     Memo.parallel_map (String.Map.values mlds) ~f:(fun mld ->
         compile_mld sctx (Mld.create mld) ~pkg
-          ~doc_dir:(Paths.odocs ctx (Pkg pkg)))
+          ~doc_dir:(Paths.odocs ctx (Pkg pkg))
+          ~children:[])
   in
   Dep.setup_deps ctx (Pkg pkg) (Path.set_of_build_paths_list odocs)
 
@@ -775,13 +784,28 @@ let setup_pkg_index_rules sctx pkg =
   let mlds = check_mlds_no_dupes ~pkg ~mlds in
   let ctx = Super_context.context sctx in
   let index_path = Paths.package_index_mld ctx pkg in
-  match String.Map.find mlds "index" with
-  | Some mld -> add_rule sctx (Action_builder.symlink ~src:(Path.build mld) ~dst:index_path)
-  | None -> 
-    let* entry_modules = entry_modules sctx ~pkg in
-    add_rule sctx
-      (Action_builder.write_file index_path
-          (default_index ~pkg entry_modules))
+  let* entry_modules = entry_modules sctx ~pkg in
+
+  (* Rule to create index pages - either symlinked from index.mld in a pacage or created by us. *)
+  let* () =
+    match String.Map.find mlds "index" with
+    | Some mld -> add_rule sctx (Action_builder.symlink ~src:(Path.build mld) ~dst:index_path)
+    | None -> 
+      add_rule sctx
+        (Action_builder.write_file index_path
+            (default_index ~pkg entry_modules))
+  in
+
+  let* _ =
+    let pchildren = Import.String.Map.foldi ~init:[] mlds ~f:(fun name _ children ->
+      Page name :: children) in
+    let children = Lib.Local.Map.fold ~init:pchildren entry_modules ~f:(fun ms children ->
+      let lchildren = List.map ~f:(fun m -> Module (Module.name m)) ms in
+      lchildren @ children) in
+    compile_mld sctx (Mld.create index_path) ~doc_dir:(Path.Build.parent_exn index_path) ~pkg ~children
+  in 
+
+  Memo.return ()
   
 let has_rules m =
   let rules = Rules.collect_unit (fun () -> m) in
