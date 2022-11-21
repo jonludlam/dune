@@ -169,23 +169,32 @@ end
 let odoc_ext = ".odoc"
 
 module Mld : sig
+  type ty = PkgIndex | PkgPage 
+
   type t
 
-  val create : Path.Build.t -> t
+  val create : Package.Name.t -> ty -> Path.Build.t -> t
 
-  val odoc_file : doc_dir:Path.Build.t -> t -> Path.Build.t
+  val odoc_file : Context.t -> t -> Path.Build.t
 
   val odoc_input : t -> Path.Build.t
 end = struct
-  type t = Path.Build.t
+  type ty = PkgIndex | PkgPage
 
-  let create p = p
+  type t = Package.Name.t * ty * Path.Build.t
 
-  let odoc_file ~doc_dir t =
+  let create pkg ty p = (pkg, ty, p)
+
+  let odoc_file ctx (pkg, ty, t) =
+    let doc_dir =
+      match ty with
+      | PkgPage -> Paths.odocs ctx (Pkg pkg)
+      | PkgIndex -> Path.Build.parent_exn (Paths.package_index_mld ctx pkg)
+    in
     let t = Filename.chop_extension (Path.Build.basename t) in
     Path.Build.relative doc_dir (sprintf "page-%s%s" t odoc_ext)
 
-  let odoc_input t = t
+  let odoc_input (_, _, t) = t
 end
 
 let odoc_base_flags sctx build_dir =
@@ -254,7 +263,8 @@ type mld_child = Module of Module_name.t | Page of string
 
 let compile_mld sctx (m : Mld.t) ~doc_dir ~pkg ~children =
   let open Memo.O in
-  let odoc_file = Mld.odoc_file m ~doc_dir in
+  let ctx = Super_context.context sctx in
+  let odoc_file = Mld.odoc_file ctx m in
   let odoc_input = Mld.odoc_input m in
   let child_args = List.fold_left children ~init:[] ~f:(
     fun args child ->
@@ -521,7 +531,6 @@ let check_mlds_no_dupes ~pkg ~mlds =
 
 let odoc_artefacts sctx target =
   let ctx = Super_context.context sctx in
-  let dir = Paths.odocs ctx target in
   match target with
   | Pkg pkg ->
     let+ mlds =
@@ -530,7 +539,7 @@ let odoc_artefacts sctx target =
     in
     String.Map.values mlds
     |> List.map ~f:(fun mld ->
-           Mld.create mld |> Mld.odoc_file ~doc_dir:dir
+           Mld.create pkg PkgPage mld |> Mld.odoc_file ctx
            |> create_odoc ctx ~target)
   | Lib lib ->
     let info = Lib.Local.info lib in
@@ -752,7 +761,7 @@ let setup_package_odoc_rules sctx ~pkg =
   let pkg = Package.name pkg in
   let* odocs =
     Memo.parallel_map (String.Map.values mlds) ~f:(fun mld ->
-        compile_mld sctx (Mld.create mld) ~pkg
+        compile_mld sctx (Mld.create pkg PkgPage mld) ~pkg
           ~doc_dir:(Paths.odocs ctx (Pkg pkg))
           ~children:[])
   in
@@ -802,7 +811,7 @@ let setup_pkg_index_rules sctx pkg =
     let children = Lib.Local.Map.fold ~init:pchildren entry_modules ~f:(fun ms children ->
       let lchildren = List.map ~f:(fun m -> Module (Module.name m)) ms in
       lchildren @ children) in
-    compile_mld sctx (Mld.create index_path) ~doc_dir:(Path.Build.parent_exn index_path) ~pkg ~children
+    compile_mld sctx (Mld.create pkg PkgIndex index_path) ~doc_dir:(Path.Build.parent_exn index_path) ~pkg ~children
   in 
 
   Memo.return ()
