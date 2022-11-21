@@ -492,15 +492,6 @@ let libs_of_pkg ctx ~pkg =
         Option.some_if (not is_impl) lib
       | Deprecated_library_name _ -> None)
 
-let load_all_odoc_rules_pkg sctx ~pkg =
-  let* pkg_libs = libs_of_pkg sctx ~pkg in
-  let+ () =
-    Memo.parallel_iter
-      (Pkg pkg :: List.map pkg_libs ~f:(fun lib -> Lib lib))
-      ~f:(fun _ -> Memo.return ())
-  in
-  pkg_libs
-
 let entry_modules_by_lib sctx lib =
   let info = Lib.Local.info lib in
   let dir = Lib_info.src_dir info in
@@ -956,7 +947,7 @@ let gen_rules sctx ~dir:_ rest =
        let ctx = Super_context.context sctx in
        let* lib, lib_db = Scope_key.of_string ctx lib_unique_name_or_pkg in
        let setup_pkg_odocl_rules pkg =
-         let* pkg_libs = load_all_odoc_rules_pkg ctx ~pkg in
+         let* pkg_libs = libs_of_pkg ctx ~pkg in
          setup_pkg_odocl_rules sctx ~pkg ~libs:pkg_libs
        in
        (* jeremiedimino: why isn't [None] some kind of error here? *)
@@ -995,7 +986,7 @@ let gen_rules sctx ~dir:_ rest =
        let* lib, lib_db = Scope_key.of_string ctx lib_unique_name_or_pkg in
        let setup_pkg_html_rules pkg =
          let* pkg_libs =
-           load_all_odoc_rules_pkg (Super_context.context sctx) ~pkg
+           libs_of_pkg (Super_context.context sctx) ~pkg
          in
          setup_pkg_html_rules sctx ~pkg ~libs:pkg_libs
        in
