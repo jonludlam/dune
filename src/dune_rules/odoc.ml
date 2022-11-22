@@ -121,6 +121,10 @@ module Paths = struct
 
   let package_index_mld_lnu ctx lnu =
     root ctx ++ "_index_private" ++ lnu ++ (lnu ^ ".mld")
+
+  let ext_package_index_mld ctx pkg =
+    let p = Package.Name.to_string pkg in
+    root ctx ++ "_index_external" ++ p ++ (p ^ ".mld")
 end
 
 module Dep : sig
@@ -761,29 +765,26 @@ let setup_package_aliases sctx (pkg : Package.t) =
 let default_index ~pkg entry_modules =
   let b = Buffer.create 512 in
   Printf.bprintf b "{0 %s index}\n" (Package.Name.to_string pkg);
-  Lib.Local.Map.to_list entry_modules
+  entry_modules
   |> List.sort ~compare:(fun (x, _) (y, _) ->
-         let name lib = Lib.name (Lib.Local.to_lib lib) in
+         let name lib = Lib_info.name lib in
          Lib_name.compare (name x) (name y))
   |> List.iter ~f:(fun (lib, modules) ->
-         let lib = Lib.Local.to_lib lib in
-         Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string (Lib.name lib));
+         Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string (Lib_info.name lib));
          Buffer.add_string b
            (match modules with
            | [ x ] ->
              sprintf
                "The entry point of this library is the module:\n{!module-%s}.\n"
-               (Module_name.to_string (Module.name x))
+               (Module_name.to_string x)
            | _ ->
              sprintf
                "This library exposes the following toplevel modules:\n\
                 {!modules:%s}\n"
                (modules
-               |> List.filter ~f:(fun m ->
-                      Module.visibility m = Visibility.Public)
                |> List.sort ~compare:(fun x y ->
-                      Module_name.compare (Module.name x) (Module.name y))
-               |> List.map ~f:(fun m -> Module_name.to_string (Module.name m))
+                      Module_name.compare x y)
+               |> List.map ~f:Module_name.to_string
                |> String.concat ~sep:" ")));
   Buffer.contents b
 
@@ -886,6 +887,15 @@ let setup_pkg_index_rules sctx pkg =
   let ctx = Super_context.context sctx in
   let index_path = Paths.package_index_mld ctx pkg in
   let* entry_modules = entry_modules sctx ~pkg in
+  let entry_modules = Lib.Local.Map.foldi ~init:[] entry_modules ~f:(
+    fun lib modules acc ->
+      let info = Lib.Local.info lib in
+      let modules = modules |>
+        List.filter ~f:(fun m ->
+          Module.visibility m = Visibility.Public)
+        |> List.map ~f:Module.name in
+      (info, modules) :: acc
+  ) in 
   let mld = Mld.create (PkgIndex pkg) index_path in
 
   (* Rule to create index pages - either symlinked from index.mld in a pacage or created by us. *)
@@ -901,8 +911,8 @@ let setup_pkg_index_rules sctx pkg =
   let* _ =
     let pchildren = Import.String.Map.foldi ~init:[] mlds ~f:(fun name _ children ->
       Page name :: children) in
-    let children = Lib.Local.Map.fold ~init:pchildren entry_modules ~f:(fun ms children ->
-      let lchildren = List.map ~f:(fun m -> Module (Module.name m)) ms in
+    let children = List.fold_left ~init:pchildren entry_modules ~f:(fun children (_lib,ms) ->
+      let lchildren = List.map ~f:(fun m -> Module m) ms in
       lchildren @ children) in
     let children = Page "__dummy__" :: children in
     compile_mld sctx mld ~doc_dir:(Path.Build.parent_exn index_path) ~parent_opt:None ~children
@@ -919,7 +929,55 @@ let setup_pkg_index_rules sctx pkg =
   in
 
   Memo.return ()
+
+let setup_external_index_rules sctx pkg =
+  let ctx = Super_context.context sctx in
+  let* findlib = Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config in
+  let* pkg_opt = Findlib.find_root_package findlib pkg in
+  match pkg_opt with
+  | Error _ -> Memo.return ()
+  | Ok dpkg ->
+    let index_path = Paths.ext_package_index_mld ctx pkg in
+    (* let mld = Mld.create (PkgIndex pkg) index_path in *)
+    let entry_modules =
+      Lib_name.Map.fold dpkg.entries ~init:[] ~f:(fun entry acc ->
+        match entry with
+        | Dune_package.Entry.Library l -> (
+            let info = Dune_package.Lib.info l in
+            match Lib_info.entry_modules info with
+              | External (Ok entry_modules) ->
+            (info, entry_modules) :: acc
+            | _ -> acc)
+        | _ -> acc)
+    in
+    let default_index = default_index ~pkg entry_modules in
+    add_rule sctx
+      (Action_builder.write_file index_path default_index)
   
+    (* let* _ =
+      let pchildren = Import.String.Map.foldi ~init:[] mlds ~f:(fun name _ children ->
+        Page name :: children) in
+      let children = Lib.Local.Map.fold ~init:pchildren entry_modules ~f:(fun ms children ->
+        let lchildren = List.map ~f:(fun m -> Module (Module.name m)) ms in
+        lchildren @ children) in
+      let children = Page "__dummy__" :: children in
+      compile_mld sctx mld ~doc_dir:(Path.Build.parent_exn index_path) ~parent_opt:None ~children
+    in 
+  
+    let* _ =
+      let* libs = libs_of_pkg ctx ~pkg in
+      let* requires = Lib.closure (libs :> Lib.t list) ~linking:true in
+      let index =
+        let odocl_base = Paths.package_index_mld ctx pkg |> Path.Build.parent_exn in
+        Mld.odoc_file ctx mld |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
+      in
+      link_odoc_rules sctx index ~pkg:(Some pkg) ~requires
+    in
+  
+    Memo.return () *)
+  
+
+
 let has_rules ?(directory_targets = Path.Build.Map.empty) m =
   let rules = Rules.collect_unit (fun () -> m) in
   Memo.return
@@ -966,6 +1024,8 @@ let gen_rules sctx ~dir rest =
         setup_pkg_index_rules sctx pkg)
   | [ "_index_private"; lnu ] ->
     has_rules (setup_lnu_index_rules sctx lnu)
+  | [ "_index_external"; pkg ] ->
+    has_rules (setup_external_index_rules sctx (Package.Name.of_string pkg))
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg -> setup_package_odoc_rules sctx ~pkg)
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
