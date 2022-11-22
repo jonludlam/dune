@@ -176,7 +176,7 @@ end
 let odoc_ext = ".odoc"
 
 module Mld : sig
-  type ty = PkgIndex of Package.Name.t | PrivateIndex of string | PkgPage of Package.Name.t
+  type ty = PkgIndex of Package.Name.t | PrivateIndex of string | PkgPage of Package.Name.t | ExtIndex of Package.Name.t
 
   type t
 
@@ -190,7 +190,7 @@ module Mld : sig
 
   val odoc_input : t -> Path.Build.t
 end = struct
-  type ty = PkgIndex of Package.Name.t | PrivateIndex of string | PkgPage of Package.Name.t 
+  type ty = PkgIndex of Package.Name.t | PrivateIndex of string | PkgPage of Package.Name.t | ExtIndex of Package.Name.t
 
   type t = ty * Path.Build.t
 
@@ -201,6 +201,7 @@ end = struct
     | PkgPage pkg -> Paths.odocs ctx (Pkg pkg)
     | PkgIndex pkg -> Path.Build.parent_exn (Paths.package_index_mld ctx pkg)
     | PrivateIndex lnu -> Path.Build.parent_exn (Paths.package_index_mld_lnu ctx lnu)
+    | ExtIndex pkg -> Path.Build.parent_exn (Paths.ext_package_index_mld ctx pkg)
   
   let reference (_, t) =
     let t = Filename.chop_extension (Path.Build.basename t) in
@@ -928,7 +929,7 @@ let setup_external_index_rules sctx pkg =
   | Error _ -> Memo.return ()
   | Ok dpkg ->
     let index_path = Paths.ext_package_index_mld ctx pkg in
-    (* let mld = Mld.create (PkgIndex pkg) index_path in *)
+    let mld = Mld.create (ExtIndex pkg) index_path in
     let entry_modules =
       Lib_name.Map.fold dpkg.entries ~init:[] ~f:(fun entry acc ->
         match entry with
@@ -940,17 +941,43 @@ let setup_external_index_rules sctx pkg =
             | _ -> acc)
         | _ -> acc)
     in
-    let default_index = default_index ~pkg entry_modules in
-    add_rule sctx
-      (Action_builder.write_file index_path default_index)
-  
-    (* let* _ =
-      let pchildren = Import.String.Map.foldi ~init:[] mlds ~f:(fun name _ children ->
-        Page name :: children) in
-      let children = Lib.Local.Map.fold ~init:pchildren entry_modules ~f:(fun ms children ->
-        let lchildren = List.map ~f:(fun m -> Module (Module.name m)) ms in
+    let installed = dpkg.files in
+    
+    let mlds = List.filter_map installed ~f:(function
+      | (Dune_section.Doc, fs) ->
+        let doc_path = Section.Map.find_exn dpkg.sections Doc in
+        Log.info [Pp.textf "doc_path: %s" (Path.to_string doc_path)];
+        Some (List.filter_map ~f:(fun dst ->
+          let str = Install.Dst.to_string dst in
+          if Filename.check_suffix str ".mld"
+          then 
+            Some (Path.relative doc_path str)
+          else
+            None) fs)
+      | _ -> None) |> List.concat in
+
+    let* () =
+      let action =
+        match List.find ~f:(fun p -> Path.basename p = "index.mld") mlds with
+        | Some mld ->
+            (Action_builder.symlink ~src:mld ~dst:index_path)
+        | None ->
+          let default_index = default_index ~pkg entry_modules in
+          (Action_builder.write_file index_path default_index) in
+        add_rule sctx action
+    in
+
+    let* _ =
+      let pchildren = List.filter_map mlds ~f:(fun path ->
+        let name = Path.basename path |> Filename.chop_extension in
+        if name = "index" then None else Some (Page name)) in 
+      
+      let children = List.fold_left ~init:pchildren entry_modules ~f:(fun children (_, ms) ->
+        let lchildren = List.map ~f:(fun m -> Module m) ms in
         lchildren @ children) in
+
       let children = Page "__dummy__" :: children in
+
       compile_mld sctx mld ~doc_dir:(Path.Build.parent_exn index_path) ~parent_opt:None ~children
     in 
   
@@ -958,14 +985,13 @@ let setup_external_index_rules sctx pkg =
       let* libs = libs_of_pkg ctx ~pkg in
       let* requires = Lib.closure (libs :> Lib.t list) ~linking:true in
       let index =
-        let odocl_base = Paths.package_index_mld ctx pkg |> Path.Build.parent_exn in
+        let odocl_base = Paths.ext_package_index_mld ctx pkg |> Path.Build.parent_exn in
         Mld.odoc_file ctx mld |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
       in
       link_odoc_rules sctx index ~pkg:(Some pkg) ~requires
     in
-  
-    Memo.return () *)
-  
+
+    Memo.return ()  
 
 let has_rules m =
   let rules = Rules.collect_unit (fun () -> m) in
