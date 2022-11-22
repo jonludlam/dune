@@ -514,7 +514,7 @@ let entry_modules sctx ~pkg =
   in
   Lib.Local.Map.of_list_exn l
 
-let create_odoc ctx ~target ~odocl_base odoc_file =
+let create_odoc ctx ~target ~odocl_base ~is_index odoc_file =
   let html_base = Paths.html ctx target in
   let basename = Path.Build.basename odoc_file |> Filename.chop_extension in
   let odocl_file = odocl_base ++ (basename ^ ".odocl") in
@@ -528,13 +528,16 @@ let create_odoc ctx ~target ~odocl_base odoc_file =
     ; source = Module
     }
   | Pkg _ ->
+    let page_name = basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn in
+    let html_file =
+      if is_index
+      then html_base ++ "index.html"
+      else html_base ++ sprintf "%s.html" page_name
+    in
     { odoc_file
     ; odocl_file
     ; html_dir = html_base
-    ; html_file =
-        html_base
-        ++ sprintf "%s.html"
-             (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
+    ; html_file
     ; source = Mld
     }
 
@@ -569,7 +572,7 @@ let odoc_artefacts sctx target =
     String.Map.values mlds
     |> List.map ~f:(fun mld ->
            Mld.create (PkgPage pkg) mld |> Mld.odoc_file ctx
-           |> create_odoc ctx ~odocl_base ~target)
+           |> create_odoc ctx ~odocl_base ~is_index:false ~target)
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
@@ -578,7 +581,7 @@ let odoc_artefacts sctx target =
       ~f:(fun m ->
         let odocl_base = Paths.odocl ctx target in
         let odoc_file = Obj_dir.Module.odoc obj_dir m in
-        create_odoc ctx ~target ~odocl_base odoc_file)
+        create_odoc ctx ~target ~odocl_base ~is_index:false odoc_file)
       modules
     |> Memo.return
 
@@ -702,11 +705,17 @@ let setup_lib_html_rules sctx lib =
 let setup_pkg_html_rules_def =
   let f (sctx, pkg, (libs : Lib.Local.t list)) =
     let ctx = Super_context.context sctx in
+    let index =
+      let mld_path = Paths.package_index_mld ctx pkg in
+      let index = Mld.create (PkgIndex pkg) mld_path in
+      let odocl_base = Path.Build.parent_exn mld_path in
+      Mld.odoc_file ctx index |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
+    in
     let* () = Memo.parallel_iter libs ~f:(setup_lib_html_rules sctx)
     and* pkg_odocs =
       let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-      let+ () = Memo.parallel_iter pkg_odocs ~f:(fun o -> setup_html sctx o) in
-      pkg_odocs
+      let+ () = Memo.parallel_iter (index::pkg_odocs) ~f:(fun o -> setup_html sctx o) in
+      (index::pkg_odocs)
     and* lib_odocs =
       Memo.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
     in
@@ -885,6 +894,7 @@ let setup_pkg_index_rules sctx pkg =
     let children = Lib.Local.Map.fold ~init:pchildren entry_modules ~f:(fun ms children ->
       let lchildren = List.map ~f:(fun m -> Module (Module.name m)) ms in
       lchildren @ children) in
+    let children = Page "__dummy__" :: children in
     compile_mld sctx mld ~doc_dir:(Path.Build.parent_exn index_path) ~parent_opt:None ~children
   in 
 
@@ -893,7 +903,7 @@ let setup_pkg_index_rules sctx pkg =
     let* requires = Lib.closure (libs :> Lib.t list) ~linking:true in
     let index =
       let odocl_base = Paths.package_index_mld ctx pkg |> Path.Build.parent_exn in
-      Mld.odoc_file ctx mld |> create_odoc ctx ~target:(Pkg pkg) ~odocl_base
+      Mld.odoc_file ctx mld |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
     in
     link_odoc_rules sctx index ~pkg:(Some pkg) ~requires
   in
