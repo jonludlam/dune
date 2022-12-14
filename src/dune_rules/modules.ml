@@ -440,7 +440,7 @@ let rec main_module_name = function
   | Stdlib w -> Some w.main_module_name
   | Impl { vlib; impl = _ } -> main_module_name vlib
 
-let lib ~src_dir ~main_module_name ~wrapped ~stdlib ~lib_name ~implements
+let libx ~src_dir ~main_module_name ~wrapped ~stdlib ~lib_name ~implements
     ~modules =
   let make_wrapped main_module_name =
     Wrapped

@@ -231,6 +231,7 @@ val create :
   -> dune_version:Dune_lang.Syntax.Version.t option
   -> virtual_:Modules.t Source.t option
   -> entry_modules:Module_name.t list Or_exn.t Source.t
+  -> mangled_modules:Module_name.t list Source.t
   -> implements:(Loc.t * Lib_name.t) option
   -> default_implementation:(Loc.t * Lib_name.t) option
   -> modes:Mode.Dict.Set.t

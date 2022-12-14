@@ -8,7 +8,7 @@ val to_dyn : t -> Dyn.t
 
 val equal : t -> t -> bool
 
-val lib :
+val libx :
      src_dir:Path.Build.t
   -> main_module_name:Module_name.t option
   -> wrapped:Wrapped.t

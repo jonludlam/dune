@@ -172,6 +172,25 @@ type odoc_artefact =
   ; output_type : output_type
   }
 
+  let all_libinfos ctx pkg_name =
+    let* libs = Scope.DB.public_libs ctx in
+    let* all_libs = Lib.DB.all libs in
+    let lib_list = Lib.Set.to_list all_libs in
+    let+ closure = Lib.closure lib_list ~linking:true in
+    let extern =  
+      match Resolve.peek closure with
+      | Ok libs ->
+        let libs = Lib.Set.of_list libs in
+        let extern = Lib.Set.diff libs all_libs in
+        Lib.Set.fold extern ~init:[] ~f:(fun lib l ->
+          let info = Lib.info lib in
+          match pkg_name, Lib_info.package info with
+          | Some pkg, Some pkg' when pkg = pkg' -> info :: l
+          | Some _, _ -> l
+          | None, _ -> info :: l)
+      | _ -> [] in
+    extern
+  
 let add_rule sctx =
   let dir = (Super_context.context sctx).build_dir in
   Super_context.add_rule sctx ~dir
@@ -221,10 +240,6 @@ module Paths = struct
 
   let mld_root ctx = root ctx ++ "_mlds"
 
-  let deps_filename ctx obj_dir =
-    let local = local_external_dir ctx obj_dir in
-    root ctx ++ "_external_deps" ++ local ++ "deps"
-
   let objinfo_filename ctx obj_dir cma_path =
     let cma_name = Path.basename cma_path |> Filename.chop_extension in
     external_findlib_root ctx obj_dir ++ sprintf "%s.objinfo" cma_name
@@ -243,7 +258,7 @@ module Paths = struct
     | Pkg _ | Lib _ -> add_pkg_lnu (html_root ctx) m
     | FindlibPath _ -> failwith "Invalid"
     | FindlibPackage p ->
-      html_root ctx ++ "docs" ++ (Package.Name.to_string p)
+      html_root ctx ++ (Package.Name.to_string p)
 
   let odocl ctx m = add_pkg_lnu (odocl_root ctx) m
 
@@ -258,32 +273,23 @@ module Paths = struct
 end
 
 module Artefacts = struct
-  let docs ctx =
-    let base = "docs" in 
-    {
-    source = Paths.mld_root ctx ++ sprintf "%s.mld" base;
-    odoc_file = Paths.odocs_root ctx ++ sprintf "page-%s.odoc" base;
-    odocl_file = Paths.odocl_root ctx ++ sprintf "page-%s.odocl" base;
-    output_type = Directory (Paths.html_root ctx ++ sprintf "docs");
-    }
+
   let package ctx n =
-    let parent = match (docs ctx).output_type with | Directory d -> d | _ -> failwith "Bad structure" in
     let base = Package.Name.to_string n in
     {
       source = Paths.mld_root ctx ++ "docs/p" ++ sprintf "%s.mld" base;
       odoc_file = Paths.odocs_root ctx ++ sprintf "docs/p/page-%s.odoc" base;
       odocl_file = Paths.odocl_root ctx ++ sprintf "docs/p/page-%s.odocl" base;
-      output_type = Directory (parent ++ base)
+      output_type = Directory (Paths.html_root ctx ++ base)
     }
   
   let ext_package ctx n =
-    let parent = match (docs ctx).output_type with | Directory d -> d | _ -> failwith "Bad structure" in
     let base = Package.Name.to_string n in
     {
       source = Paths.mld_root ctx ++ "docs/l" ++ sprintf "%s.mld" base;
       odoc_file = Paths.odocs_root ctx ++ sprintf "docs/l/page-%s.odoc" base;
       odocl_file = Paths.odocl_root ctx ++ sprintf "docs/l/page-%s.odocl" base;
-      output_type = Directory (parent ++ base)
+      output_type = Directory (Paths.html_root ctx ++ base)
     }
 
 
@@ -366,51 +372,7 @@ let mknode ctx ~source ~mld_children ~parent =
   }
 
 module StdMlds = struct
-  let docs ctx =
-    let sp = sprintf in
-    let* packages = Only_packages.get () in
-    let* findlib =
-      Findlib.create ~paths:ctx.Context.findlib_paths ~lib_config:ctx.lib_config
-    in
-    let* all_packages = Findlib.all_packages findlib in
-
-    let list_items =
-      Package.Name.Map.to_list packages
-      |> List.filter_map ~f:(fun (name, pkg) ->
-             let name = Package.Name.to_string name in
-             let link = sp {|{{!page-"%s"}%s}|} name name in
-             let version_suffix =
-               match pkg.Package.version with
-               | None -> ""
-               | Some v -> sp {| (version %s)|} v
-             in
-             Some (sp "- %s%s" link version_suffix))
-      |> String.concat ~sep:"\n"
-    in
-
-    let children = List.filter_map ~f:(function
-      | Dune_package.Entry.Library l ->
-        let info = Dune_package.Lib.info l in
-        let name = Lib_info.name info |> Lib_name.to_string in
-        let name = String.split ~on:'.' name |> List.hd in
-        Some (name)
-      | _ -> None) all_packages in
-
-    let children = "stdlib" :: children in
-
-    let doc_contents = sp {|{0 Docs}
-      
-      %s
   
-      |} list_items in
-
-    let a = Artefacts.docs ctx in
-
-    let source = S_Mld (a.source, MS_String doc_contents) in
-
-    let mld_children = children in
-    Memo.return (mknode ctx ~source ~mld_children ~parent:None)
-
   let libs_of_pkg ctx ~pkg =
     let+ entries = Scope.DB.lib_entries_of_package ctx pkg in
     (* Filter out all implementations of virtual libraries *)
@@ -518,7 +480,7 @@ module StdMlds = struct
           let index_exists = String.Map.mem mlds "index" in
           let pkg_mld_artefact = Artefacts.package ctx pkg in
           let pkg_mld = pkg_mld_artefact.source in
-          let* entry_modules = entry_modules sctx ~pkg in
+          let+ entry_modules = entry_modules sctx ~pkg in
           let source =
             if index_exists then
               MS_Renamed_file (String.Map.find_exn mlds "index")
@@ -533,11 +495,10 @@ module StdMlds = struct
               mlds
           in
 
-          let+ parent = docs ctx in
           let pkg =
             mknode ctx
               ~source:(S_Mld (pkg_mld, source))
-              ~mld_children ~parent:(Some parent)
+              ~mld_children ~parent:None
           in
           let children =
             String.Map.fold ~init:[]
@@ -787,8 +748,8 @@ let module_deps (m : Module.t) ~obj_dir ~(dep_graphs : Dep_graph.Ml_kind.t) =
     in
     List.map deps ~f:(fun m -> Path.build (Obj_dir.Module.odoc obj_dir m)))
 
-let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
-    ~dep_graphs ~pkg_or_lnu =
+let compile_module sctx ~obj_dir ~deps (m : Module.t) ~includes:(file_deps, iflags)
+    ~pkg_or_lnu =
   let odoc_file = Obj_dir.Module.odoc obj_dir m in
   let open Memo.O in
   let+ () =
@@ -807,7 +768,7 @@ let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
       in
       let open Action_builder.With_targets.O in
       Action_builder.with_no_targets file_deps
-      >>> Action_builder.with_no_targets (module_deps m ~obj_dir ~dep_graphs)
+      >>> Action_builder.with_no_targets deps
       >>> run_odoc
     in
     add_rule sctx action_with_targets
@@ -889,9 +850,9 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let includes = (OdocDep.deps ctx package requires [], odoc_include_flags) in
   let modules_and_odoc_files =
     Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
+        let deps = module_deps m ~obj_dir ~dep_graphs:(Compilation_context.dep_graphs cctx) in
         let compiled =
-          compile_module sctx ~includes
-            ~dep_graphs:(Compilation_context.dep_graphs cctx)
+          compile_module sctx ~includes ~deps
             ~obj_dir ~pkg_or_lnu m
         in
         compiled :: acc)
@@ -990,20 +951,6 @@ let setup_toplevel_index_rule sctx =
   let ctx = Super_context.context sctx in
   add_rule sctx (Action_builder.write_file (Paths.toplevel_index ctx) html)
 
-let setup_docs_html_rule sctx =
-  let ctx = Super_context.context sctx in
-  let a = Artefacts.docs ctx in
-  let output_file = match a.output_type with | Directory d -> d ++ "index.html" | File f -> f in
-  Log.info [Pp.textf "DDD Adding rule for file: %s" (Path.Build.to_string output_file)];
-  let* action =
-    run_odoc sctx ~dir:(Path.build (Paths.html_root ctx))
-      "html-generate" ~flags_for:None
-      Command.Args.[ A "-o"
-      ; Path (Path.build (Paths.html_root ctx))
-      ; Dep (Path.build a.odocl_file)
-      ; Hidden_targets [ output_file ]
-      ] in
-  add_rule sctx action
 
 let libs_of_pkg ctx ~pkg =
   let+ entries = Scope.DB.lib_entries_of_package ctx pkg in
@@ -1367,25 +1314,16 @@ let with_package pkg ~f =
   | Some pkg -> has_rules (f pkg)
 
 module ExternalDeps = struct
-  let parse_odoc_deps lines =
-    let rec parse_stanza l =
-      match l with
-      | modname :: fname :: deps ->
-        let rec getdeps cur = function
-          | "" :: rest -> (cur, rest)
-          | x :: rest -> (
-            match String.split ~on:' ' x with
-            | [ m; hash ] ->
-              getdeps ((Module_name.of_string m, hash) :: cur) rest
-            | _ -> getdeps cur rest)
-          | [] -> (cur, [])
-        in
-        let moddeps, rest = getdeps [] deps in
-        (Module_name.of_string modname, (Path.of_string fname, moddeps))
-        :: parse_stanza rest
-      | _ -> []
-    in
-    parse_stanza lines
+    let parse_odoc_deps_single lines =
+      let rec getdeps cur = function
+        | x :: rest -> (
+          match String.split ~on:' ' x with
+          | [ m; hash ] ->
+            getdeps ((Module_name.of_string m, hash) :: cur) rest
+          | _ -> getdeps cur rest)
+        | [] -> cur
+      in
+      getdeps [] lines
 
   let parse_ooi lines =
     let prefix = "Unit name: " in
@@ -1399,73 +1337,7 @@ module ExternalDeps = struct
     in
     List.filter_map ~f:parse lines
 
-  let deps_graph sctx findlib_deps =
-    let ctx = Super_context.context sctx in
-    let open Action_builder.O in
-    Log.info [Pp.textf "here we are, findlib_deps len=%d = [%s]" (Path.Set.cardinal findlib_deps) (String.concat ~sep:"," (List.map ~f:Path.to_string (Path.Set.to_list findlib_deps)))];
-    let deps = Path.Set.map ~f:(fun dir -> Path.build (Paths.deps_filename ctx dir)) findlib_deps in
-    let+ all_deps =
-      Action_builder.deps (Dep.Set.of_files_set deps) >>>
-      Action_builder.List.fold_left ~init:Module_name.Map.empty (Path.Set.to_list findlib_deps)
-        ~f:(fun map obj_dir ->
-          Log.info [Pp.textf "About to read lines (of %s)" (Path.to_string (Path.build (Paths.deps_filename ctx obj_dir)))];
-          let+ lines =
-            Action_builder.lines_of
-              (Path.build (Paths.deps_filename ctx obj_dir))
-          in
-          Log.info [Pp.textf "building deps graph... (out of %d) (obj_dir=%s)" (Path.Set.cardinal findlib_deps) (Path.to_string obj_dir)];
-          let dict = parse_odoc_deps lines in
-          Log.info [Pp.textf "parsed... about to fold on %d things" (List.length dict)];
-          let result = List.fold_left ~init:map
-            ~f:(fun map (module_name, (filename, deps)) ->
-              let odoc_filename =
-                Path.basename filename |> Filename.chop_extension
-              in
-              let odoc_path = Paths.external_findlib_root ctx obj_dir in
-              try Module_name.Map.add_exn map module_name (odoc_path ++ sprintf "%s.odoc" odoc_filename, deps)
-              with _ -> map)
-            dict
-            in 
-            Log.info [Pp.textf "folded."];
-
-            result)
-    in
-    let graph =
-      Module_name.Map.foldi ~init:(Path.Build.Map.empty) all_deps
-        ~f:(fun module_name (odoc_filename, deps) g ->
-          let odoc_files =
-            List.filter_map
-              ~f:(fun (module_name, _) ->
-                match Module_name.Map.find all_deps module_name with
-                | Some (odoc_dep, _) -> Some odoc_dep
-                | None -> None)
-              deps
-          in
-          Log.info [Pp.textf "more building deps graph..."];
-
-          match Module_name.Map.find all_deps module_name with
-          | Some (_cmti_file, _) -> Path.Build.Map.add_exn g odoc_filename odoc_files
-          | None -> g)
-    in
-    graph
-
-  let deps_graph sctx findlib_deps =
-    Action_builder.memoize "deps_graph" (deps_graph sctx findlib_deps)
 end
-
-let deps_of_findlib_dir (sctx : Super_context.t) (dir : Path.t) =
-  let ctx = Super_context.context sctx in
-  let deps_destination = Paths.deps_filename ctx dir in
-  let* odoc = odoc_program sctx (Paths.root ctx) in
-  Log.info
-    [ Pp.textf "Adding rule for %s"
-        (Path.Build.to_string_maybe_quoted deps_destination)
-    ];
-  Super_context.add_rule sctx ~dir:(Paths.root ctx)
-    (Command.run odoc
-       ~dir:(Path.build (Paths.root ctx))
-       ~stdout_to:deps_destination
-       [ A "compile-deps-dir"; A (Path.to_string dir) ])
 
 let modules_of_dir d =
   let* dir_res = Fs_memo.dir_contents (Path.as_outside_build_dir_exn d) in
@@ -1491,30 +1363,38 @@ let modules_of_dir d =
   |>
   Memo.return
 
-let findlib_package_mld_rule (sctx : Super_context.t) (package_name : string) _mlds =
+let findlib_package_mld_rule (sctx : Super_context.t) (package_name_str : string) _mlds =
   let ctx = Super_context.context sctx in
-  let* findlib =
-    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-  in
-  let* all_packages = Findlib.all_packages findlib in
+  let package_name = Package.Name.of_string package_name_str in
 
-  (* Find all packages that start with 'package_name' *)
-  let packages = List.filter_map all_packages ~f:(fun entry ->
-    match entry with
-    | Dune_package.Entry.Library entry ->
-      let info = Dune_package.Lib.info entry in
-      let name = Lib_info.name info |> Lib_name.to_string in
-      let fst = String.split ~on:'.' name |> List.hd in
-      if fst = package_name then Some entry else None
-    | _ -> None) in
-    
+  let* libs = Scope.DB.public_libs ctx in
+  let* all_libs = Lib.DB.all libs in
+  let lib_list = Lib.Set.to_list all_libs in
+  let* closure = Lib.closure lib_list ~linking:true in
+  let extern =  
+    match Resolve.peek closure with
+    | Ok libs ->
+      let libs = Lib.Set.of_list libs in
+      let extern = Lib.Set.diff libs all_libs in
+      Lib.Set.fold extern ~init:[] ~f:(fun lib l ->
+        let info = Lib.info lib in
+        match Lib_info.package info with | Some p when p = package_name -> info :: l | _ -> l)
+    | _ -> [] in
+  let* extern =
+    let stdlib = Lib_name.of_string "stdlib" in
+    let+ lib = Lib.DB.find libs stdlib in
+    match lib with
+    | Some l -> Lib.info l :: extern
+    | None -> extern
+  in
+  
+
   (* Find all obj_dirs and cmas *)
   let cmas =
-    List.fold_left ~init:[] packages ~f:(fun acc pkg ->
-        let info = Dune_package.Lib.info pkg in
+    List.fold_left ~init:[] extern ~f:(fun acc info ->
         let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
         let cma = Mode.Dict.get (Lib_info.archives info) Byte in
-        let cmas = (pkg, (obj_dir, cma)) in
+        let cmas = (info, (obj_dir, cma)) in
         cmas :: acc)
   in
 
@@ -1530,10 +1410,9 @@ let findlib_package_mld_rule (sctx : Super_context.t) (package_name : string) _m
     
     let buf = Buffer.create 1000 in
 
-    Printf.bprintf buf "{0 Package %s}\n\n" package_name;
+    Printf.bprintf buf "{0 Package %s}\n\n" package_name_str;
 
-    List.iter ~f:(fun (lib, _, modules) ->
-      let info = Dune_package.Lib.info lib in
+    List.iter ~f:(fun (info, _, modules) ->
       Printf.bprintf buf "{1 Library %s}\n\n" (Lib_info.name info |> Lib_name.to_string);
       List.iter ~f:(fun m ->
         Printf.bprintf buf "- {!module-%s}\n" (Module_name.to_string m)
@@ -1544,7 +1423,7 @@ let findlib_package_mld_rule (sctx : Super_context.t) (package_name : string) _m
       Buffer.contents buf
   in
 
-  let a = Artefacts.ext_package ctx (Package.Name.of_string package_name) in
+  let a = Artefacts.ext_package ctx package_name in
   
   Memo.return (Action_builder.write_file_dyn a.source action)
   
@@ -1568,18 +1447,21 @@ type compile_ty =
     source : Path.t;
   } *)
 
-let get_parent ctx dir cmas default_parent module_name =
+let get_parent ctx dir cmas module_name =
   match cmas with
   | [] ->
-    Action_builder.return default_parent
+    Log.info [Pp.textf "ZZY no package for module %s" (Module_name.to_string module_name)];
+
+    Action_builder.return None
   | [(package_name, _cma)] ->
+    Log.info [Pp.textf "ZZY Only one package: %s for module %s" package_name (Module_name.to_string module_name)];
     let a = Artefacts.ext_package ctx (Package.Name.of_string package_name) in
 
-    Action_builder.return a
+    Action_builder.return (Some a)
   | pkgs ->
+    Log.info [Pp.textf "ZZY more than one package for module %s" (Module_name.to_string module_name)];
     (* Got to figure out which findlib package the file belongs to *)
-    let open Action_builder.O in
-    let+ res = Action_builder.List.fold_left ~init:None pkgs ~f:(fun acc (package_name, cma) ->
+    Action_builder.List.fold_left ~init:None pkgs ~f:(fun acc (package_name, cma) ->
       match acc with
       | Some _ -> Action_builder.return acc
       | None ->
@@ -1590,39 +1472,58 @@ let get_parent ctx dir cmas default_parent module_name =
           let a = Artefacts.ext_package ctx (Package.Name.of_string package_name) in
           Some a
         else None
-      )in
-    match res with
-    | None ->
-      Log.info [Pp.textf "ZZZ Using default parent for module: %s" (Module_name.to_string module_name)];
-      default_parent
-    | Some p -> p
+      )
 
-
-
-let compile_external_odoc sctx dir obj_dirs cmas db cmti_file default_parent odoc_file =
+let compile_external_odoc sctx dir cmas modules (m,cmti_file) lib_deps odoc_file =
   Log.info
     [ Pp.textf "Rule for: %s (depending on %s)"
         (Path.Build.to_string odoc_file)
         (Path.to_string cmti_file)
     ];
   let ctx = Super_context.context sctx in
+
+  (* Findlib-level deps *)
+  let other_deps =
+    let open Action_builder.O in 
+    let* deps = lib_deps in
+    OdocDep.deps ctx None (Resolve.return []) deps in
+
   let output_dir = Paths.external_findlib_root ctx dir in
+  let odoc_file_base = Module_name.to_string m in
+  let deps_file =
+    Paths.external_findlib_root ctx dir
+    ++ sprintf "%s.deps" odoc_file_base in
+
   let deps =
+    let open Action_builder.O in
+    let* l = Action_builder.lines_of (Path.build deps_file) in
+    let deps = ExternalDeps.parse_odoc_deps_single l in
+    let deps = List.filter_map ~f:(fun (m',_) ->
+      if (m <> m') && List.mem_assoc m' ~map:modules
+      then Some (output_dir ++ ((Module_name.to_string m') ^ ".odoc") |> Path.build)
+      else None
+       ) deps in
+    Log.info [Pp.textf "NNN Got %d deps for module %s" (List.length deps) (Module_name.to_string m)];
+    Dep.Set.of_files deps |> Action_builder.deps
+  in
+
+  (* let deps =
     let open Action_builder.O in
     let* db = db in
     match
       Path.Build.Map.find db odoc_file
     with
-    | None -> Dep.Set.of_list [] |> Action_builder.deps
+    | None -> Dep.Set.of_files [Path.build deps_file] |> Action_builder.deps
     | Some deps ->
       Log.info
         [ Pp.textf "dependencies for %s" (Path.Build.to_string odoc_file) ];
       List.filter ~f:(fun x -> x <> odoc_file) deps
-      |> List.map ~f:(fun p ->
+      |> (fun l -> Path.build deps_file :: List.map ~f:(fun p ->
              Log.info [ Pp.textf "dependency: %s" (Path.Build.to_string p) ];
-             Path.build p)
+             Path.build p) l)
       |> Dep.Set.of_files |> Action_builder.deps
-  in
+  in *)
+
   (* let other_deps =
     List.filter_map
       ~f:(fun d ->
@@ -1637,31 +1538,38 @@ let compile_external_odoc sctx dir obj_dirs cmas db cmti_file default_parent odo
   in *)
 
   let iflags =
-    List.map (Path.Set.to_list obj_dirs) ~f:(fun dir ->
-        let odoc_path = Paths.external_findlib_root ctx dir in
-        Command.Args.[ A "-I"; Path (Path.build odoc_path) ])
-    |> List.concat
-  in
+    let open Action_builder.O in
+    let+ lib_deps = lib_deps in
+    let odoc_dirs = List.map lib_deps ~f:(fun target -> Paths.odocs ctx target) in
+    List.fold_left odoc_dirs ~f:(fun acc dir ->
+      Command.Args.A "-I" :: Path (Path.build dir) :: acc) ~init:[]
+  in 
+
   let doc_dir = Path.build output_dir in
 
   let module_name = Path.basename cmti_file |> Filename.chop_extension |> Module_name.of_string in
-  let get_parent = get_parent ctx dir cmas default_parent module_name in
+  let get_parent = get_parent ctx dir cmas module_name in
 
   let parent =
-    Action_builder.map get_parent ~f:(fun a ->
-      let parent = Path.Build.parent_exn a.odoc_file in
-      let ref = Path.Build.basename a.source |> Filename.chop_extension in
-      let ref = sprintf "page-\"%s\"" ref in
-      Command.Args.S [ A "-I"
-      ; Path (Path.build parent)
-      ; A "--parent"
-      ; A ref
-      ; Hidden_deps (Dep.Set.of_files [Path.build a.odoc_file])]
-    )
+    let open Action_builder.O in
+    let* iflags = iflags in
+    let+ args = Action_builder.map get_parent ~f:(fun a_opt ->
+      match a_opt with
+      | None -> []
+      | Some a ->
+        let parent = Path.Build.parent_exn a.odoc_file in
+        let ref = Path.Build.basename a.source |> Filename.chop_extension in
+        let ref = sprintf "page-\"%s\"" ref in
+        (Command.Args.[ A "-I"
+        ; Path (Path.build parent)
+        ; A "--parent"
+        ; A ref
+        ; Hidden_deps (Dep.Set.of_files [Path.build a.odoc_file])] @ iflags)
+    ) in Command.Args.S args
   in
   let* action =
     let+ run_odoc =
-      run_odoc sctx ~dir:doc_dir "compile" ~extra_args:(parent) ~flags_for:(Some odoc_file)
+      run_odoc sctx ~dir:doc_dir "compile" ~extra_args:parent ~flags_for:(Some odoc_file)
         (Command.Args.
            [ A "-I"
            ; Path doc_dir
@@ -1670,18 +1578,19 @@ let compile_external_odoc sctx dir obj_dirs cmas db cmti_file default_parent odo
            ; Dep cmti_file
            (* ; Hidden_deps other_deps *)
            ]
-        @ iflags)
+        )
     in
     let open Action_builder.With_targets.O in
-
-    Action_builder.with_no_targets deps >>> run_odoc
+    Action_builder.with_no_targets other_deps >>> 
+    Action_builder.with_no_targets deps  >>> run_odoc
   in
   Log.info
     [ Pp.textf "About to add rule for %s" (Path.Build.to_string odoc_file) ];
   add_rule sctx action
 
 
-let external_pkg_mld_rules sctx pkg_str =
+let external_pkg_mld_rules sctx pkg =
+  let pkg_str = Package.Name.to_string pkg in
   Log.info [Pp.textf "external_pkg_mld_rules: %s" pkg_str];
   let ctx = Super_context.context sctx in
   let odoc_mld_path p =
@@ -1711,92 +1620,20 @@ let external_pkg_mld_rules sctx pkg_str =
   let* action = findlib_package_mld_rule sctx pkg_str mlds
   in add_rule sctx action
 
-let external_pkg_module_children sctx package_name =
-  let ctx = Super_context.context sctx in
-  let* findlib =
-  Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-  in
-  let* all_packages = Findlib.all_packages findlib in
-  (* Find all packages that start with 'package_name' *)
-  let packages = List.filter_map all_packages ~f:(fun entry ->
-    match entry with
-    | Dune_package.Entry.Library entry ->
-      let info = Dune_package.Lib.info entry in
-      let name = Lib_info.name info |> Lib_name.to_string in
-      let fst = String.split ~on:'.' name |> List.hd in
-      if fst = package_name then Some entry else None
-    | _ -> None) in
-
-  (* Find all obj_dirs and cmas *)
-  let* cmas =
-    Memo.List.fold_left ~init:[] packages ~f:(fun acc pkg ->
-        let info = Dune_package.Lib.info pkg in
-        (match Dune_package.Lib.modules pkg with
-         | None -> Log.info [Pp.textf "Falling back to findlib module lookup"]
-          | Some m -> Log.info [Pp.textf "Got some modules!"];
-            Log.info [Pp.textf "Wrapped: %s" (match Modules.wrapped m with | Simple true -> "true" | Simple false -> "false" | _ -> "it's complicated") ];
-            Log.info [Pp.textf "Entry modules: %s" (String.concat ~sep:"," (List.map (Modules.entry_modules m) ~f:(fun m -> Module.name m |> Module_name.to_string)))]
-          );
-        let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
-        let cmas = Mode.Dict.get (Lib_info.archives info) Byte in
-        let pkg_name = Lib_info.name info |> Lib_name.to_string |> String.split ~on:'.' |> List.hd in
-        List.iter ~f:(fun cma ->
-          Log.info [Pp.textf "xx Checking package %s cma %s" (Lib_info.name info |> Lib_name.to_string) (Path.to_string cma)]) cmas;
-        let+ modules = modules_of_dir obj_dir in
-        let cmas = (pkg_name, (obj_dir, modules, cmas)) in
-        cmas :: acc)
-  in
-
-  let* cmas =
-    if package_name = "stdlib"
-    then (
-      let+ modules = modules_of_dir ctx.stdlib_dir in
-      ("stdlib", (ctx.stdlib_dir, modules, [Path.relative ctx.stdlib_dir "stdlib.cma"])) :: cmas)
-    else (Memo.return cmas)
-  in
-
-  let children =
-    let open Action_builder.O in
-    let+ mods = List.fold_left ~f:(fun acc (pkg, (obj_dir, dir_modules, cmas)) ->
-        List.fold_left ~f:(fun acc cma ->
-          let src = Paths.objinfo_filename ctx obj_dir cma in
-          let* lines = Action_builder.lines_of (Path.build src) in
-          let modules = ExternalDeps.parse_ooi lines in
-          let modules = List.filter ~f:(fun x -> List.mem_assoc ~map:dir_modules x) modules in
-          Log.info [Pp.textf "Got %d modules from %s" (List.length modules) (Path.to_string cma) ];
-          let deps = (pkg, (obj_dir, cma), modules) in
-          let+ acc = acc in
-          (deps::acc)
-          ) ~init:acc cmas) ~init:(Action_builder.return []) cmas in
-      mods
-  in
-  Memo.return children
 
 let external_pkg_odocl_rules sctx package_name =
   let ctx = Super_context.context sctx in
-  let a = Artefacts.ext_package ctx (Package.Name.of_string package_name) in
+  let a = Artefacts.ext_package ctx package_name in
   let dir = Path.Build.parent_exn a.odocl_file in
 
-  let* findlib =
-    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-  in
-  let* all_packages = Findlib.all_packages findlib in
-
+  let* libs = all_libinfos ctx (Some package_name) in
   (* Find all packages that start with 'package_name' *)
-  let packages = List.filter_map all_packages ~f:(fun entry ->
-    match entry with
-    | Dune_package.Entry.Library entry ->
-      let info = Dune_package.Lib.info entry in
-      let name = Lib_info.name info |> Lib_name.to_string in
-      let fst = String.split ~on:'.' name |> List.hd in
-      if fst = package_name then Some entry else None
-    | _ -> None) in
-
+  
   let deps = List.map ~f:(
     fun l ->
-      let obj_dir = Dune_package.Lib.info l |> Lib_info.obj_dir |> Obj_dir.obj_dir in
+      let obj_dir = l |> Lib_info.obj_dir |> Obj_dir.obj_dir in
       FindlibPath obj_dir
-    ) packages in
+    ) libs in
 
   let deps_action = OdocDep.deps ctx None (Resolve.return []) deps in
 
@@ -1821,55 +1658,21 @@ let external_pkg_odocl_rules sctx package_name =
 
 
 let external_pkg_odoc_rules sctx package_name =
+  let package_name_str = Package.Name.to_string package_name in
+  Log.info [Pp.textf "external_pkg_odoc_rules: %s" package_name_str];
   let ctx = Super_context.context sctx in
-  let a = Artefacts.ext_package ctx (Package.Name.of_string package_name) in
+  let a = Artefacts.ext_package ctx package_name in
   let dir = Path.Build.parent_exn a.source in
   let package_odoc = a.odoc_file in
-  let* parent = StdMlds.docs ctx in
-  let odoc_reference (a : artefact_tree) =
-    Filename.chop_extension a.odoc_file
-  in
-  let parent_args =
-       [ Command.Args.A "-I"
-        ; Path (Path.build parent.odoc_dir)
-        ; A "--parent"
-        ; A (odoc_reference parent)
-        ; Hidden_deps
-            (Import.Dep.Set.of_files [ Path.build (parent.odoc_dir ++ parent.odoc_file) ])
-        ]
-  in
 
-  let* findlib =
-    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-  in
-  let* all_packages = Findlib.all_packages findlib in
-
+  let* libs = all_libinfos ctx (Some package_name) in
   (* Find all packages that start with 'package_name' *)
-  let packages = List.filter_map all_packages ~f:(fun entry ->
-  match entry with
-  | Dune_package.Entry.Library entry ->
-    let info = Dune_package.Lib.info entry in
-    let name = Lib_info.name info |> Lib_name.to_string in
-    let fst = String.split ~on:'.' name |> List.hd in
-    if fst = package_name then Some entry else None
-  | _ -> None) in
   
-  (* Find all obj_dirs and cmas *)
-  let cmas =
-    List.fold_left ~init:[] packages ~f:(fun acc pkg ->
-        let info = Dune_package.Lib.info pkg in
-        let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
-        let cma = Mode.Dict.get (Lib_info.archives info) Byte in
-        let cmas = (pkg, (obj_dir, cma)) in
-        cmas :: acc)
-  in
-  let dirs = List.map ~f:(fun (_, (d, _)) -> d) cmas in
-  let* modules = Memo.List.map ~f:modules_of_dir dirs in
-  let all_modules = List.concat modules in
+  let modules = List.map libs ~f:(fun l -> match Lib_info.entry_modules l with | External (Ok l) -> l | _ -> []) |> List.concat in
 
   let children_args =
-    let mods = all_modules in
-    let args = List.map ~f:(fun (m,_) -> Command.Args.[A "--child"; A (Module_name.to_string m)]) mods |> List.concat in
+    let mods = modules in
+    let args = List.map ~f:(fun m -> Command.Args.[A "--child"; A (Module_name.to_string m)]) mods |> List.concat in
     Action_builder.return (Command.Args.S args)
   in
 
@@ -1878,35 +1681,50 @@ let external_pkg_odoc_rules sctx package_name =
       ~extra_args:(children_args)
       ~dir:(Path.build dir)
       "compile" ~flags_for:(Some a.source)
-      ([ Command.Args.A "-o"
+      [ Command.Args.A "-o"
        ; Target (package_odoc)
        ; Dep (Path.build a.source)
        ]
-      @ parent_args)
   in
   add_rule sctx run_odoc
 
+let external_module_deps_rule sctx path deps_file =
+  let ctx = Super_context.context sctx in
+  let* odoc = odoc_program sctx (Paths.root ctx) in
+  Log.info
+    [ Pp.textf "Adding rule for %s"
+        (Path.Build.to_string_maybe_quoted deps_file)
+    ];
+  Super_context.add_rule sctx ~dir:(Paths.root ctx)
+    (Command.run odoc
+       ~dir:(Path.parent_exn (Path.build deps_file))
+       ~stdout_to:deps_file
+       [ A "compile-deps"; Path path ])
 
-let compile_rules_of_findlib_dir sctx dir obj_dirs default_parent cmas =
+let compile_rules_of_findlib_dir sctx dir deps cmas =
   let ctx = Super_context.context sctx in
   let* modules = modules_of_dir dir in
-  
-  let db = ExternalDeps.deps_graph sctx obj_dirs in
 
   Memo.parallel_map
     ~f:(fun (m, (path, _)) ->
       let odoc_file_base = Module_name.to_string m in
+      let deps_file =
+        Paths.external_findlib_root ctx dir
+        ++ sprintf "%s.deps" odoc_file_base in
+      let* () =
+        external_module_deps_rule sctx path deps_file
+      in
       let odoc_file =
         Paths.external_findlib_root ctx dir
         ++ sprintf "%s.odoc" odoc_file_base
       in
       let+ () =
-        compile_external_odoc sctx dir obj_dirs cmas db path default_parent odoc_file
+        compile_external_odoc sctx dir cmas modules (m,path) deps odoc_file
       in
       (m,odoc_file))
     modules
 
-let link_rules_of_findlib_dir sctx odocs dir obj_dirs =
+let link_rules_of_findlib_dir sctx odocs dir lib_deps =
   let ctx = Super_context.context sctx in
 
   let non_hidden =
@@ -1914,11 +1732,13 @@ let link_rules_of_findlib_dir sctx odocs dir obj_dirs =
         not (contains_double_underscore m))
   in
   let iflags =
-    List.map (Path.Set.to_list obj_dirs) ~f:(fun dir ->
-        let odoc_path = Paths.external_findlib_root ctx dir in
-        Command.Args.[ A "-I"; Path (Path.build odoc_path) ])
-    |> List.concat
-  in
+    let open Action_builder.O in
+    let+ lib_deps = lib_deps in
+    let odoc_dirs = List.map lib_deps ~f:(fun target -> Paths.odocs ctx target) in
+    let args = List.fold_left odoc_dirs ~f:(fun acc dir ->
+      Command.Args.A "-I" :: Path (Path.build dir) :: acc) ~init:[] in
+    Command.Args.S args
+  in 
   Memo.List.iter non_hidden ~f:(fun (_, odoc_file) ->
       let odoc_file_base =
         Path.Build.basename odoc_file |> Filename.chop_extension
@@ -1932,13 +1752,13 @@ let link_rules_of_findlib_dir sctx odocs dir obj_dirs =
         let+ run_odoc =
           run_odoc sctx ~dir:(Path.build build_dir) "link"
             ~flags_for:(Some odocl_file)
+            ~extra_args:iflags
             (Command.Args.
                [ A "-o"
                ; Target odocl_file
                ; Dep (Path.build odoc_file)
                ; Hidden_deps (Dep.Set.of_files (List.map ~f:Path.build (List.map ~f:snd odocs)))
-               ]
-            @ iflags)
+               ])
         in
         run_odoc
       in
@@ -1950,10 +1770,6 @@ let link_rules_of_findlib_dir sctx odocs dir obj_dirs =
 
 let packages_of_local_dir sctx =
   let ctx = Super_context.context sctx in
-  let* findlib =
-    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-  in
-  let* all_packages = Findlib.all_packages findlib in
   let findlib_paths_unsorted =
     List.map ~f:(fun x -> Path.to_string x ^ "/") ctx.Context.findlib_paths
   in
@@ -1962,122 +1778,38 @@ let packages_of_local_dir sctx =
       ~compare:(fun p1 p2 -> Int.compare (String.length p1) (String.length p2))
       findlib_paths_unsorted
   in
-  let map =
-    List.fold_left all_packages ~init:String.Map.empty ~f:(fun map entry ->
-        match entry with
-        | Dune_package.Entry.Library l ->
-          let obj_dir =
-            Dune_package.Lib.info l |> Lib_info.obj_dir |> Obj_dir.dir
-          in
-          let obj_dir_str = Path.to_string obj_dir in
-          let prefix =
-            List.find
-              ~f:(fun prefix -> starts_with ~prefix obj_dir_str)
-              findlib_paths
-            |> Option.value_exn
-          in
-          let local =
-            String.sub obj_dir_str ~pos:(String.length prefix)
-              ~len:(String.length obj_dir_str - String.length prefix)
-          in
-          let local = String.split ~on:'/' local |> List.hd in
-          let name = Dune_package.Lib.info l |> Lib_info.name in
-          String.Map.update map local ~f:(function
-            | Some (l, ods) -> Some (name :: l, Path.Set.add ods obj_dir)
-            | None -> Some ([ name ], Path.Set.add Path.Set.empty obj_dir))
-        | _ -> map)
-  in
-  Memo.return map
-
-let setup_docs_odocl_rules sctx =
-  let ctx = Super_context.context sctx in
-  let* packages = Only_packages.get () in
-
-  let* local_package_names =
-    Memo.List.fold_left ~init:[] (Package.Name.Map.to_list packages) ~f:(
-      fun acc (pkg_name, _pkg) ->
-        let+ libs =
-          libs_of_pkg ctx ~pkg:pkg_name
-          >>| List.map ~f:(fun lib -> Lib.Local.info lib |> Lib_info.name)
-        in
-        libs :: acc) >>| List.concat
-  in
-
-  let* extern =
-    let* libs = Memo.List.fold_left ~init:Lib.Local.Set.empty ~f:(fun acc (pkg,_) ->
-        let+ libs = libs_of_pkg ctx ~pkg in 
-        List.fold_left ~init:acc ~f:Lib.Local.Set.add libs )
-        (Package.Name.Map.to_list packages) in
-      
-    let* findlib =
-      Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config in
-    Memo.List.map ~f:(fun l ->
-      let info = Lib.Local.info l in
-      let requires = Lib_info.requires info in
-      Memo.List.filter_map requires ~f:(function
-        | Lib_dep.Direct (_,l) -> (
-          let+ r = Findlib.find findlib l in
-          match r with
-          | Ok (Dune_package.Entry.Library lib) -> (
-            let info = Dune_package.Lib.info lib in
-            if List.mem local_package_names (Lib_info.name info) ~equal:Lib_name.equal
-            then None
-            else begin
-              Log.info [Pp.textf "Go for package %s (%s)" (Lib_name.to_string l) (String.split ~on:'.' (Lib_name.to_string l) |> List.hd)];
-              Some (String.split ~on:'.' (Lib_name.to_string l) |> List.hd)
-            end
-            )
-          | _ -> None)
-        | _ -> Memo.return None)) (Lib.Local.Set.to_list libs)
+  let* libinfos = all_libinfos ctx None in
+  let libinfos = List.fold_left ~init:String.Map.empty libinfos ~f:(fun map info ->
+    let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
+    let obj_dir_str = Path.to_string obj_dir in
+    let prefix =
+      List.find
+        ~f:(fun prefix -> starts_with ~prefix obj_dir_str)
+        findlib_paths
+      |> Option.value_exn
     in
-    let deps = List.map ~f:(fun x -> Artefacts.ext_package ctx (Package.Name.of_string x)) (List.concat extern) in
-    let dep_odocs = Action_builder.deps (Dep.Set.of_files (List.map ~f:(fun x -> Path.build x.odoc_file) deps)) in
-    let includes = List.fold_left deps ~init:[] ~f:(fun acc dep -> Command.Args.A "-I" :: Path (Path.build (Path.Build.parent_exn dep.odoc_file)) :: acc) in
-    let artefact = Artefacts.docs ctx in
-    let open Memo.O in
-    let* run_odoc =
-      run_odoc sctx
-        ~dir:(Path.build (Paths.html_root ctx))
-        "link" ~flags_for:(Some artefact.odoc_file)
-        (Command.Args.[A "-o"
-        ; Target artefact.odocl_file
-        ; Dep (Path.build artefact.odoc_file)
-        ] @ includes)
+    let local =
+      String.sub obj_dir_str ~pos:(String.length prefix)
+        ~len:(String.length obj_dir_str - String.length prefix)
     in
-    Log.info [Pp.textf "CCC Adding rule for %s" (Path.Build.to_string artefact.odocl_file)];
-    add_rule sctx
-      (let open Action_builder.With_targets.O in
-      Action_builder.with_no_targets dep_odocs >>> run_odoc)
+    let local = String.split ~on:'/' local |> List.hd in
+    String.Map.update map local ~f:(function
+      | Some (l, ods) -> Some (info :: l, Path.Set.add ods obj_dir)
+      | None -> Some ([ info ], Path.Set.add Path.Set.empty obj_dir))) in
+  Memo.return libinfos
+
 
 let ext_package_html_rules sctx pkg_name =
-  let pkg_name_str = Package.Name.to_string pkg_name in
   let ctx = Super_context.context sctx in
   let a = Artefacts.ext_package ctx pkg_name in
   let dir = match a.output_type with | Directory d -> d | _ -> failwith "Bad structure" in
 
-  let* findlib =
-    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-  in 
-  let* all_packages = Findlib.all_packages findlib in
-  let packages =
-    List.filter_map all_packages ~f:(fun entry ->
-        match entry with
-        | Dune_package.Entry.Library l ->
-          let info = Dune_package.Lib.info l in
-          let name = Lib_info.name info in
-          let package_name =
-            Lib_name.to_string name
-          in
-          let package_name_start = String.split ~on:'.' package_name |> List.hd in
-          if package_name_start = pkg_name_str
-          then Some l else None
-        | _ -> None)
-  in
-  let obj_dirs = List.map packages ~f:(fun l ->
-      let info = Dune_package.Lib.info l in
+  let* extern = all_libinfos ctx (Some pkg_name) in
+
+  let obj_dirs = List.map extern ~f:(fun info ->
       let obj_dir = Lib_info.obj_dir info in
       let dir = Obj_dir.dir obj_dir in
-      (l,dir)) |> List.sort_uniq ~compare:(fun (_,d1) (_,d2) -> Path.compare d1 d2) in
+      (info,dir)) |> List.sort_uniq ~compare:(fun (_,d1) (_,d2) -> Path.compare d1 d2) in
   
   let* action =
     run_odoc sctx ~dir:(Path.build (Paths.html_root ctx))
@@ -2089,10 +1821,14 @@ let ext_package_html_rules sctx pkg_name =
         ] in
   add_rule sctx action >>>
 
-  Memo.List.iter obj_dirs ~f:(fun (_lib, obj_dir) ->
-    let* modules = modules_of_dir obj_dir in
-    let modules = List.filter modules ~f:(fun (x,_) -> not (contains_double_underscore x)) in
-    Memo.List.iter modules ~f:(fun (m, _) ->
+  Memo.List.iter obj_dirs ~f:(fun (lib, obj_dir) ->
+    let modules =
+      match Lib_info.entry_modules lib with
+      | External (Ok l) -> l
+      | _ -> []
+    in
+
+    Memo.List.iter modules ~f:(fun m ->
       let odoc_file_base = Module_name.to_string m in
       let odocl_file =
         Paths.external_findlib_root ctx obj_dir
@@ -2127,58 +1863,21 @@ let setup_external_html_rules sctx package_name =
       (Action_builder.deps (Dep.Set.of_files [Path.build (dir ++ "index.html")]))
   | _ -> Memo.return ()) >>>
 
-  let* findlib =
-    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-  in 
+
+    let* libs = all_libinfos ctx (Some package_name) in
+
+    Log.info [Pp.textf "Libs: %s" (String.concat ~sep:"," (List.map ~f:(fun x -> Lib_info.name x |> Lib_name.to_string) libs))];
 
 
-  let* package = Findlib.find findlib (Lib_name.of_string (Package.Name.to_string package_name)) in
-  
-  match package with
-  | Ok (Dune_package.Entry.Library l)
-  | Ok (Dune_package.Entry.Hidden_library l) -> begin
-    let obj_dir = let info = Dune_package.Lib.info l in Lib_info.obj_dir info |> Obj_dir.obj_dir in
+    Log.info [Pp.textf "setup_external_package_rules: %d libs" (List.length libs) ];
 
-    Log.info [Pp.textf "Package %s -> obj dir %s" (Package.Name.to_string package_name) (Path.to_string obj_dir)];
-
-    let local_dir = Paths.local_external_dir ctx obj_dir |> String.split ~on:'/' |> List.hd in
-
-    Log.info [Pp.textf "Local external dir: %s" local_dir];
-
-    let* packages = packages_of_local_dir sctx in
-
-    let (libs,_packages) = String.Map.find_exn packages local_dir in
-
-    Log.info [Pp.textf "Packages: %s" (String.concat ~sep:"," (List.map ~f:Lib_name.to_string libs))];
-
-    let* packages = Memo.List.filter_map ~f:(fun lib_name -> let* entry = Findlib.find findlib lib_name in match entry with | Ok (Dune_package.Entry.Library l) -> Memo.return (Some l) | _ -> Memo.return None) libs in
-    (* let packages =
-      List.filter_map all_packages ~f:(fun entry ->
-          match entry with
-          | Dune_package.Entry.Library l ->
-            let info = Dune_package.Lib.info l in
-            let name = Lib_info.name info in
-            let package_name' =
-              Lib_name.to_string name
-            in
-            let package_name_start = String.split ~on:'.' package_name' |> List.hd in
-            Log.info [Pp.textf "Checking package_name_start %s against %s" package_name_start (Package.Name.to_string package_name)];
-            if package_name_start = (Package.Name.to_string package_name)
-            then Some l else None
-          | _ -> None)
-    in *)
-
-    Log.info [Pp.textf "setup_external_package_rules: %d packages" (List.length packages) ];
-
-    let obj_dirs = List.map packages ~f:(fun l ->
-        let info = Dune_package.Lib.info l in
+    let obj_dirs = List.map libs ~f:(fun info ->
         let obj_dir = Lib_info.obj_dir info in
         let dir = Obj_dir.dir obj_dir in
-        (l,dir)) |> List.sort_uniq ~compare:(fun (_,d1) (_,d2) -> Path.compare d1 d2) in
+        (info,dir)) |> List.sort_uniq ~compare:(fun (_,d1) (_,d2) -> Path.compare d1 d2) in
 
     let cmas =
-      List.fold_left ~init:[] packages ~f:(fun acc pkg ->
-        let info = Dune_package.Lib.info pkg in
+      List.fold_left ~init:[] libs ~f:(fun acc info ->
         let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
         let cmas = Mode.Dict.get (Lib_info.archives info) Byte in
         let pkg_name = Lib_info.name info |> Lib_name.to_string |> String.split ~on:'.' |> List.hd in
@@ -2186,48 +1885,35 @@ let setup_external_html_rules sctx package_name =
         acc @ cmas)
       in
 
-    let cmas =
-      if local_dir = "ocaml"
-        then ("stdlib", ctx.stdlib_dir, Path.relative ctx.stdlib_dir "stdlib.cma") :: cmas else cmas
-    in
-
-    let default_parent =
-      match List.find ~f:(fun pkg ->
-        let info = Dune_package.Lib.info pkg in
-        (local_dir) = (Lib_info.name info |> Lib_name.to_string)) packages with
-      | Some _ -> 
-        Log.info [Pp.textf "defaul parent is %s" (Package.Name.to_string package_name)];
-        Artefacts.ext_package ctx package_name
-      | None ->
-        let lib = List.hd (List.sort ~compare:(fun l1 l2 -> Lib_name.compare (Dune_package.Lib.info l1 |> Lib_info.name) (Dune_package.Lib.info l2 |> Lib_info.name)) packages) in
-        let name = Dune_package.Lib.info lib |> Lib_info.name |> Lib_name.to_string in
-        Log.info [Pp.textf "default parent chosen to be %s" name];
-        Artefacts.ext_package ctx (Package.Name.of_string name)
-    in
-
-    Memo.List.iter obj_dirs ~f:(fun (_lib, obj_dir) ->
-      let* modules = modules_of_dir obj_dir in
-
-      let modules = List.filter modules ~f:(fun (x,_) -> not (contains_double_underscore x)) in
+    Memo.List.iter obj_dirs ~f:(fun (lib, obj_dir) ->
+      Log.info [Pp.textf "Handling lib %s" (Lib_info.name lib |> Lib_name.to_string)];
+      let modules =
+        match Lib_info.entry_modules lib with
+        | External (Ok m) -> m
+        | _ -> [] in
 
       let cmas = List.filter_map ~f:(fun (pkg, d, cma) ->
         if d=obj_dir then Some (pkg, cma) else None) cmas in
 
       let deps = Action_builder.List.fold_left modules
         ~init:Dep.Set.empty
-        ~f:(fun acc (module_name, _) ->
+        ~f:(fun acc module_name ->
           let open Action_builder.O in
-          let+ p = get_parent ctx obj_dir cmas default_parent module_name in
-          let parent_dir = match p.output_type with | Directory d -> d | _ -> failwith "bad structure" in
-          let html_file = parent_dir ++ (Module_name.to_string module_name) ++ "index.html" in
-          let pred =
-            let main = Paths.html_root ctx ++ "docs" ++ (Package.Name.to_string package_name) in
-            let result = Path.Build.is_descendant html_file ~of_:main in
-            Log.info [Pp.textf "Checking path %s against %s result %b" (Path.Build.to_string main) (Path.Build.to_string html_file) result]; result
-          in
-          if pred then
-            Dep.Set.add acc (Dep.file (Path.build html_file))
-          else acc)
+          let+ p_opt = get_parent ctx obj_dir cmas module_name in
+          match p_opt with
+          | None -> acc
+          | Some p ->
+            let parent_dir = match p.output_type with | Directory d -> d | _ -> failwith "bad structure" in
+            let html_file = parent_dir ++ (Module_name.to_string module_name) ++ "index.html" in
+            let pred =
+              let main = Paths.html_root ctx ++ (Package.Name.to_string package_name) in
+              let result = Path.Build.is_descendant html_file ~of_:main in
+              Log.info [Pp.textf "Checking path %s against %s result %b" (Path.Build.to_string main) (Path.Build.to_string html_file) result]; result
+            in
+            if pred then (
+              Log.info [Pp.textf "Adding rule for %s" (Path.Build.to_string html_file)];
+              Dep.Set.add acc (Dep.file (Path.build html_file)))
+            else acc)
       in
       let action =
         let open Action_builder.O in
@@ -2243,74 +1929,23 @@ let setup_external_html_rules sctx package_name =
         (action)
       in
       Log.info [Pp.textf "Finished adding deps"];
-      Memo.return ()) end
-  | Ok (Deprecated_library_name _) -> Log.info [Pp.textf "Argh deprecated failure of package %s" (Package.Name.to_string package_name)]; Memo.return ()
-  | Error Not_found ->  Log.info [Pp.textf "Argh error not_found failure of package %s" (Package.Name.to_string package_name)]; Memo.return ()
-  | Error (Invalid_dune_package _) ->  Log.info [Pp.textf "Argh error invalid failure of package %s" (Package.Name.to_string package_name)]; Memo.return ()
+      Memo.return ())
 
-
-let _setup_external_html_rules2 sctx package_name =
-  Log.info [Pp.textf "setup_external_html_rules: %s" package_name];
-  let ctx = Super_context.context sctx in
-  let* children = external_pkg_module_children sctx package_name in
-  let n = Package.Name.of_string package_name in
-  let a = Artefacts.ext_package ctx n in
-  let dir = match a.output_type with | Directory d -> d | _ -> failwith "Bad structure" in
-  let visible_modules =
-    let open Action_builder.O in
-    let+ children = children in
-    let visible_modules_l = List.map children ~f:(fun (_, _, ms) ->
-      List.filter ms ~f:(fun n ->
-        not (contains_double_underscore n))) |> List.concat
-    in
-    visible_modules_l
-  in
-  let action =
-    let open Action_builder.O in
-    let* visible_modules = visible_modules in
-    let htmls = List.map visible_modules ~f:(fun m ->
-      dir ++ (Module_name.to_string m) ++ "index.html" |> Path.build)
-    in
-    (* List.iter htmls ~f:(fun f ->
-      Log.info [Pp.textf "depends on file: %s" (Path.to_string f)]); *)
-    let deps = Action_builder.return ((), Dep.Set.of_files htmls) in
-    Action_builder.dyn_deps deps
-  in 
-  Log.info [Pp.textf "About to add deps"];
-  let* () =
-  Rules.Produce.Alias.add_deps
-    (OdocDep.html_alias ctx (FindlibPackage n))
-    (action)
-  in
-  Log.info [Pp.textf "Finished adding deps"];
-
-  Memo.return ()
 
 let external_rules sctx dir =
   let ctx = Super_context.context sctx in
+
   let* map = packages_of_local_dir sctx in
-  let* findlib =
-    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-  in
+  let* libdb = Scope.DB.public_libs ctx in
+
   let packages_opt = String.Map.find map dir in
   match packages_opt with
   | None -> Memo.return ()
-  | Some (pkgs, obj_dirs) ->
-    (* Log.info [Pp.textf "XXX Build rules for packages %s" (String.concat ~sep:"," (List.map pkgs ~f:(Lib_name.to_string))) ];
-       Log.info [Pp.textf "XXX Build rules for dirs %s" (String.concat ~sep:"," (List.map ~f:(Path.to_string) (Path.Set.to_list obj_dirs)))]; *)
-    let* packages =
-      Memo.List.filter_map pkgs ~f:(fun pkg ->
-          let+ entry = Findlib.find findlib pkg in
-          match entry with
-          | Ok (Dune_package.Entry.Library l) ->
-            Log.info [Pp.textf "XXX Build rules for library: %s" (Lib_name.to_string (Dune_package.Lib.info l |> Lib_info.name))];
-            Some l
-          | _ -> None)
-    in
+  | Some (libs, obj_dirs) ->
+    Log.info [Pp.textf "XXX Build rules for dirs %s" (String.concat ~sep:"," (List.map ~f:(Path.to_string) (Path.Set.to_list obj_dirs)))];
 
     let cmas =
-      List.fold_left ~init:[] packages ~f:(fun acc pkg ->
-          let info = Dune_package.Lib.info pkg in
+      List.fold_left ~init:[] libs ~f:(fun acc info ->
           let obj_dir = Lib_info.obj_dir info |> Obj_dir.dir in
           let cmas = Mode.Dict.get (Lib_info.archives info) Byte in
           let pkg_name = Lib_info.name info |> Lib_name.to_string |> String.split ~on:'.' |> List.hd in
@@ -2328,52 +1963,17 @@ let external_rules sctx dir =
           obj_info_of_cma sctx obj_dir cma)    
     in
 
-    let package_deps pkg =
-      let info = Dune_package.Lib.info pkg in
-      let deps = Lib_info.requires info in
-      Memo.List.filter_map
-        ~f:(fun dep ->
-          match dep with
-          | Lib_dep.Direct (_, l) -> (
-            let+ l' = Findlib.find findlib l in
-            match l' with
-            | Ok (Dune_package.Entry.Library l') ->
-              if
-                List.exists packages ~f:(fun p ->
-                    Dune_package.Lib.info p |> Lib_info.name = l)
-              then
-                (Log.info [Pp.textf "removing dependency for %s" (Lib_name.to_string l)]; None)
-              else
-                (* Avoid self-dependencies *)
-                Some
-                  (l, Obj_dir.dir (Lib_info.obj_dir (Dune_package.Lib.info l')))
-            | _ -> None)
-          | Re_export _ ->
-            (Log.info [Pp.textf "Ignoring reexport"]; Memo.return None)
-          | Select _ ->
-            (Log.info [Pp.textf "Ignoring select"]; Memo.return None))
-        deps
-    in
-    let* deps =
-      Memo.List.fold_left packages ~init:Path.Set.empty ~f:(fun set pkg ->
-          let+ deps = package_deps pkg in
-          List.fold_left ~init:set deps ~f:(fun set (_name, dir) ->
-              Path.Set.add set dir))
-    in
-
-    let all_dirs = Path.Set.add (Path.Set.union deps obj_dirs) ctx.stdlib_dir in
-
-    let default_parent =
-      match List.find ~f:(fun pkg ->
-        let info = Dune_package.Lib.info pkg in
-        dir = (Lib_info.name info |> Lib_name.to_string)) packages with
-      | Some _ -> 
-        Artefacts.ext_package ctx (Package.Name.of_string dir)
-      | None ->
-        let lib = List.hd (List.sort ~compare:(fun l1 l2 -> Lib_name.compare (Dune_package.Lib.info l1 |> Lib_info.name) (Dune_package.Lib.info l2 |> Lib_info.name)) packages) in
-        let name = Dune_package.Lib.info lib |> Lib_info.name |> Lib_name.to_string in
-        Log.info [Pp.textf "default parent chosen to be %s" name];
-        Artefacts.ext_package ctx (Package.Name.of_string name)
+    let* libs = Memo.List.filter_map libs ~f:(fun info -> Lib.DB.find libdb (Lib_info.name info)) in
+    let* all = Lib.closure libs ~linking:true in
+    let deps =
+      let open Action_builder.O in
+      let+ all = Resolve.read all in
+      let deps = Lib.Set.diff (Lib.Set.of_list all) (Lib.Set.of_list libs) |> Lib.Set.to_list in
+      let obj_dirs = List.map ~f:(fun lib ->
+        let info = Lib.info lib in
+        Lib_info.obj_dir info) deps in
+      let deps = List.map ~f:(fun obj_dir -> FindlibPath (Obj_dir.obj_dir obj_dir)) obj_dirs in
+      deps
     in
 
     Memo.List.iter (Path.Set.to_list obj_dirs) ~f:(fun obj_dir ->
@@ -2381,26 +1981,16 @@ let external_rules sctx dir =
           if d=obj_dir then Some (pkg, cma) else None) cmas in
 
         let* odocs =
-          compile_rules_of_findlib_dir sctx obj_dir all_dirs default_parent cmas
+          compile_rules_of_findlib_dir sctx obj_dir deps cmas
         in
         let* _odocls =
           link_rules_of_findlib_dir sctx odocs obj_dir 
-            all_dirs
+            deps
         in
         OdocDep.setup_deps ctx (FindlibPath obj_dir)
           (Path.Set.of_list_map ~f:Path.build (List.map ~f:snd odocs)))
 
-
-let external_deps_rules sctx dir =
-  let* map = packages_of_local_dir sctx in
-  let packages_opt = String.Map.find map dir in
-  match packages_opt with
-  | None -> Memo.return ()
-  | Some (_pkgs, obj_dirs) ->
-    Memo.List.iter (Path.Set.to_list obj_dirs) ~f:(fun obj_dir ->
-      deps_of_findlib_dir sctx obj_dir)
-     
-let setup_package_aliases sctx local_package_names (pkg : Package.t) =
+let setup_package_aliases sctx _local_package_names (pkg : Package.t) =
   let ctx = Super_context.context sctx in
   let name = Package.name pkg in
   let alias =
@@ -2408,30 +1998,24 @@ let setup_package_aliases sctx local_package_names (pkg : Package.t) =
     let dir = Path.Build.append_source ctx.build_dir pkg_dir in
     Alias.doc ~dir
   in
+
+  let ctx = Super_context.context sctx in
+  let* libs = Scope.DB.public_libs ctx in
+  let* all_libs = Lib.DB.all libs in
+  let lib_list = Lib.Set.to_list all_libs in
+  let* closure = Lib.closure lib_list ~linking:true in
+  let extern =  
+    match Resolve.peek closure with
+    | Ok libs ->
+      let libs = Lib.Set.of_list libs in
+      let extern = Lib.Set.diff libs all_libs in
+      Lib.Set.fold extern ~init:[] ~f:(fun lib l ->
+      let info = Lib.info lib in
+      match Lib_info.package info with | Some p -> p :: l | None -> l)
+    | _ -> [] in
+  let extern = Package.Name.of_string "stdlib" :: extern in
+  
   (* let* extern =
-    let* findlib =
-      Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config in
-    let+ all_packages = Findlib.all_packages findlib in
-    List.filter_map all_packages ~f:(fun p ->
-      match p with
-      | Dune_package.Entry.Library l ->
-        let info = Dune_package.Lib.info l in
-        let name = Lib_info.name info |> Lib_name.to_string in
-        let first = String.split ~on:'.' name |> List.hd in
-        Some first
-      | _ -> 
-        None
-      )
-    |> List.sort_uniq ~compare:String.compare
-  in *)
-
-  
-
-  
-
-  List.iter ~f:(fun n -> Log.info[Pp.textf "Local package: %s" (Lib_name.to_string n)]) local_package_names;
-
-  let* extern =
     let* libs = libs_of_pkg ctx ~pkg:name in
     let* findlib =
       Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config in
@@ -2453,12 +2037,12 @@ let setup_package_aliases sctx local_package_names (pkg : Package.t) =
             )
           | _ -> None)
         | _ -> Memo.return None)) libs
-    in
+    in *)
 
   
 
-  let extern_deps = (List.concat extern) |> List.map ~f:(fun n ->
-    Log.info [Pp.textf "extern_deps: %s" n];OdocDep.html_alias ctx (FindlibPackage (Package.Name.of_string n))) in
+  let extern_deps = extern |> List.map ~f:(fun n ->
+    Log.info [Pp.textf "extern_deps: %s" (Package.Name.to_string n)];OdocDep.html_alias ctx (FindlibPackage n)) in
   let stdlib_dep = OdocDep.html_alias ctx (FindlibPackage (Package.Name.of_string "stdlib")) in
   let* libs =
     libs_of_pkg ctx ~pkg:name
@@ -2502,14 +2086,6 @@ let gen_rules sctx ~dir:_ rest =
          })
   | [ "_html" ] ->
     has_rules (setup_css_rule sctx >>> setup_toplevel_index_rule sctx)
-  | [ "_html"; "docs" ] ->
-    has_rules (
-      setup_docs_html_rule sctx
-    )
-  | [ "_html"; "docs"; lib ] ->
-    has_rules (
-      ext_package_html_rules sctx (Package.Name.of_string lib) >>>
-      setup_external_html_rules sctx (Package.Name.of_string lib))
   | [ "_mlds"; "docs"; ] ->
     let* packages = Only_packages.get () in
     let packages = Package.Name.Map.to_list packages in
@@ -2521,26 +2097,20 @@ let gen_rules sctx ~dir:_ rest =
     has_rules rules
   | [ "_mlds"; "docs"; "l" ] ->
     let ctx = Super_context.context sctx in
-    let* findlib =
-      Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-    in
-    let* all_packages = Findlib.all_packages findlib in
-    let package_names =
-      List.filter_map all_packages ~f:(fun entry ->
-          match entry with
-          | Dune_package.Entry.Library l ->
-            let info = Dune_package.Lib.info l in
-            let name = Lib_info.name info in
-            let package_name =
-              Lib_name.to_string name
-            in
-            let package_name_start = String.split ~on:'.' package_name |> List.hd in
-            Some package_name_start
-          | _ -> None)
-    in
-    let names = List.sort_uniq package_names ~compare:String.compare in
+    let* libs = Scope.DB.public_libs ctx in
+  	let* all_libs = Lib.DB.all libs in
+    let lib_list = Lib.Set.to_list all_libs in
+    let* closure = Lib.closure lib_list ~linking:true in
+    let names =  
+      match Resolve.peek closure with
+      | Ok libs ->
+        List.filter_map libs ~f:(fun lib ->
+        let info = Lib.info lib in
+        Lib_info.package info)
+      | _ -> [] in
+    let names = Package.Name.of_string "stdlib" :: names in
     let rules =
-      Memo.parallel_iter names ~f:(fun p ->
+      Memo.parallel_iter (List.sort_uniq ~compare:Package.Name.compare names) ~f:(fun p ->
           external_pkg_mld_rules sctx p)
     in
     has_rules rules
@@ -2548,9 +2118,6 @@ let gen_rules sctx ~dir:_ rest =
     with_package pkg ~f:(fun pkg ->
         let* _mlds, rules = package_mlds sctx ~pkg in
         Rules.produce rules)
-  | [ "_mlds" ] ->
-    let* doc = StdMlds.docs (Super_context.context sctx) in
-    has_rules (mld_rules sctx [ doc ])
   | [ "_odoc"; "docs"; "p" ] ->
     let* packages = Only_packages.get () in
     let packages = Package.Name.Map.to_list packages in
@@ -2562,53 +2129,38 @@ let gen_rules sctx ~dir:_ rest =
     has_rules rules
   | [ "_odoc"; "docs"; "l" ] ->
     let ctx = Super_context.context sctx in
-    let* findlib =
-      Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-    in
-    let* all_packages = Findlib.all_packages findlib in
-    let package_names =
-      List.filter_map all_packages ~f:(fun entry ->
-          match entry with
-          | Dune_package.Entry.Library l ->
-            let info = Dune_package.Lib.info l in
-            let name = Lib_info.name info in
-            let package_name =
-              Lib_name.to_string name
-            in
-            let package_name_start = String.split ~on:'.' package_name |> List.hd in
-            Some package_name_start
-          | _ -> None)
-    in
-    let names = List.sort_uniq package_names ~compare:String.compare in
+    let* libs = Scope.DB.public_libs ctx in
+  	let* all_libs = Lib.DB.all libs in
+    let lib_list = Lib.Set.to_list all_libs in
+    let* closure = Lib.closure lib_list ~linking:true in
+    let names =  
+      match Resolve.peek closure with
+      | Ok libs ->
+        List.filter_map libs ~f:(fun lib ->
+        let info = Lib.info lib in
+        Lib_info.package info)
+      | _ -> [] in
+    let names = Package.Name.of_string "stdlib" :: names |> List.sort_uniq ~compare:Package.Name.compare in
     let rules =
       Memo.parallel_iter names ~f:(fun p ->
           external_pkg_odoc_rules sctx p)
     in
     has_rules rules
-  | [ "_odocls" ] ->
-    has_rules (setup_docs_odocl_rules sctx)
-  
   | [ "_odocls"; "docs"; "l" ] ->
     let ctx = Super_context.context sctx in
-    let* findlib =
-      Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
-    in
-    let* all_packages = Findlib.all_packages findlib in
-    let package_names =
-      List.filter_map all_packages ~f:(fun entry ->
-          match entry with
-          | Dune_package.Entry.Library l ->
-            let info = Dune_package.Lib.info l in
-            let name = Lib_info.name info in
-            let package_name =
-              Lib_name.to_string name
-            in
-            let package_name_start = String.split ~on:'.' package_name |> List.hd in
-            Some package_name_start
-          | _ -> None)
-    in
-    let names = List.sort_uniq package_names ~compare:String.compare in
-    let rules =
+    let* libs = Scope.DB.public_libs ctx in
+  	let* all_libs = Lib.DB.all libs in
+    let lib_list = Lib.Set.to_list all_libs in
+    let* closure = Lib.closure lib_list ~linking:true in
+    let names =  
+      match Resolve.peek closure with
+      | Ok libs ->
+        List.filter_map libs ~f:(fun lib ->
+        let info = Lib.info lib in
+        Lib_info.package info)
+      | _ -> [] in
+      let names = Package.Name.of_string "stdlib" :: names |> List.sort_uniq ~compare:Package.Name.compare in
+      let rules =
       Memo.parallel_iter names ~f:(fun p ->
           external_pkg_odocl_rules sctx p)
     in
@@ -2617,13 +2169,9 @@ let gen_rules sctx ~dir:_ rest =
     with_package pkg ~f:(fun pkg ->
         let* _mlds, rules = package_mlds sctx ~pkg in
         Rules.produce rules)
-  | [ "_odoc" ] ->
-    let* doc = StdMlds.docs (Super_context.context sctx) in
-    has_rules (odoc_rules sctx [ doc ])
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg -> setup_package_odoc_rules sctx ~pkg)
   | [ "_external"; pkg ] -> has_rules (external_rules sctx pkg)
-  | [ "_external_deps"; pkg ] -> has_rules (external_deps_rules sctx pkg)
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
     has_rules
       ((* TODO we can be a better with the error handling in the case where
@@ -2662,12 +2210,14 @@ let gen_rules sctx ~dir:_ rest =
            setup_pkg_odocl_rules name
        in
        ())
-  | [ "_html"; lib_unique_name_or_pkg ] ->
+  | [ "_html"; package ] ->
     has_rules
       ((* TODO we can be a better with the error handling in the case where
           lib_unique_name_or_pkg is neither a valid pkg or lnu *)
        let ctx = Super_context.context sctx in
-       let* lib, lib_db = Scope_key.of_string ctx lib_unique_name_or_pkg in
+       let* libs = Scope.DB.public_libs ctx in
+
+       let* lib = Lib.DB.find libs (Lib_name.parse_string_exn (Loc.none, package)) in
        let setup_pkg_html_rules pkg =
          let* pkg_libs =
            load_all_odoc_rules_pkg (Super_context.context sctx) ~pkg
@@ -2675,14 +2225,17 @@ let gen_rules sctx ~dir:_ rest =
          setup_pkg_html_rules sctx ~pkg ~libs:pkg_libs
        in
        (* jeremiedimino: why isn't [None] some kind of error here? *)
-       let* lib =
-         let+ lib = Lib.DB.find lib_db lib in
-         Option.bind ~f:Lib.Local.of_lib lib
-       in
        let+ () =
-         match lib with
-         | None -> Memo.return ()
-         | Some lib -> (
+         match Option.bind lib ~f:Lib.Local.of_lib, lib with
+         | None, None ->
+            Memo.return ()
+        | None, Some _ ->
+            Log.info [Pp.textf " XZX here we are, no local library for package %s" package];
+            Log.info [Pp.textf "Also, lib is: %s" (match lib with | Some _ -> "Some" | None -> "None")];
+            let pkg = Package.Name.of_string package in
+            setup_external_html_rules sctx pkg >>>
+            ext_package_html_rules sctx pkg
+         | Some lib, _ -> (
            match Lib_info.package (Lib.Local.info lib) with
            | None -> setup_lib_html_rules sctx lib
            | Some pkg -> setup_pkg_html_rules pkg)
@@ -2690,7 +2243,7 @@ let gen_rules sctx ~dir:_ rest =
          let* packages = Only_packages.get () in
          match
            Package.Name.Map.find packages
-             (Package.Name.of_string lib_unique_name_or_pkg)
+             (Package.Name.of_string package)
          with
          | None -> Memo.return ()
          | Some pkg ->
