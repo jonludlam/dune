@@ -67,6 +67,8 @@ let pkg_or_lnu lib =
 type target =
   | Lib of Lib.Local.t
   | Pkg of Package.Name.t
+  | ExtPkg of Package.Name.t
+  | ExtLib of (Package.Name.t * Lib_name.t)
 
 type source =
   | Module
@@ -93,6 +95,9 @@ module Paths = struct
       let obj_dir = Lib.Local.obj_dir lib in
       Obj_dir.odoc_dir obj_dir
     | Pkg pkg -> root ctx ++ sprintf "_odoc/pkg/%s" (Package.Name.to_string pkg)
+    | ExtPkg pkg -> root ctx ++ sprintf "_odoc/extpkg/%s" (Package.Name.to_string pkg)
+    | ExtLib (pkg, lib) ->
+      root ctx ++ sprintf "_odoc/extpkg/%s/%s" (Package.Name.to_string pkg) (Lib_name.to_string lib)
 
   let html_root ctx = root ctx ++ "_html"
 
@@ -104,6 +109,8 @@ module Paths = struct
     match m with
     | Pkg pkg -> Package.Name.to_string pkg
     | Lib lib -> pkg_or_lnu (Lib.Local.to_lib lib)
+    | ExtPkg pkg -> Package.Name.to_string pkg
+    | ExtLib (pkg, _) -> Package.Name.to_string pkg
 
   let html ctx m = add_pkg_lnu (html_root ctx) m
 
@@ -141,6 +148,8 @@ module Dep : sig
     -> Lib.t list Resolve.t
     -> unit Action_builder.t
 
+  val ext_deps : Context.t -> Lib_name.t list -> unit Action_builder.t
+
   (*** [setup_deps ctx target odocs] Adds [odocs] as dependencies for [target].
     These dependencies may be used using the [deps] function *)
   val setup_deps : Context.t -> target -> Path.Set.t -> unit Memo.t
@@ -161,11 +170,28 @@ end = struct
        in
        List.fold_left libs ~init ~f:(fun acc (lib : Lib.t) ->
            match Lib.Local.of_lib lib with
-           | None -> acc
+           | None -> (
+              match Lib.info lib |> Lib_info.package with
+              | Some pkg ->
+                Log.info [Pp.textf "In deps: pkg=%s lib=%s" (Package.Name.to_string pkg) (Lib_name.to_string (Lib.name lib))];
+                let dir = Paths.odocs ctx (ExtLib (pkg, Lib.name lib)) in
+                let _dummy = ExtPkg pkg in
+                let alias = alias ~dir in
+                Dep.Set.add acc (Dep.alias alias)              
+              | None -> acc
+           )
            | Some lib ->
              let dir = Paths.odocs ctx (Lib lib) in
              let alias = alias ~dir in
              Dep.Set.add acc (Dep.alias alias)))
+  
+  let ext_deps ctx libs =
+    List.fold_left libs ~init:Dep.Set.empty ~f:(fun acc (lib_name : Lib_name.t) ->
+      let package = Lib_name.package_name lib_name in
+      let dir = Paths.odocs ctx (ExtLib (package, lib_name)) in
+      let alias = alias ~dir in
+      Dep.Set.add acc (Dep.alias alias)) |> Action_builder.deps
+
 
   let alias ctx m = alias ~dir:(Paths.odocs ctx m)
 
@@ -224,13 +250,14 @@ let odoc_base_flags sctx build_dir =
   | Fatal -> Command.Args.A "--warn-error"
   | Nonfatal -> S []
 
+let odoc_program sctx dir =
+  Super_context.resolve_program sctx ~dir "odoc" ~loc:None
+    ~hint:"opam install odoc"
+  
 let run_odoc sctx ~dir command ~flags_for args =
   let build_dir = (Super_context.context sctx).build_dir in
   let open Memo.O in
-  let* program =
-    Super_context.resolve_program sctx ~dir:build_dir "odoc" ~loc:None
-      ~hint:"opam install odoc"
-  in
+  let* program = odoc_program sctx build_dir in
   let+ base_flags =
     match flags_for with
     | None -> Memo.return Command.Args.empty
@@ -323,7 +350,11 @@ let odoc_include_flags ctx pkg requires =
     let paths =
       List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
           match Lib.Local.of_lib lib with
-          | None -> paths
+          | None ->
+            let pkg = Lib.info lib |> Lib_info.package |> Option.value_exn in
+            let paths = Path.Set.add paths (Path.build (Paths.odocs ctx (ExtLib (pkg, Lib.name lib)))) in
+            (* Path.Set.add paths (Path.build (Paths.odocs ctx (ExtPkg pkg))) *)
+            paths
           | Some lib ->
             Path.Set.add paths (Path.build (Paths.odocs ctx (Lib lib))))
     in
@@ -335,6 +366,20 @@ let odoc_include_flags ctx pkg requires =
     Command.Args.S
       (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
            [ Command.Args.A "-I"; Path dir ])))
+
+let odoc_ext_include_flags ctx requires =
+    let paths =
+      List.fold_left requires ~init:Path.Set.empty ~f:(fun paths lib_name ->
+            let pkg = Lib_name.package_name lib_name in
+            let paths = Path.Set.add paths (Path.build (Paths.odocs ctx (ExtLib (pkg, lib_name)))) in
+            (* Path.Set.add paths (Path.build (Paths.odocs ctx (ExtPkg pkg))) *)
+            paths
+         )
+    in
+    Command.Args.S
+      (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
+            [ Command.Args.A "-I"; Path dir ]))
+
 
 let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
   let ctx = Super_context.context sctx in
@@ -524,7 +569,8 @@ let create_odoc ctx ~target ~odocl_base ~is_index odoc_file =
   let basename = Path.Build.basename odoc_file |> Filename.chop_extension in
   let odocl_file = odocl_base ++ (basename ^ ".odocl") in
   match target with
-  | Lib _ ->
+  | Lib _
+  | ExtLib _ ->
     let html_dir = html_base ++ Stdune.String.capitalize basename in
     { odoc_file
     ; odocl_file
@@ -532,7 +578,8 @@ let create_odoc ctx ~target ~odocl_base ~is_index odoc_file =
     ; html_file = html_dir ++ "index.html"
     ; source = Module
     }
-  | Pkg _ ->
+  | Pkg _
+  | ExtPkg _ ->
     let page_name = basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn in
     let html_file =
       if is_index
@@ -545,6 +592,7 @@ let create_odoc ctx ~target ~odocl_base ~is_index odoc_file =
     ; html_file
     ; source = Mld
     }
+  
 
 let static_html ctx =
   let open Paths in
@@ -589,6 +637,7 @@ let odoc_artefacts sctx target =
         create_odoc ctx ~target ~odocl_base ~is_index:false odoc_file)
       modules
     |> Memo.return
+  | _ -> Memo.return []
 
 let setup_lib_odocl_rules_def =
   let module Input = struct
@@ -829,7 +878,7 @@ let setup_package_odoc_rules sctx ~pkg =
           ~doc_dir:(Paths.odocs ctx (Pkg pkg))
           ~children:[])
   in
-  Dep.setup_deps ctx (Pkg pkg) (Path.set_of_build_paths_list odocs)
+  Dep.setup_deps ctx (ExtPkg pkg) (Path.set_of_build_paths_list odocs)
 
 let gen_project_rules sctx project =
   let* packages = Only_packages.packages_of_project project in
@@ -889,7 +938,7 @@ let setup_pkg_index_rules sctx pkg =
   ) in 
   let mld = Mld.create (PkgIndex pkg) index_path in
 
-  (* Rule to create index pages - either symlinked from index.mld in a pacage or created by us. *)
+  (* Rule to create index pages - either symlinked from index.mld in a package or created by us. *)
   let* () =
     match String.Map.find mlds "index" with
     | Some mld -> add_rule sctx (Action_builder.symlink ~src:(Path.build mld) ~dst:index_path)
@@ -920,6 +969,28 @@ let setup_pkg_index_rules sctx pkg =
   in
 
   Memo.return ()
+(* 
+let modules_of_dune_package dune_package =
+  List.find_map dune_package.Dune_package.files ~f:(function
+  | (Dune_section.Lib, fs) ->
+    let lib_path = Section.Map.find_exn dune_package.sections Lib in
+    let extensions = [ ".cmti", `Cmti; ".cmt", `Cmt; ".cmi", `Cmi] in
+    let modules =
+      List.filter_map
+        ~f:(fun dst ->
+          let f = (Install.Dst.to_string dst) in
+          match List.assoc extensions (Filename.extension f) with
+          | Some _ -> Some (Filename.chop_extension f)
+          | _ -> None) fs |> List.sort_uniq ~compare:String.compare
+    in
+    Some (List.map ~f:(fun m ->
+      let (ext,ty) =
+        List.find_exn
+          ~f:(fun (ext, _ty) -> List.exists fs ~f:(fun n -> Install.Dst.to_string n = (m ^ ext)))
+        extensions in
+        let mname = Path.of_string m |> Path.basename in
+        Module_name.of_string mname, (Path.relative lib_path (m^ext), ty)) modules)
+  | _ -> None) *)
 
 let setup_external_index_rules sctx pkg =
   let ctx = Super_context.context sctx in
@@ -946,7 +1017,6 @@ let setup_external_index_rules sctx pkg =
     let mlds = List.filter_map installed ~f:(function
       | (Dune_section.Doc, fs) ->
         let doc_path = Section.Map.find_exn dpkg.sections Doc in
-        Log.info [Pp.textf "doc_path: %s" (Path.to_string doc_path)];
         Some (List.filter_map ~f:(fun dst ->
           let str = Install.Dst.to_string dst in
           if Filename.check_suffix str ".mld"
@@ -986,12 +1056,163 @@ let setup_external_index_rules sctx pkg =
       let* requires = Lib.closure (libs :> Lib.t list) ~linking:true in
       let index =
         let odocl_base = Paths.ext_package_index_mld ctx pkg |> Path.Build.parent_exn in
-        Mld.odoc_file ctx mld |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
+        Mld.odoc_file ctx mld |> create_odoc ctx ~target:(ExtPkg pkg) ~is_index:true ~odocl_base
       in
       link_odoc_rules sctx index ~pkg:(Some pkg) ~requires
     in
 
     Memo.return ()  
+
+let external_module_deps_rule sctx modpath deps_file =
+  let ctx = Super_context.context sctx in
+  let* odoc = odoc_program sctx (Paths.root ctx) in
+  Log.info
+    [ Pp.textf "Adding rule for %s"
+        (Path.Build.to_string_maybe_quoted deps_file)
+    ];
+  Super_context.add_rule sctx ~dir:(Paths.root ctx)
+    (Command.run odoc
+        ~dir:(Path.parent_exn (Path.build deps_file))
+        ~stdout_to:deps_file
+        [ A "compile-deps"; Path modpath ])
+
+(*let modules_of_dir d =
+  let* dir_res = Fs_memo.dir_contents (Path.as_outside_build_dir_exn d) in
+  match dir_res with
+  | Error _ -> Memo.return []
+  | Ok dc ->
+  let list = Fs_cache.Dir_contents.to_list dc in
+  let extensions = [ ".cmti", `Cmti; ".cmt", `Cmt; ".cmi", `Cmi] in
+  let modules =
+    List.filter_map
+      ~f:(fun (x, ty) ->
+        match ty, List.assoc extensions (Filename.extension x) with
+        | Unix.S_REG, Some _ -> Some (Filename.chop_extension x)
+        | _, _ -> None) list |> List.sort_uniq ~compare:String.compare
+  in
+  List.map ~f:(fun m ->
+    let (ext,ty) =
+      List.find_exn
+        ~f:(fun (ext, _ty) -> List.exists list ~f:(fun (n,_) -> n = (m ^ ext)))
+        extensions
+    in
+    (Module_name.of_string m, (Path.relative d (m^ext), ty))) modules
+  |>
+  Memo.return
+*)
+
+let parse_odoc_deps_single lines =
+  let rec getdeps cur = function
+    | x :: rest -> (
+      match String.split ~on:' ' x with
+      | [ m; hash ] ->
+        getdeps ((Module_name.of_string m, hash) :: cur) rest
+      | _ -> getdeps cur rest)
+    | [] -> cur
+  in
+  getdeps [] lines
+
+let compile_external_odoc sctx (pkg, lib) modules (m, cmti_file) parent requires =
+  let ctx = Super_context.context sctx in
+
+  let output_dir = Paths.odocs ctx (ExtLib (pkg, lib)) in
+  let odoc_file_base = Module_name.to_string m in
+  let deps_file =
+    output_dir
+    ++ sprintf "%s.deps" odoc_file_base in
+  let* () = external_module_deps_rule sctx cmti_file deps_file in
+  let odoc_file = output_dir ++ sprintf "%s.odoc" odoc_file_base in
+  Log.info
+    [ Pp.textf "Rule for: %s (depending on %s)"
+        (Path.Build.to_string odoc_file)
+        (Path.to_string cmti_file)
+    ];
+  let deps =
+    let open Action_builder.O in
+    let* l = Action_builder.lines_of (Path.build deps_file) in
+    let deps = parse_odoc_deps_single l in
+    let deps' = List.filter_map ~f:(fun (m',_) ->
+      if (m <> m') && Modules.fold_no_vlib modules ~init:false ~f:(fun m'' acc -> Module.obj_name m'' = Module_name.Unique.of_name_assuming_needs_no_mangling m' || acc)
+      then Some (output_dir ++ ((Module_name.to_string m') ^ ".odoc") |> Path.build)
+      else None
+       ) deps in
+    Log.info [Pp.textf "NNN Got %d deps for module %s (%s) (of %d)" (List.length deps') (Module_name.to_string m) (String.concat ~sep:"," (List.map ~f:Path.to_string deps')) (List.length deps)];
+    Dune_engine.Dep.Set.of_files deps' |> Action_builder.deps
+  in
+
+  let parent_args = parent_args ctx parent in
+
+  let odoc_include_flags =
+    Command.Args.memo (odoc_ext_include_flags ctx requires)
+  in
+  let other_deps = Dep.ext_deps ctx requires in
+
+  let doc_dir = Path.build output_dir in
+
+  let* action =
+  let+ run_odoc =
+    run_odoc sctx ~dir:doc_dir "compile" ~flags_for:(Some odoc_file)
+      (Command.Args.
+         [ A "-I"
+         ; Path doc_dir
+         ; odoc_include_flags
+         ; A "-o"
+         ; Target odoc_file
+         ; Dep cmti_file
+         (* ; Hidden_deps other_deps *)
+         ] @ parent_args)
+  in
+  let open Action_builder.With_targets.O in
+  Action_builder.with_no_targets other_deps >>>
+  Action_builder.with_no_targets deps  >>> run_odoc
+in
+Log.info
+  [ Pp.textf "About to add rule for %s" (Path.Build.to_string odoc_file) ];
+let* () = add_rule sctx action in
+Memo.return odoc_file
+
+let setup_ext_package_odoc_rules sctx ~pkg ~lib_name =
+  let ctx = Super_context.context sctx in
+  let* findlib = Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config in
+  let* pkg_opt = Findlib.find_root_package findlib pkg in
+  match pkg_opt with
+  | Error _ -> Memo.return ()
+  | Ok dpkg ->
+    let entry = Lib_name.Map.find dpkg.entries lib_name in 
+    match entry with
+    | None | Some (Dune_package.Entry.Deprecated_library_name _ | Hidden_library _) -> Memo.return ()
+    | Some (Dune_package.Entry.Library l) ->
+      Log.info [Pp.textf "here we are, pkg %s lib_name %s" (Package.Name.to_string pkg) (Lib_name.to_string lib_name)];
+      let index_path = Paths.ext_package_index_mld ctx pkg in
+      let parent = Mld.create (ExtIndex pkg) index_path in
+      let info = Dune_package.Lib.info l in
+      let mods_opt = Dune_package.Lib.modules l in
+      let target = ExtLib (pkg, lib_name) in
+      match mods_opt, Lib_info.entry_modules info with
+      | None, _ -> Log.info [Pp.textf "No modules"]; Dep.setup_deps ctx target (Path.Set.empty)
+      | Some _, Local
+      | Some _, External (Error _) -> Memo.return ()
+      | Some modules, External (Ok entry_modules) ->
+        let requires =  Lib_info.requires info |> List.filter_map
+          ~f:(function
+              | Lib_dep.Direct (_, x) ->
+                Some x
+              | _ -> None) in
+        let obj_dir = Lib_info.obj_dir info in
+        let modules_and_odoc_files =
+          Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
+              Log.info [Pp.textf "Module: %s found in modules: %b" (Module_name.to_string (Module.name m)) (Modules.find modules (Module.name m) <> None)];
+              let parent_opt =
+                if List.mem entry_modules (Module.name m) ~equal:(fun m1 m2 -> Module_name.equal m1 m2)
+                then Some parent
+                else None
+              in
+              let compiled = compile_external_odoc sctx (pkg, lib_name) modules (Module.obj_name m |> Module_name.Unique.to_name ~loc:Loc.none, Obj_dir.Module.cmti_file obj_dir m) parent_opt requires in
+              compiled :: acc)
+        in
+        let* odocs = Memo.all_concurrently modules_and_odoc_files in
+
+       Dep.setup_deps ctx target (Path.Set.of_list (List.map ~f:Path.build odocs))
 
 let has_rules m =
   let rules = Rules.collect_unit (fun () -> m) in
@@ -1035,6 +1256,10 @@ let gen_rules sctx ~dir:_ rest =
     has_rules (setup_external_index_rules sctx (Package.Name.of_string pkg))
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg -> setup_package_odoc_rules sctx ~pkg)
+  | [ "_odoc"; "extpkg"; pkg; lib ] ->
+    let pkg = Package.Name.of_string pkg in
+    let lib_name = Lib_name.of_string lib in 
+    has_rules (setup_ext_package_odoc_rules sctx ~pkg ~lib_name)
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
     has_rules
       ((* TODO we can be a better with the error handling in the case where
