@@ -993,6 +993,55 @@ let setup_external_index_rules sctx pkg =
 
     Memo.return ()  
 
+let libs_of_local_dir (ctx : Context.t) =
+  let* findlib =
+    Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
+  in
+  let* all_packages = Findlib.all_packages findlib in
+  let findlib_paths_unsorted =
+    List.map ~f:(fun x -> Path.to_string x ^ "/") ctx.Context.findlib_paths
+  in
+  let findlib_paths =
+    List.sort
+      ~compare:(fun p1 p2 -> Int.compare (String.length p1) (String.length p2))
+      findlib_paths_unsorted
+  in
+  let map =
+    List.fold_left all_packages ~init:String.Map.empty ~f:(fun map entry ->
+        match entry with
+        | Dune_package.Entry.Library l ->
+          let obj_dir =
+            Dune_package.Lib.info l |> Lib_info.obj_dir |> Obj_dir.dir
+          in
+          let obj_dir_str = Path.to_string obj_dir in
+          let local =
+            List.find_map
+              ~f:(fun prefix -> String.drop_prefix obj_dir_str ~prefix)
+              findlib_paths
+            |> Option.value_exn
+          in
+          let name = Dune_package.Lib.info l |> Lib_info.name in
+          String.Map.update map local ~f:(function
+            | Some libs -> Some (Lib_name.Set.add libs name)
+            | None -> Some (Lib_name.Set.singleton name))
+        | _ -> map)
+  in
+  Memo.return map
+
+let setup_external_rules sctx local_dir =
+  let* map = libs_of_local_dir (Super_context.context sctx) in
+  (
+    String.Map.iteri map ~f:(fun dir libs ->
+      if Lib_name.Set.cardinal libs > 1 then Log.info [Pp.textf "Dir %s contains more than one lib" dir])
+  );
+  match String.Map.find map local_dir with
+  | None -> Log.info [Pp.textf "No lib at this path: %s" local_dir]; Memo.return ()
+  | Some libs ->
+    (match Lib_name.Set.to_list libs with
+    | [] -> assert false
+    | [lib] -> Log.info [Pp.textf "Singleton lib found: %s" (Lib_name.to_string lib)]
+    | libs -> Log.info [Pp.textf "Multiple libs found: %s" (String.concat ~sep:"," (List.map ~f:Lib_name.to_string libs))]); Memo.return ()
+
 let has_rules m =
   let rules = Rules.collect_unit (fun () -> m) in
   Memo.return
@@ -1035,6 +1084,8 @@ let gen_rules sctx ~dir:_ rest =
     has_rules (setup_external_index_rules sctx (Package.Name.of_string pkg))
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg -> setup_package_odoc_rules sctx ~pkg)
+  | ("_odoc" :: "external" :: rest) ->
+    has_rules (setup_external_rules sctx (String.concat ~sep:"/" rest))
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
     has_rules
       ((* TODO we can be a better with the error handling in the case where
