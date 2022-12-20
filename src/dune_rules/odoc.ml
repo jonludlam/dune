@@ -1067,16 +1067,14 @@ let libs_of_local_dir (ctx : Context.t) =
           let local = Paths.local_path_of_findlib_path ctx obj_dir in
           let name = Dune_package.Lib.info l |> Lib_info.name in
           String.Map.update map local ~f:(function
-            | Some libs -> Some (Lib_name.Set.add libs name)
-            | None -> Some (Lib_name.Set.singleton name))
+            | Some libs -> Some (Lib_name.Map.add_exn libs name l)
+            | None -> Some (Lib_name.Map.singleton name l))
         | _ -> map)
   in
   Memo.return map
 
-  let compile_external_odoc sctx (pkg, lib) modules (m, cmti_file) parent requires =
+  let compile_external_odoc sctx local_path lib_module_names (m, cmti_file) parent requires =
       let ctx = Super_context.context sctx in
-      let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.obj_dir in
-      let local_path = Paths.local_path_of_findlib_path ctx obj_dir in
       let output_dir = Paths.odocs ctx (ExtLib local_path) in
       let odoc_file_base = Module_name.to_string m in
       let deps_file =
@@ -1094,7 +1092,7 @@ let libs_of_local_dir (ctx : Context.t) =
         let* l = Action_builder.lines_of (Path.build deps_file) in
         let deps = parse_odoc_deps l in
         let deps' = List.filter_map ~f:(fun (m',_) ->
-          if (m <> m') && Modules.fold_no_vlib modules ~init:false ~f:(fun m'' acc -> Module.obj_name m' = Module_name.Unique.of_name_assuming_needs_no_mangling m' || acc)
+          if (m <> m') && List.mem lib_module_names (Module_name.Unique.of_name_assuming_needs_no_mangling m') ~equal:(fun x y -> Module_name.Unique.compare x y = Eq)
           then Some (output_dir ++ ((Module_name.to_string m') ^ ".odoc") |> Path.build)
           else None
            ) deps in
@@ -1132,19 +1130,63 @@ let libs_of_local_dir (ctx : Context.t) =
       [ Pp.textf "About to add rule for %s" (Path.Build.to_string odoc_file) ];
     let* () = add_rule sctx action in
     Memo.return odoc_file
+
+let singleton_external_rules sctx local_dir lib_name l =
+  let ctx = Super_context.context sctx in
+  let pkg = Lib_name.package_name lib_name in
+  let index_path = Paths.ext_package_index_mld ctx pkg in
+  let parent = Mld.create (ExtIndex pkg) index_path in
+  let info = Dune_package.Lib.info l in
+  let mods_opt = Dune_package.Lib.modules l in
+  let obj_dir = info |> Lib_info.obj_dir |> Obj_dir.obj_dir in
+  let local_path = Paths.local_path_of_findlib_path ctx obj_dir in
+  let target = ExtLib local_path in
+  match mods_opt, Lib_info.entry_modules info with
+  | None, _ -> Log.info [Pp.textf "No modules"]; Dep.setup_deps ctx target (Path.Set.empty)
+  | Some _, Local
+  | Some _, External (Error _) -> Memo.return ()
+  | Some modules, External (Ok entry_modules) ->
+    let requires =  Lib_info.requires info |> List.filter_map
+      ~f:(function
+          | Lib_dep.Direct (_, x) ->
+            Some (Loc.none, x)
+          | _ -> None) in
+    let* public_libs = Scope.DB.public_libs ctx in
+    let* requires = List.map ~f:(Lib.DB.resolve public_libs) requires |> Resolve.Memo.all in
+    let obj_dir = Lib_info.obj_dir info in
+    let modules_names = Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc -> Module.obj_name m :: acc) in
+    let modules_and_odoc_files =
+      Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
+          Log.info [Pp.textf "Module: %s found in modules: %b" (Module_name.to_string (Module.name m)) (Modules.find modules (Module.name m) <> None)];
+          let parent_opt =
+            if List.mem entry_modules (Module.name m) ~equal:(fun m1 m2 -> Module_name.equal m1
+m2)
+            then Some parent
+            else None
+          in
+          let compiled = compile_external_odoc sctx local_dir modules_names (Module.obj_name m |> Module_name.Unique.to_name ~loc:Loc.none, Obj_dir.Module.cmti_file obj_dir m) parent_opt requires
+in
+      compiled :: acc)
+      in
+      let* odocs = Memo.all_concurrently modules_and_odoc_files in
+
+    Dep.setup_deps ctx target (Path.Set.of_list (List.map ~f:Path.build odocs))
+
+
+
 let setup_external_rules sctx local_dir =
   let* map = libs_of_local_dir (Super_context.context sctx) in
   (
     String.Map.iteri map ~f:(fun dir libs ->
-      if Lib_name.Set.cardinal libs > 1 then Log.info [Pp.textf "Dir %s contains more than one lib" dir])
+      if Lib_name.Map.cardinal libs > 1 then Log.info [Pp.textf "Dir %s contains more than one lib" dir])
   );
   match String.Map.find map local_dir with
   | None -> Log.info [Pp.textf "No lib at this path: %s" local_dir]; Memo.return ()
   | Some libs ->
-    (match Lib_name.Set.to_list libs with
+    (match Lib_name.Map.to_list libs with
     | [] -> assert false
-    | [lib] -> Log.info [Pp.textf "Singleton lib found: %s" (Lib_name.to_string lib)]
-    | libs -> Log.info [Pp.textf "Multiple libs found: %s" (String.concat ~sep:"," (List.map ~f:Lib_name.to_string libs))]); Memo.return ()
+    | [(lib_name, l)] -> singleton_external_rules sctx local_dir lib_name l
+    | libs -> Log.info [Pp.textf "Multiple libs found: %s" (String.concat ~sep:"," (List.map ~f:Lib_name.to_string (List.map ~f:fst libs)))]; Memo.return ())
 
 let has_rules m =
   let rules = Rules.collect_unit (fun () -> m) in
