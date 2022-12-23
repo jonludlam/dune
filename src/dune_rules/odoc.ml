@@ -339,11 +339,40 @@ let parent_args ctx parent_opt =
       ; Hidden_deps odoc_file
       ]
 
-let compile_module sctx ~obj_dir (m : Module.t) ~includes:(file_deps, iflags)
-    ~dep_graphs ~parent_opt =
+let odoc_include_flags ctx pkg requires =
+  Resolve.args
+    (let open Resolve.O in
+    let+ libs = requires in
+    let paths =
+      List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
+          let dep =
+            match Lib.Local.of_lib lib with
+            | None ->
+              let obj_dir =
+                Lib.info lib |> Lib_info.obj_dir |> Obj_dir.obj_dir
+              in
+              let local_path = Paths.local_path_of_findlib_path ctx obj_dir in
+              ExtLib local_path
+            | Some lib -> Lib lib
+          in
+          Path.Set.add paths (Path.build (Paths.odocs ctx dep)))
+    in
+    let paths =
+      match pkg with
+      | Some p -> Path.Set.add paths (Path.build (Paths.odocs ctx (Pkg p)))
+      | None -> paths
+    in
+    Command.Args.S
+      (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
+           [ Command.Args.A "-I"; Path dir ])))
+
+let compile_module sctx ~obj_dir (m : Module.t) ~requires ~package ~dep_graphs
+    ~parent_opt =
   let odoc_file = Obj_dir.Module.odoc obj_dir m in
   let open Memo.O in
   let ctx = Super_context.context sctx in
+  let iflags = Command.Args.memo (odoc_include_flags ctx package requires) in
+  let file_deps = Dep.deps ctx package requires in
   let parent_args = parent_args ctx parent_opt in
   let+ () =
     let* action_with_targets =
@@ -397,33 +426,6 @@ let compile_mld sctx (m : Mld.t) ~doc_dir ~parent_opt ~children =
   let+ () = add_rule sctx run_odoc in
   odoc_file
 
-let odoc_include_flags ctx pkg requires =
-  Resolve.args
-    (let open Resolve.O in
-    let+ libs = requires in
-    let paths =
-      List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
-          let dep =
-            match Lib.Local.of_lib lib with
-            | None ->
-              let obj_dir =
-                Lib.info lib |> Lib_info.obj_dir |> Obj_dir.obj_dir
-              in
-              let local_path = Paths.local_path_of_findlib_path ctx obj_dir in
-              ExtLib local_path
-            | Some lib -> Lib lib
-          in
-          Path.Set.add paths (Path.build (Paths.odocs ctx dep)))
-    in
-    let paths =
-      match pkg with
-      | Some p -> Path.Set.add paths (Path.build (Paths.odocs ctx (Pkg p)))
-      | None -> paths
-    in
-    Command.Args.S
-      (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
-           [ Command.Args.A "-I"; Path dir ])))
-
 let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
   let ctx = Super_context.context sctx in
   let deps = Dep.deps ctx pkg requires in
@@ -459,12 +461,9 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let* requires = Compilation_context.requires_compile cctx in
   let info = Lib.Local.info local_lib in
   let package = Lib_info.package info in
-  let odoc_include_flags =
-    Command.Args.memo (odoc_include_flags ctx package requires)
-  in
+
   let obj_dir = Compilation_context.obj_dir cctx in
   let modules = Compilation_context.modules cctx in
-  let includes = (Dep.deps ctx package requires, odoc_include_flags) in
   let entry_modules = Modules.entry_modules modules in
   let modules_and_odoc_files =
     Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
@@ -476,7 +475,7 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
           else None
         in
         let compiled =
-          compile_module sctx ~includes
+          compile_module sctx ~requires ~package
             ~dep_graphs:(Compilation_context.dep_graphs cctx)
             ~obj_dir ~parent_opt m
         in
