@@ -366,7 +366,7 @@ let odoc_include_flags ctx pkg requires =
       (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
            [ Command.Args.A "-I"; Path dir ])))
 
-let compile_module sctx ~obj_dir (m : Module.t) ~requires ~package ~dep_graphs
+let compile_module sctx ~obj_dir (m : Module.t) ~requires ~package ~module_deps
     ~parent_opt =
   let odoc_file = Obj_dir.Module.odoc obj_dir m in
   let open Memo.O in
@@ -390,7 +390,7 @@ let compile_module sctx ~obj_dir (m : Module.t) ~requires ~package ~dep_graphs
       in
       let open Action_builder.With_targets.O in
       Action_builder.with_no_targets file_deps
-      >>> Action_builder.with_no_targets (module_deps m ~obj_dir ~dep_graphs)
+      >>> Action_builder.with_no_targets module_deps
       >>> run_odoc
     in
     add_rule sctx action_with_targets
@@ -474,9 +474,10 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
           then Some parent
           else None
         in
+        let module_deps = module_deps m ~obj_dir ~dep_graphs:(Compilation_context.dep_graphs cctx) in
         let compiled =
           compile_module sctx ~requires ~package
-            ~dep_graphs:(Compilation_context.dep_graphs cctx)
+            ~module_deps
             ~obj_dir ~parent_opt m
         in
         compiled :: acc)
