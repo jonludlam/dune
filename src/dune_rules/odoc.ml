@@ -133,7 +133,6 @@ module Paths = struct
     let p = String.split_on_char ~sep:'/' localdir |> List.hd in
     root ctx ++ "_index_fallback" ++ p ++ (p ^ ".mld")
 
-    
   let local_path_of_findlib_path ctx obj_dir =
     let obj_dir_str = Path.to_string obj_dir in
     let findlib_paths_unsorted =
@@ -396,7 +395,7 @@ let compile_module sctx ~artefact ~requires ~package ~module_deps
     in
     add_rule sctx action_with_targets
   in
-  (artefact, odoc_file)
+  odoc_file
 
 type mld_child =
   | Module of Module_name.t
@@ -513,7 +512,7 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   in
   let* modules_and_odoc_files = Memo.all_concurrently modules_and_odoc_files in
   Dep.setup_deps ctx (Lib local_lib)
-    (Path.Set.of_list_map modules_and_odoc_files ~f:(fun (_, p) -> Path.build p))
+    (Path.Set.of_list_map modules_and_odoc_files ~f:(fun p -> Path.build p))
 
 let setup_html sctx (odoc_file : odoc_artefact) =
   let ctx = Super_context.context sctx in
@@ -1074,8 +1073,11 @@ let rec modules_of_dir ~recursive d =
           ~f:(fun (x, ty) ->
             match ty with
             | Unix.S_DIR ->
-                let+ sub = (modules_of_dir ~recursive:true (Path.relative d x)) in
-                List.map ~f:(fun (m, (reldir, path, ty)) -> (m, (x ^ "/" ^ reldir, path, ty))) sub
+              let+ sub = modules_of_dir ~recursive:true (Path.relative d x) in
+              List.map
+                ~f:(fun (m, (reldir, path, ty)) ->
+                  (m, (x ^ "/" ^ reldir, path, ty)))
+                sub
             | _ -> Memo.return [])
           list
       else Memo.return []
@@ -1104,6 +1106,10 @@ let contains_double_underscore s =
   in
   aux 0
 
+(* type local_dir_libs =
+   | Dune_style of (Lib_name.t * Dune_package.Lib.t) String.Map.t
+   | Fallback of (Dune_package.Lib.t Lib_name.Map.t) String.Map.t *)
+
 let libs_of_local_dir (ctx : Context.t) =
   let* findlib =
     Findlib.create ~paths:ctx.findlib_paths ~lib_config:ctx.lib_config
@@ -1118,10 +1124,18 @@ let libs_of_local_dir (ctx : Context.t) =
             Dune_package.Lib.info l |> Lib_info.obj_dir |> Obj_dir.dir
           in
           let local = Paths.local_path_of_findlib_path ctx obj_dir in
+          let toplocal = String.split local ~on:'/' |> List.hd in
           let name = Dune_package.Lib.info l |> Lib_info.name in
-          String.Map.update map local ~f:(function
-            | Some libs -> Some (Lib_name.Map.add_exn libs name l)
-            | None -> Some (Lib_name.Map.singleton name l))
+          let update_fn = function
+            | Some libs ->
+              Some
+                (String.Map.update libs local ~f:(function
+                  | Some libs -> Some (Lib_name.Map.add_exn libs name l)
+                  | None -> Some (Lib_name.Map.singleton name l)))
+            | None ->
+              Some (String.Map.singleton local (Lib_name.Map.singleton name l))
+          in
+          String.Map.update map toplocal ~f:update_fn
         | _ -> map)
   in
   Memo.return map
@@ -1270,29 +1284,28 @@ let compile_external_odoc sctx local_path lib_module_names (m, cmti_file) parent
   let deps_file = output_dir ++ sprintf "%s.deps" odoc_file_base in
   let* () = external_module_deps_rule sctx cmti_file deps_file in
   let odoc_file = output_dir ++ sprintf "%s.odoc" odoc_file_base in
+  let artefact = create_odoc ctx ~target:(ExtLib local_path) ~source:(Module cmti_file) ~odocl_base:output_dir ~is_index:false odoc_file in
   Log.info
     [ Pp.textf "Rule for: %s (depending on %s)"
         (Path.Build.to_string odoc_file)
         (Path.to_string cmti_file)
     ];
-  let deps =
+  let module_deps =
     let open Action_builder.O in
     let* l = Action_builder.lines_of (Path.build deps_file) in
     let deps = parse_odoc_deps l in
     let deps' =
       List.filter_map
         ~f:(fun (m', _) ->
-          let muname = Module_name.Unique.of_name_assuming_needs_no_mangling m' in
-          if m = m'
-          then None
+          let muname =
+            Module_name.Unique.of_name_assuming_needs_no_mangling m'
+          in
+          if m = m' then None
           else
-            match List.assoc lib_module_names muname
-             with
-          | None -> None
-          | Some p ->
-            Some
-              (p ++ (Module_name.to_string m' ^ ".odoc") |> Path.build)
-          )
+            match List.assoc lib_module_names muname with
+            | None -> None
+            | Some p ->
+              Some (p ++ (Module_name.to_string m' ^ ".odoc") |> Path.build))
         deps
     in
     Log.info
@@ -1302,104 +1315,85 @@ let compile_external_odoc sctx local_path lib_module_names (m, cmti_file) parent
           (List.length deps)
       ];
     Dune_engine.Dep.Set.of_files deps' |> Action_builder.deps
+
   in
-
-  let parent_args = parent_args ctx parent in
-
-  let odoc_include_flags =
-    Command.Args.memo (odoc_include_flags ctx None requires)
-  in
-  let other_deps = Dep.deps ctx None requires in
-
-  let doc_dir = Path.build output_dir in
-
-  let* action =
-    let+ run_odoc =
-      run_odoc sctx ~dir:doc_dir "compile" ~flags_for:(Some odoc_file)
-        (Command.Args.
-           [ A "-I"
-           ; Path doc_dir
-           ; odoc_include_flags
-           ; A "-o"
-           ; Target odoc_file
-           ; Dep cmti_file (* ; Hidden_deps other_deps *)
-           ]
-        @ parent_args)
-    in
-    let open Action_builder.With_targets.O in
-    Action_builder.with_no_targets other_deps
-    >>> Action_builder.with_no_targets deps
-    >>> run_odoc
-  in
+  let* odoc_file = compile_module sctx ~artefact ~requires ~module_deps ~parent_opt:parent ~package:None in
   Log.info
     [ Pp.textf "About to add rule for %s" (Path.Build.to_string odoc_file) ];
-  let* () = add_rule sctx action in
-  Memo.return odoc_file
+  Memo.return artefact
 
 let fallback_external_rules sctx local_dir libs =
-  (* if (String.contains local_dir '/') then Memo.return () else begin *)
-  Log.info [Pp.textf "NFT: fallback_external_rules called for %s (libs=%s)" local_dir (String.concat ~sep:"," (List.map ~f:(fun (x, _) -> Lib_name.to_string x) libs))];
-  let ctx = Super_context.context sctx in
-  let index_path = Paths.fallback_index_mld ctx local_dir in
-  let parent = Mld.create (FallbackIndex local_dir) index_path in
-  let target = ExtLib local_dir in
-  let cmti_paths =
-    List.map ~f:(fun path -> Path.relative path local_dir) ctx.findlib_paths
-  in
-  let* mods = Memo.List.map ~f:(modules_of_dir ~recursive:true) cmti_paths in
-  let mods = List.flatten mods in
-  let requires =
-    List.fold_left libs ~init:[] ~f:(fun acc (_, lib) ->
-        let info = Dune_package.Lib.info lib in
-        let requires =
-          Lib_info.requires info
-          |> List.filter_map ~f:(function
-               | Lib_dep.Direct (_, x) -> Some (Loc.none, x)
-               | _ -> None)
-        in
-        requires @ acc)
-  in
-  let* public_libs = Scope.DB.public_libs ctx in
-  let* requires =
-    List.map
-      ~f:(Lib.DB.resolve public_libs)
-      ((Loc.none, Lib_name.of_string "stdlib") :: requires)
-    |> Resolve.Memo.all
-  in
-  let requires =
-    let open Resolve.O in
-    let+ requires = requires in
-    let cur_libs = List.map ~f:fst libs in
-    List.filter
-      ~f:(fun x -> not (List.mem cur_libs (Lib.name x) ~equal:Lib_name.equal))
-      requires
-  in
+  if String.contains local_dir '/' then Memo.return ()
+  else (
+    Log.info
+      [ Pp.textf "NFT: fallback_external_rules called for %s (libs=%s)"
+          local_dir
+          (String.concat ~sep:","
+             (List.map ~f:(fun (x, _) -> Lib_name.to_string x) libs))
+      ];
+    let ctx = Super_context.context sctx in
+    let index_path = Paths.fallback_index_mld ctx local_dir in
+    let parent = Mld.create (FallbackIndex local_dir) index_path in
+    let target = ExtLib local_dir in
+    let cmti_paths =
+      List.map ~f:(fun path -> Path.relative path local_dir) ctx.findlib_paths
+    in
+    let* mods = Memo.List.map ~f:(modules_of_dir ~recursive:true) cmti_paths in
+    let mods = List.flatten mods in
+    let requires =
+      List.fold_left libs ~init:[] ~f:(fun acc (_, lib) ->
+          let info = Dune_package.Lib.info lib in
+          let requires =
+            Lib_info.requires info
+            |> List.filter_map ~f:(function
+                 | Lib_dep.Direct (_, x) -> Some (Loc.none, x)
+                 | _ -> None)
+          in
+          requires @ acc)
+    in
+    let* public_libs = Scope.DB.public_libs ctx in
+    let* requires =
+      List.map
+        ~f:(Lib.DB.resolve public_libs)
+        ((Loc.none, Lib_name.of_string "stdlib") :: requires)
+      |> Resolve.Memo.all
+    in
+    let requires =
+      let open Resolve.O in
+      let+ requires = requires in
+      let cur_libs = List.map ~f:fst libs in
+      List.filter
+        ~f:(fun x -> not (List.mem cur_libs (Lib.name x) ~equal:Lib_name.equal))
+        requires
+    in
 
-  let modules_names =
-    let output_dir = Paths.odocs ctx (ExtLib local_dir) in
-    List.map
-      ~f:(fun (x, (subpath, _, _)) ->
-        (Module_name.Unique.of_name_assuming_needs_no_mangling x, output_dir ++ subpath))
-      mods
-  in
-  let modules_and_odoc_files =
-    List.fold_left mods ~init:[] ~f:(fun acc (mod_name, (subpath, cmti_file, _)) ->
-        Log.info [ Pp.textf "Module: %s" (Module_name.to_string mod_name) ];
-        let parent_opt =
-          if not (contains_double_underscore (Module_name.to_string mod_name))
-          then Some parent
-          else None
-        in
-        let compiled =
-          compile_external_odoc sctx (local_dir ^ "/" ^ subpath) modules_names
-            (mod_name, cmti_file) parent_opt requires
-        in
-        compiled :: acc)
-  in
-  let* odocs = Memo.all_concurrently modules_and_odoc_files in
+    let modules_names =
+      let output_dir = Paths.odocs ctx (ExtLib local_dir) in
+      List.map
+        ~f:(fun (x, (subpath, _, _)) ->
+          ( Module_name.Unique.of_name_assuming_needs_no_mangling x
+          , output_dir ++ subpath ))
+        mods
+    in
+    let modules_and_odoc_files =
+      List.fold_left mods ~init:[]
+        ~f:(fun acc (mod_name, (subpath, cmti_file, _)) ->
+          Log.info [ Pp.textf "Module: %s" (Module_name.to_string mod_name) ];
+          let parent_opt =
+            if not (contains_double_underscore (Module_name.to_string mod_name))
+            then Some parent
+            else None
+          in
+          let compiled =
+            compile_external_odoc sctx
+              (local_dir ^ "/" ^ subpath)
+              modules_names (mod_name, cmti_file) parent_opt requires
+          in
+          compiled :: acc)
+    in
+    let* odocs = Memo.all_concurrently modules_and_odoc_files in
 
-  Dep.setup_deps ctx target (Path.Set.of_list (List.map ~f:Path.build odocs))
-  (* end *)
+    Dep.setup_deps ctx target (Path.Set.of_list (List.map ~f:(fun a -> Path.build a.odoc_file) odocs)))
 
 let singleton_external_rules sctx local_dir lib_name l =
   let ctx = Super_context.context sctx in
@@ -1412,8 +1406,7 @@ let singleton_external_rules sctx local_dir lib_name l =
   let local_path = Paths.local_path_of_findlib_path ctx obj_dir in
   let target = ExtLib local_path in
   match (mods_opt, Lib_info.entry_modules info) with
-  | None, _ ->
-    fallback_external_rules sctx local_dir [lib_name, l]
+  | None, _ -> fallback_external_rules sctx local_dir [ (lib_name, l) ]
   | Some _, Local | Some _, External (Error _) -> Memo.return ()
   | Some modules, External (Ok entry_modules) ->
     let requires =
@@ -1459,32 +1452,39 @@ let singleton_external_rules sctx local_dir lib_name l =
     in
     let* odocs = Memo.all_concurrently modules_and_odoc_files in
 
-    Dep.setup_deps ctx target (Path.Set.of_list (List.map ~f:Path.build odocs))
+    Dep.setup_deps ctx target (Path.Set.of_list (List.map ~f:(fun a -> Path.build a.odoc_file) odocs))
 
 let setup_external_rules sctx local_dir =
   let* map = libs_of_local_dir (Super_context.context sctx) in
-  String.Map.iteri map ~f:(fun dir libs ->
+  (* String.Map.iteri map ~f:(fun dir libs ->
       if Lib_name.Map.cardinal libs > 1 then
-        Log.info [ Pp.textf "Dir %s contains more than one lib" dir ]);
+        Log.info [ Pp.textf "NFT: Dir %s contains more than one lib" dir ]); *)
   match String.Map.find map local_dir with
   | None ->
-    Log.info [ Pp.textf "No lib at this path: %s" local_dir ];
+    Log.info [ Pp.textf "NFT: No lib at this path: %s" local_dir ];
     Memo.return ()
-  | Some libs -> (
-    match Lib_name.Map.to_list libs with
-    | [] -> assert false
-    | [ (lib_name, l) ] -> singleton_external_rules sctx local_dir lib_name l
-    | libs_list ->
-      Log.info
-        [ Pp.textf "Multiple libs found: %s"
-            (String.concat ~sep:","
-               (List.map ~f:Lib_name.to_string (List.map ~f:fst libs_list)))
-        ];
-      let libs = String.Map.foldi map ~init:Lib_name.Map.empty ~f:(fun p sublibs acc ->
-        if String.split p ~on:'/' |> List.hd = local_dir then
-          (Log.info [Pp.textf "Combining dir %s" p];
-          Lib_name.Map.merge acc sublibs ~f:(fun _ y z -> match (y,z) with (None,None) -> None | (Some x, _) -> Some x | (_, Some x) -> Some x))
-        else acc) in 
+  | Some libs ->
+    let is_singleton libs = Lib_name.Map.cardinal libs = 1 in
+    let all_singletons = String.Map.for_all libs ~f:is_singleton in
+    if all_singletons then
+      let f local_dir libs acc =
+        Log.info [ Pp.textf "NFT: Singleton at path: %s" local_dir ];
+        Lib_name.Map.foldi libs ~init:acc ~f:(fun lib_name l acc ->
+            singleton_external_rules sctx local_dir lib_name l :: acc)
+      in
+      let* _ = String.Map.foldi libs ~f ~init:[] |> Memo.all in
+      Memo.return ()
+    else (
+      Log.info [ Pp.textf "NFT: Multiple libs found at path: %s" local_dir ];
+      let libs =
+        String.Map.foldi libs ~init:Lib_name.Map.empty ~f:(fun p sublibs acc ->
+            Log.info [ Pp.textf "NFT: Combining dir %s" p ];
+            Lib_name.Map.merge acc sublibs ~f:(fun _ y z ->
+                match (y, z) with
+                | None, None -> None
+                | Some x, _ -> Some x
+                | _, Some x -> Some x))
+      in
       fallback_external_rules sctx local_dir (Lib_name.Map.to_list libs))
 
 let has_rules m =
@@ -1529,8 +1529,7 @@ let gen_rules sctx ~dir:_ rest =
     has_rules (setup_fallback_index_rules sctx dir)
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg -> setup_package_odoc_rules sctx ~pkg)
-  | [ "_odoc" ; "external" ; pkg ] ->
-    has_rules (setup_external_rules sctx pkg)
+  | [ "_odoc"; "external"; pkg ] -> has_rules (setup_external_rules sctx pkg)
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
     has_rules
       ((* TODO we can be a better with the error handling in the case where
