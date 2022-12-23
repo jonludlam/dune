@@ -70,8 +70,8 @@ type target =
   | ExtLib of string (* local path, to convert to some Path.* *)
 
 type source =
-  | Module
-  | Mld
+  | Module of Path.t
+  | Mld of Path.t
 
 type odoc_artefact =
   { odoc_file : Path.Build.t
@@ -366,17 +366,18 @@ let odoc_include_flags ctx pkg requires =
       (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
            [ Command.Args.A "-I"; Path dir ])))
 
-let compile_module sctx ~obj_dir (m : Module.t) ~requires ~package ~module_deps
+let compile_module sctx ~artefact ~requires ~package ~module_deps
     ~parent_opt =
-  let odoc_file = Obj_dir.Module.odoc obj_dir m in
+  let odoc_file = artefact.odoc_file in
   let open Memo.O in
+  let cmti = match artefact.source with | Module f -> f | Mld _ -> assert false in
   let ctx = Super_context.context sctx in
   let iflags = Command.Args.memo (odoc_include_flags ctx package requires) in
   let file_deps = Dep.deps ctx package requires in
   let parent_args = parent_args ctx parent_opt in
   let+ () =
     let* action_with_targets =
-      let doc_dir = Path.build (Obj_dir.odoc_dir obj_dir) in
+      let doc_dir = Path.parent_exn (Path.build artefact.odoc_file) in
       let+ run_odoc =
         run_odoc sctx ~dir:doc_dir "compile" ~flags_for:(Some odoc_file)
           ([ Command.Args.A "-I"
@@ -384,7 +385,7 @@ let compile_module sctx ~obj_dir (m : Module.t) ~requires ~package ~module_deps
            ; iflags
            ; A "-o"
            ; Target odoc_file
-           ; Dep (Path.build (Obj_dir.Module.cmti_file ~cm_kind:(Ocaml Cmi) obj_dir m))
+           ; Dep cmti
            ]
           @ parent_args)
       in
@@ -395,7 +396,7 @@ let compile_module sctx ~obj_dir (m : Module.t) ~requires ~package ~module_deps
     in
     add_rule sctx action_with_targets
   in
-  (m, odoc_file)
+  (artefact, odoc_file)
 
 type mld_child =
   | Module of Module_name.t
@@ -453,6 +454,29 @@ let pkg_or_lnu_parent ctx lib =
     let lnu = lib_unique_name lib in
     Mld.create (PrivateIndex lnu) (Paths.package_index_mld_lnu ctx lnu)
 
+let create_odoc ctx ~target ~source ~odocl_base ~is_index odoc_file =
+  let html_base = Paths.html ctx target in
+  let basename = Path.Build.basename odoc_file |> Filename.chop_extension in
+  let odocl_file = odocl_base ++ (basename ^ ".odocl") in
+  match target with
+  | Lib _ | ExtLib _ ->
+    let html_dir = html_base ++ Stdune.String.capitalize basename in
+    { odoc_file
+    ; odocl_file
+    ; html_dir
+    ; html_file = html_dir ++ "index.html"
+    ; source
+    }
+  | Pkg _ ->
+    let page_name =
+      basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn
+    in
+    let html_file =
+      if is_index then html_base ++ "index.html"
+      else html_base ++ sprintf "%s.html" page_name
+    in
+    { odoc_file; odocl_file; html_dir = html_base; html_file; source }
+    
 let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let open Memo.O in
   let sctx = Compilation_context.super_context cctx in
@@ -475,10 +499,15 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
           else None
         in
         let module_deps = module_deps m ~obj_dir ~dep_graphs:(Compilation_context.dep_graphs cctx) in
+        let target = Lib local_lib in
+        let odocl_base = Paths.odocl ctx target in
+        let odoc_file = Obj_dir.Module.odoc obj_dir m in
+        let cmti_file = Obj_dir.Module.cmti_file obj_dir ~cm_kind:(Ocaml Cmi) m in
+        let artefact = create_odoc ctx ~target ~odocl_base ~is_index:false odoc_file ~source:(Module (Path.build cmti_file)) in
         let compiled =
-          compile_module sctx ~requires ~package
+          compile_module sctx ~artefact ~requires ~package
             ~module_deps
-            ~obj_dir ~parent_opt m
+           ~parent_opt
         in
         compiled :: acc)
   in
@@ -490,8 +519,8 @@ let setup_html sctx (odoc_file : odoc_artefact) =
   let ctx = Super_context.context sctx in
   let to_remove, dummy =
     match odoc_file.source with
-    | Mld -> (odoc_file.html_file, [])
-    | Module ->
+    | Mld _ -> (odoc_file.html_file, [])
+    | Module _ ->
       (* Dummy target so that the below rule as at least one target. We do this
          because we don't know the targets of odoc in this case. The proper way
          to support this would be to have directory targets. *)
@@ -622,28 +651,6 @@ let entry_modules sctx ~pkg =
   in
   Lib.Local.Map.of_list_exn l
 
-let create_odoc ctx ~target ~odocl_base ~is_index odoc_file =
-  let html_base = Paths.html ctx target in
-  let basename = Path.Build.basename odoc_file |> Filename.chop_extension in
-  let odocl_file = odocl_base ++ (basename ^ ".odocl") in
-  match target with
-  | Lib _ | ExtLib _ ->
-    let html_dir = html_base ++ Stdune.String.capitalize basename in
-    { odoc_file
-    ; odocl_file
-    ; html_dir
-    ; html_file = html_dir ++ "index.html"
-    ; source = Module
-    }
-  | Pkg _ ->
-    let page_name =
-      basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn
-    in
-    let html_file =
-      if is_index then html_base ++ "index.html"
-      else html_base ++ sprintf "%s.html" page_name
-    in
-    { odoc_file; odocl_file; html_dir = html_base; html_file; source = Mld }
 
 let static_html ctx =
   let open Paths in
@@ -677,7 +684,7 @@ let odoc_artefacts sctx target =
     |> List.map ~f:(fun mld ->
            Mld.create (PkgPage pkg) mld
            |> Mld.odoc_file ctx
-           |> create_odoc ctx ~odocl_base ~is_index:false ~target)
+           |> create_odoc ctx ~odocl_base ~is_index:false ~target ~source:(Mld (Path.build mld)))
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
@@ -686,7 +693,8 @@ let odoc_artefacts sctx target =
       ~f:(fun m ->
         let odocl_base = Paths.odocl ctx target in
         let odoc_file = Obj_dir.Module.odoc obj_dir m in
-        create_odoc ctx ~target ~odocl_base ~is_index:false odoc_file)
+        let cmti_file = Obj_dir.Module.cmti_file obj_dir ~cm_kind:(Ocaml Cmi) m in
+        create_odoc ctx ~target ~odocl_base ~is_index:false odoc_file ~source:(Module (Path.build cmti_file)))
       modules
   | _ -> Memo.return []
 
@@ -815,7 +823,7 @@ let setup_pkg_html_rules_def =
       let index = Mld.create (PkgIndex pkg) mld_path in
       let odocl_base = Path.Build.parent_exn mld_path in
       Mld.odoc_file ctx index
-      |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
+      |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base ~source:(Mld (Path.build mld_path))
     in
     let* () = Memo.parallel_iter libs ~f:(setup_lib_html_rules sctx)
     and* pkg_odocs =
@@ -1046,7 +1054,7 @@ let setup_pkg_index_rules sctx pkg =
         Paths.package_index_mld ctx pkg |> Path.Build.parent_exn
       in
       Mld.odoc_file ctx mld
-      |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
+      |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base ~source:(Mld (Path.build index_path))
     in
     link_odoc_rules sctx index ~pkg:(Some pkg) ~requires
   in
@@ -1170,7 +1178,7 @@ let setup_fallback_index_rules sctx dir =
       Mld.odoc_file ctx mld
       |> create_odoc ctx
            ~target:(Pkg (Package.Name.of_string "dummy"))
-           ~is_index:true ~odocl_base
+           ~is_index:true ~odocl_base ~source:(Mld (Path.build index_path))
     in
     link_odoc_rules sctx index ~pkg:None ~requires:(Resolve.return [])
   in
@@ -1257,7 +1265,7 @@ let setup_external_index_rules sctx pkg =
           Paths.ext_package_index_mld ctx pkg |> Path.Build.parent_exn
         in
         Mld.odoc_file ctx mld
-        |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
+        |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base ~source:(Mld (Path.build index_path))
       in
       link_odoc_rules sctx index ~pkg:(Some pkg) ~requires
     in
@@ -1454,7 +1462,7 @@ let singleton_external_rules sctx local_dir lib_name l =
           let compiled =
             compile_external_odoc sctx local_dir modules_names
               ( Module.obj_name m |> Module_name.Unique.to_name ~loc:Loc.none
-              , Obj_dir.Module.cmti_file obj_dir m )
+              , Obj_dir.Module.cmti_file obj_dir ~cm_kind:(Ocaml Cmi) m )
               parent_opt requires
           in
           compiled :: acc)
