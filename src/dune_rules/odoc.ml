@@ -302,7 +302,7 @@ let external_module_deps_rule sctx artefact =
   | Module (modpath, _) ->
     let ctx = Super_context.context sctx in
     let* odoc = odoc_program sctx (Paths.root ctx) in
-    let deps_file = Path.Build.set_extension artefact.odoc_file ~ext:"deps" in
+    let deps_file = Path.Build.set_extension artefact.odoc_file ~ext:".deps" in
     Log.info
       [ Pp.textf "Adding rule for %s"
           (Path.Build.to_string_maybe_quoted deps_file)
@@ -1367,6 +1367,22 @@ let compile_external_odoc artefact sctx lib_module_names parent requires =
       [ Pp.textf "About to add rule for %s" (Path.Build.to_string odoc_file) ];
     Memo.return ()
 
+let fallback_artefacts sctx local_dir =
+  let ctx = Super_context.context sctx in
+  let cmti_paths =
+    List.map ~f:(fun path -> Path.relative path local_dir) ctx.findlib_paths
+  in
+  let+ mods = Memo.List.map ~f:(modules_of_dir ~recursive:true) cmti_paths in
+  let mods = List.flatten mods in
+  List.fold_left mods ~init:[]
+    ~f:(fun acc (mod_name, (subpath, cmti_file, _)) ->
+      let artefact =
+        external_odoc_artefact sctx
+          (local_dir ^ "/" ^ subpath)
+          (mod_name, cmti_file, not (contains_double_underscore (Module_name.to_string mod_name)))
+      in
+      artefact :: acc)
+
 let fallback_external_rules sctx local_dir libs =
   if String.contains local_dir '/' then Memo.return ()
   else (
@@ -1385,18 +1401,7 @@ let fallback_external_rules sctx local_dir libs =
     in
     let* mods = Memo.List.map ~f:(modules_of_dir ~recursive:true) cmti_paths in
     let mods = List.flatten mods in
-    let artefacts =
-      List.fold_left mods ~init:[]
-        ~f:(fun acc (mod_name, (subpath, cmti_file, _)) ->
-          Log.info [ Pp.textf "Module: %s" (Module_name.to_string mod_name) ];
-          
-          let artefact =
-            external_odoc_artefact sctx
-              (local_dir ^ "/" ^ subpath)
-              (mod_name, cmti_file, not (contains_double_underscore (Module_name.to_string mod_name)))
-          in
-          artefact :: acc)
-    in
+    let* artefacts = fallback_artefacts sctx local_dir in
 
     let requires =
       List.fold_left libs ~init:[] ~f:(fun acc (_, lib) ->
@@ -1454,39 +1459,51 @@ let fallback_external_rules sctx local_dir libs =
     Dep.setup_deps ctx target
       (Path.Set.of_list (List.map ~f:(fun a -> Path.build a.odoc_file) artefacts)))
 
-let singleton_external_rules sctx local_dir lib_name l =
+
+type dune_with_modules = {
+  local_dir : string;
+  lib_name : Lib_name.t;
+  lib : Dune_package.Lib.t;
+  modules : Modules.t;
+  entry_modules : Module_name.t list;
+}
+
+type fallback = {
+    libs : Dune_package.Lib.t Lib_name.Map.t
+}
+
+type local_dir_type =
+    | Nothing
+    | Dune_with_modules of dune_with_modules list
+    | Fallback of fallback
+
+let singleton_artefacts sctx dwm =
+  let info = Dune_package.Lib.info dwm.lib in
+  let obj_dir = Lib_info.obj_dir info in
+  let artefacts =
+    Modules.fold_no_vlib dwm.modules ~init:[] ~f:(fun m acc ->
+      let name = Module.obj_name m |> Module_name.Unique.to_name ~loc:Loc.none in
+      let cmti_file = Obj_dir.Module.cmti_file obj_dir ~cm_kind:(Ocaml Cmi) m in
+      let visible = List.mem dwm.entry_modules (Module.name m) ~equal:(fun m1 m2 ->
+        Module_name.equal m1 m2) in
+      let artefact =
+        external_odoc_artefact sctx dwm.local_dir
+          (name, cmti_file, visible)
+      in
+      artefact :: acc)
+  in
+  artefacts
+
+let singleton_external_rules sctx dwm =
   let ctx = Super_context.context sctx in
-  let pkg = Lib_name.package_name lib_name in
+  let pkg = Lib_name.package_name dwm.lib_name in
   let index_path = Paths.ext_package_index_mld ctx pkg in
   let parent = Mld.create (ExtIndex pkg) index_path in
-  let info = Dune_package.Lib.info l in
-  let mods_opt = Dune_package.Lib.modules l in
+  let info = Dune_package.Lib.info dwm.lib in
   let obj_dir = info |> Lib_info.obj_dir |> Obj_dir.obj_dir in
   let local_path = Paths.local_path_of_findlib_path ctx obj_dir in
   let target = ExtLib local_path in
-  match (mods_opt, Lib_info.entry_modules info) with
-  | None, _ -> fallback_external_rules sctx local_dir [ (lib_name, l) ]
-  | Some _, Local | Some _, External (Error _) -> Memo.return ()
-  | Some modules, External (Ok entry_modules) ->
-    let obj_dir = Lib_info.obj_dir info in
-    let artefacts =
-      Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
-          Log.info
-            [ Pp.textf "Module: %s found in modules: %b"
-                (Module_name.to_string (Module.name m))
-                (Modules.find modules (Module.name m) <> None)
-            ];
-          
-          let artefact =
-            external_odoc_artefact sctx local_dir
-              ( Module.obj_name m |> Module_name.Unique.to_name ~loc:Loc.none
-              , Obj_dir.Module.cmti_file obj_dir ~cm_kind:(Ocaml Cmi) m, List.mem entry_modules (Module.name m) ~equal:(fun m1 m2 ->
-                Module_name.equal m1 m2))
-          in
-         
-          artefact :: acc)
-    in
-
+    let artefacts = singleton_artefacts sctx dwm in
     let requires =
       Lib_info.requires info
       |> List.filter_map ~f:(function
@@ -1501,8 +1518,8 @@ let singleton_external_rules sctx local_dir lib_name l =
       |> Resolve.Memo.all
     in
     let modules_names =
-      let output_dir = Paths.odocs ctx (ExtLib local_dir) in
-      Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
+      let output_dir = Paths.odocs ctx (ExtLib dwm.local_dir) in
+      Modules.fold_no_vlib dwm.modules ~init:[] ~f:(fun m acc ->
           (Module.obj_name m, output_dir) :: acc)
     in
     let* () = Memo.List.iter artefacts ~f:(fun artefact ->
@@ -1523,27 +1540,34 @@ let singleton_external_rules sctx local_dir lib_name l =
     Dep.setup_deps ctx target
       (Path.Set.of_list (List.map ~f:(fun a -> Path.build a.odoc_file) artefacts))
 
-let setup_external_rules sctx local_dir =
-  let* map = libs_of_local_dir (Super_context.context sctx) in
+
+exception Fallback
+
+let classify_local_dir sctx local_dir =
+  let+ map = libs_of_local_dir (Super_context.context sctx) in
   (* String.Map.iteri map ~f:(fun dir libs ->
       if Lib_name.Map.cardinal libs > 1 then
         Log.info [ Pp.textf "NFT: Dir %s contains more than one lib" dir ]); *)
   match String.Map.find map local_dir with
   | None ->
     Log.info [ Pp.textf "NFT: No lib at this path: %s" local_dir ];
-    Memo.return ()
+    Nothing
   | Some libs ->
-    let is_singleton libs = Lib_name.Map.cardinal libs = 1 in
-    let all_singletons = String.Map.for_all libs ~f:is_singleton in
-    if all_singletons then
+    try
       let f local_dir libs acc =
-        Log.info [ Pp.textf "NFT: Singleton at path: %s" local_dir ];
-        Lib_name.Map.foldi libs ~init:acc ~f:(fun lib_name l acc ->
-            singleton_external_rules sctx local_dir lib_name l :: acc)
+        match Lib_name.Map.to_list libs with
+        | [(lib_name, lib)] -> begin
+          let info = Dune_package.Lib.info lib in
+          let mods_opt = Dune_package.Lib.modules lib in
+          match (mods_opt, Lib_info.entry_modules info) with
+          | Some modules, External (Ok entry_modules) ->
+            { local_dir; lib_name; lib; modules; entry_modules } :: acc
+          | _ -> raise Fallback
+          end
+        | _ -> raise Fallback
       in
-      let* _ = String.Map.foldi libs ~f ~init:[] |> Memo.all in
-      Memo.return ()
-    else (
+      Dune_with_modules (String.Map.foldi libs ~f ~init:[])
+    with _ ->
       Log.info [ Pp.textf "NFT: Multiple libs found at path: %s" local_dir ];
       let libs =
         String.Map.foldi libs ~init:Lib_name.Map.empty ~f:(fun p sublibs acc ->
@@ -1554,7 +1578,24 @@ let setup_external_rules sctx local_dir =
                 | Some x, _ -> Some x
                 | _, Some x -> Some x))
       in
-      fallback_external_rules sctx local_dir (Lib_name.Map.to_list libs))
+      Fallback {libs}
+
+let setup_external_rules sctx local_dir =
+  (* String.Map.iteri map ~f:(fun dir libs ->
+      if Lib_name.Map.cardinal libs > 1 then
+        Log.info [ Pp.textf "NFT: Dir %s contains more than one lib" dir ]); *)
+  let* c = classify_local_dir sctx local_dir in
+  match c with
+  | Nothing ->
+    Log.info [ Pp.textf "NFT: No lib at this path: %s" local_dir ];
+    Memo.return ()
+  | Dune_with_modules m ->
+    let* _ = List.map m ~f:(fun m ->
+      singleton_external_rules sctx m)
+      |> Memo.all in
+      Memo.return ()
+  | Fallback {libs} ->
+    fallback_external_rules sctx local_dir (Lib_name.Map.to_list libs)
 
 let has_rules ?(directory_targets = Path.Build.Map.empty) m =
   let rules = Rules.collect_unit (fun () -> m) in
