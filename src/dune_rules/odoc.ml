@@ -94,7 +94,7 @@ module Paths = struct
       Obj_dir.odoc_dir obj_dir
     | Pkg pkg -> root ctx ++ sprintf "_odoc/pkg/%s" (Package.Name.to_string pkg)
 
-  let html_root ctx = root ctx ++ "_html"
+  let html_root ~root = root ++ "_html"
 
   let odocl_root ctx = root ctx ++ "_odocls"
 
@@ -105,17 +105,19 @@ module Paths = struct
     | Pkg pkg -> Package.Name.to_string pkg
     | Lib lib -> pkg_or_lnu (Lib.Local.to_lib lib)
 
-  let html ctx m = add_pkg_lnu (html_root ctx) m
+  let html ctx m = add_pkg_lnu (html_root ~root:(root ctx)) m
 
   let odocl ctx m = add_pkg_lnu (odocl_root ctx) m
 
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
 
-  let css_file ctx = html_root ctx ++ "odoc.css"
+  let css_file ctx = html_root ~root:(root ctx) ++ "odoc.css"
 
-  let highlight_pack_js ctx = html_root ctx ++ "highlight.pack.js"
+  let highlight_pack_js ctx = html_root ~root:(root ctx) ++ "highlight.pack.js"
 
-  let toplevel_index ctx = html_root ctx ++ "index.html"
+  let toplevel_index ~root = root ++ "index.html"
+
+  let html_root ctx = html_root ~root:(root ctx)
 end
 
 module Dep : sig
@@ -349,7 +351,7 @@ let setup_html sctx (odoc_file : odoc_artefact) =
   let open Memo.O in
   let* run_odoc =
     run_odoc sctx
-      ~dir:(Path.build (Paths.html_root ctx))
+      ~dir:(Path.build (Paths.html_root (ctx)))
       "html-generate" ~flags_for:None
       [ A "-o"
       ; Path (Path.build (Paths.html_root ctx))
@@ -422,7 +424,7 @@ let setup_toplevel_index_rule sctx =
       list_items
   in
   let ctx = Super_context.context sctx in
-  add_rule sctx (Action_builder.write_file (Paths.toplevel_index ctx) html)
+  add_rule sctx (Action_builder.write_file (Paths.toplevel_index ~root:(Paths.root ctx)) html)
 
 let libs_of_pkg ctx ~pkg =
   let+ entries = Scope.DB.lib_entries_of_package ctx pkg in
@@ -495,7 +497,7 @@ let create_odoc ctx ~target odoc_file =
 
 let static_html ctx =
   let open Paths in
-  [ css_file ctx; highlight_pack_js ctx; toplevel_index ctx ]
+  [ css_file ctx; highlight_pack_js ctx; toplevel_index ~root:(Paths.root ctx) ]
 
 let check_mlds_no_dupes ~pkg ~mlds =
   match

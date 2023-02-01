@@ -1,0 +1,1 @@
+let command = Build_cmd.doc

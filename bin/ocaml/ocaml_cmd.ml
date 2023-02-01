@@ -10,4 +10,5 @@ let group =
     ; Top.command
     ; Top.module_command
     ; Ocaml_merlin.group
+    ; Doc.command
     ]
