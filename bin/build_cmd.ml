@@ -231,13 +231,23 @@ let doc =
     let config = Common.init common in
     let request (setup : Import.Main.build_system) =
       let dir = Path.(relative root) (Common.prefix_target common ".") in
-      Alias.in_dir ~name:(Dune_engine.Alias.Name.of_string "doc") ~recursive:true
-        ~contexts:setup.contexts dir
-      |> Alias.request
+      let open Action_builder.O in
+      let+ () =
+        Alias.in_dir
+          ~name:(Dune_engine.Alias.Name.of_string "doc")
+          ~recursive:true ~contexts:setup.contexts dir
+        |> Alias.request
+      in
+      let is_default ctx =
+        ctx |> Context.name |> Dune_engine.Context_name.is_default
+      in
+      let doc_ctx = List.find_exn setup.contexts ~f:is_default in
+      let toplevel_index_path = Dune_rules.Odoc.Paths.toplevel_index doc_ctx in
+      let absolute_toplevel_index_path =
+        Path.(toplevel_index_path |> build |> to_absolute_filename)
+      in
+      Printf.printf "\nDocumentation in : %s\n" absolute_toplevel_index_path
     in
-    run_build_command ~common ~config ~request ;
-    let root = Path.Build.root in
-    let toplevel_index_path = Dune_rules.Odoc.Paths.toplevel_index ~root in
-     Printf.printf "Documentation in : %s" ( Path.Build.to_string toplevel_index_path)  
+    run_build_command ~common ~config ~request
   in
   Cmd.v info term

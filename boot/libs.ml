@@ -1,6 +1,6 @@
 let executables = [ "main" ]
 
-let external_libraries = [ "unix"; "threads" ]
+let external_libraries = [ "unix"; "threads.posix"; "threads" ]
 
 let local_libraries =
   [ ("otherlibs/ordering", Some "Ordering", false, None)
@@ -62,7 +62,7 @@ let local_libraries =
 let link_flags =
   [ ("macosx",
     [ "-cclib"
-    ; "-framework CoreFoundation"
+    ; "-framework Foundation"
     ; "-cclib"
     ; "-framework CoreServices"
     ])

@@ -3,7 +3,7 @@
 open Import
 
 module Paths : sig
-  val toplevel_index : root:Path.Build.t -> Path.Build.t
+  val toplevel_index : Context.t -> Path.Build.t
 end
 
 val setup_library_odoc_rules :
