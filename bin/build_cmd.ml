@@ -246,13 +246,21 @@ let doc =
       let absolute_toplevel_index_path =
         Path.(toplevel_index_path |> build |> to_absolute_filename)
       in
+      let url = Printf.sprintf "file://%s" absolute_toplevel_index_path in
       let cmd =
-        Printf.sprintf "xdg-open file://%s" absolute_toplevel_index_path
+        let path = Env_path.path Env.initial in
+        match Bin.which ~path "xdg-open" with
+        | Some p -> Some (p, [url])
+        | None ->
+          match Bin.which ~path "open" with
+          | Some p -> Some (p, ["-u";url])
+          | None -> None
       in
-      let _i = Sys.command cmd in
-      ()
+      match cmd with
+      | Some (cmd, args) ->
+        Proc.restore_cwd_and_execve (Path.to_absolute_filename cmd) args ~env:Env.initial
+      | None -> Printf.printf "Docs built. Index can be found here: %s\n" absolute_toplevel_index_path
     in
-
     run_build_command ~common ~config ~request
   in
   Cmd.v info term
