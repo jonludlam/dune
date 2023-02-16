@@ -514,7 +514,7 @@ let parent_args ctx parent_opt =
       ; Hidden_deps odoc_file
       ]
 
-let odoc_include_flags ctx pkg requires =
+let odoc_include_flags ctx pkg requires indices =
   Resolve.args
     (let open Resolve.O in
     let+ libs = requires in
@@ -536,6 +536,10 @@ let odoc_include_flags ctx pkg requires =
       match pkg with
       | Some p -> Path.Set.add paths (Path.build (Paths.odocs ctx (Pkg p)))
       | None -> paths
+    in
+    let paths = List.fold_left indices ~init:paths ~f:(fun p index ->
+      let odoc_dir = Paths.odocs ctx (Index index) in
+      Path.Set.add p (Path.build odoc_dir))
     in
     Command.Args.S
       (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
@@ -573,7 +577,7 @@ let create_odoc ctx ~target ~source ~odocl_base ~is_index odoc_file =
               let odoc_file = odocl_base ++ "page-docs.odoc" in
               create_odoc ctx ~target ~source ~odocl_base ~is_index odoc_file *)
 
-let compile_module sctx ~artefact ~requires ~package ~module_deps ~parent_opt =
+let compile_module sctx ~artefact ~requires ~package ~module_deps ~parent_opt ~indices =
   let odoc_file = artefact.odoc_file in
   let open Memo.O in
   let cmti =
@@ -582,7 +586,7 @@ let compile_module sctx ~artefact ~requires ~package ~module_deps ~parent_opt =
     | Mld _ -> assert false
   in
   let ctx = Super_context.context sctx in
-  let iflags = Command.Args.memo (odoc_include_flags ctx package requires) in
+  let iflags = Command.Args.memo (odoc_include_flags ctx package requires indices) in
   let file_deps = Dep.deps ctx package requires in
   let parent_args = parent_args ctx parent_opt in
   let+ () =
@@ -616,12 +620,13 @@ let compile_mld sctx (m : Mld.t) ~doc_dir ~parent_opt ~children =
   let open Memo.O in
   let ctx = Super_context.context sctx in
   let odoc_file = Mld.odoc_file ctx m in
-  Log.info
-    [ Pp.textf "compile_mld: output_file: %s" (Path.Build.to_string odoc_file) ];
   let odoc_input = Mld.odoc_input m in
+  Log.info
+    [ Pp.textf "compile_mld: output_file: %s" (Path.Build.to_string odoc_file);
+     Pp.textf "odoc_input: %s" (Path.Build.to_string odoc_input) ];
   let parent_args =
     match parent_opt with
-    | None -> parent_args ctx (Some (Mld.create ctx (Index Toplevel)))
+    | None -> []
     | _ -> parent_args ctx parent_opt
   in
   let child_args =
@@ -641,9 +646,16 @@ let compile_mld sctx (m : Mld.t) ~doc_dir ~parent_opt ~children =
   let+ () = add_rule sctx run_odoc in
   odoc_file
 
-let link_odoc_rules sctx (artefact : odoc_artefact) ~package ~requires =
+let index_dep ctx index =
+  let mld = Mld.create ctx (Index index) in
+  let odoc_file = Mld.odoc_file ctx mld in
+  odoc_file |> Path.build |> Dune_engine.Dep.file
+  |> Dune_engine.Dep.Set.singleton
+
+  let link_odoc_rules sctx (artefact : odoc_artefact) ~package ~requires ~indices =
   let ctx = Super_context.context sctx in
   let deps = Dep.deps ctx package requires in
+  let index_deps = List.map ~f:(fun x -> Command.Args.Hidden_deps (index_dep ctx x)) indices in
   Log.info
     [ Pp.textf "NFT: Link rules for %s"
         (Path.Build.to_string artefact.odocl_file)
@@ -653,13 +665,13 @@ let link_odoc_rules sctx (artefact : odoc_artefact) ~package ~requires =
     run_odoc sctx
       ~dir:(Path.parent_exn (Path.build artefact.odocl_file))
       "link" ~flags_for:(Some artefact.odoc_file)
-      [ odoc_include_flags ctx package requires
+      (index_deps @ [ odoc_include_flags ctx package requires indices
       ; A "-o"
       ; Target artefact.odocl_file
       ; A "-I"
       ; A "."
       ; Dep (Path.build artefact.odoc_file)
-      ]
+      ])
   in
   add_rule sctx
     (let open Action_builder.With_targets.O in
@@ -707,7 +719,7 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
         let parent_opt = if visible then Some parent else None in
         let compiled =
           compile_module sctx ~artefact ~requires ~package ~module_deps
-            ~parent_opt
+            ~parent_opt ~indices:[]
         in
         compiled :: acc)
   in
@@ -901,7 +913,7 @@ let setup_lib_odocl_rules_def =
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let package = Lib_info.package (Lib.Local.info lib) in
     Memo.parallel_iter odocs ~f:(fun odoc ->
-        link_odoc_rules sctx ~package ~requires odoc)
+        link_odoc_rules sctx ~package ~requires odoc ~indices:[])
   in
   Memo.With_implicit_output.create "setup_library_odocls_rules"
     ~implicit_output:Rules.implicit_output
@@ -951,7 +963,7 @@ let setup_pkg_odocl_rules_def =
       let package = Some pkg in
       let+ () =
         Memo.parallel_iter pkg_odocs ~f:(fun odoc ->
-            link_odoc_rules sctx ~package ~requires odoc)
+            link_odoc_rules sctx ~package ~requires odoc ~indices:[])
       in
       pkg_odocs
     and* _ =
@@ -1255,7 +1267,7 @@ let setup_pkg_index_rules sctx pkg =
     let children = Page "__dummy__" :: children in
     compile_mld sctx mld
       ~doc_dir:(Path.Build.parent_exn index_path)
-      ~parent_opt:None ~children
+      ~parent_opt:(Some (Mld.create ctx (Index Toplevel))) ~children
   in
 
   let* _ =
@@ -1270,7 +1282,7 @@ let setup_pkg_index_rules sctx pkg =
            ~source:(Mld (Path.build index_path))
     in
     link_odoc_rules sctx index ~package:(Some pkg)
-      ~requires:(Resolve.return requires)
+      ~requires:(Resolve.return requires) ~indices:[]
   in
 
   Memo.return ()
@@ -1375,7 +1387,7 @@ let setup_fallback_index_rules sctx dir =
     let* _ =
       compile_mld sctx mld
         ~doc_dir:(Path.Build.parent_exn index_path)
-        ~parent_opt:None ~children
+        ~parent_opt:(Some (Mld.create ctx (Index Toplevel))) ~children
     in
 
     let* _ =
@@ -1387,7 +1399,7 @@ let setup_fallback_index_rules sctx dir =
              ~is_index:true ~odocl_base
              ~source:(Mld (Path.build index_path))
       in
-      link_odoc_rules sctx index ~package:None ~requires:f.requires
+      link_odoc_rules sctx index ~package:None ~requires:f.requires ~indices:[]
     in
 
     Memo.return ()
@@ -1462,7 +1474,7 @@ let setup_external_index_rules sctx pkg =
 
       compile_mld sctx mld
         ~doc_dir:(Path.Build.parent_exn index_path)
-        ~parent_opt:None ~children
+        ~parent_opt:(Some (Mld.create ctx (Index Toplevel))) ~children
     in
 
     let* _ =
@@ -1501,7 +1513,7 @@ let setup_external_index_rules sctx pkg =
         |> create_odoc ctx ~target:(Index target) ~is_index:true ~odocl_base
              ~source:(Mld (Path.build index_path))
       in
-      link_odoc_rules sctx index ~package:None ~requires
+      link_odoc_rules sctx index ~package:None ~requires ~indices:[]
     in
 
     Memo.return ()
@@ -1557,7 +1569,7 @@ let compile_external_odoc artefact sctx lib_module_names parent requires =
     in
     let* odoc_file =
       compile_module sctx ~artefact ~requires ~module_deps ~parent_opt:parent
-        ~package:None
+        ~package:None ~indices:[]
     in
     Log.info
       [ Pp.textf "About to add rule for %s" (Path.Build.to_string odoc_file) ];
@@ -1592,8 +1604,8 @@ let fallback_external_rules sctx local_dir libs subdirs all_requires =
              (List.map ~f:(fun (x, _) -> Lib_name.to_string x) libs))
       ];
     let ctx = Super_context.context sctx in
-    let target = ExternalFallback local_dir in
-    let parent = Mld.create ctx (Index target) in
+    let index = ExternalFallback local_dir in
+    let parent = Mld.create ctx (Index index) in
     let target = ExtLib local_dir in
     let cmti_paths =
       List.map ~f:(fun path -> Path.relative path local_dir) ctx.findlib_paths
@@ -1633,7 +1645,7 @@ let fallback_external_rules sctx local_dir libs subdirs all_requires =
     let* _ =
       Memo.List.iter artefacts ~f:(fun artefact ->
           let+ () =
-            link_odoc_rules sctx artefact ~package:None ~requires:all_requires
+            link_odoc_rules sctx artefact ~package:None ~requires:all_requires ~indices:[]
           in
           ())
     in
@@ -1697,7 +1709,7 @@ let singleton_external_rules sctx dwm =
   let* _ =
     Memo.List.iter artefacts ~f:(fun artefact ->
         let+ () =
-          link_odoc_rules sctx artefact ~package:None ~requires:dwm.requires
+          link_odoc_rules sctx artefact ~package:None ~requires:dwm.requires ~indices:[]
         in
         ())
   in
@@ -1854,10 +1866,6 @@ let toplevel_index_contents _sctx packages cs =
 let setup_main_index_rules sctx =
   let* packages = Only_packages.get () in
   let ctx = Super_context.context sctx in
-  let mld = Paths.docs_mld ctx in
-  let dir = Path.Build.parent_exn mld in
-  let odoc = dir ++ "page-docs.odoc" in
-  let odocl = dir ++ "page-docs.odocl" in
   (* let index = Mld.create ()
      Mld.odoc_file ctx index
      |> create_odoc ctx ~target:(Pkg pkg) ~is_index:true ~odocl_base
@@ -1914,94 +1922,48 @@ let setup_main_index_rules sctx =
   in
   let contents = toplevel_index_contents sctx packages cs in
 
-  let link_args =
-    List.fold_left
-      ~f:(fun acc (d, c) ->
-        let dep_odoc =
-          match c with
-          | Dune_with_modules _ ->
-            Mld.(
-              create ctx
-                (Index (ExternalDunePackage (Package.Name.of_string d))))
-          | Fallback _ -> Mld.(create ctx (Index (ExternalFallback d)))
+  let ext_indices =
+    List.map
+      ~f:(fun(d, c) ->
+        match c with
+          | Dune_with_modules _ -> ExternalDunePackage (Package.Name.of_string d)
+          | Fallback _ -> ExternalFallback d
           | Nothing -> failwith "bah"
-        in
-        let odoc_file = Mld.odoc_file ctx dep_odoc in
-        let dep =
-          odoc_file |> Path.build |> Dune_engine.Dep.file
-          |> Dune_engine.Dep.Set.singleton
-        in
-        let path =
-          match c with
-          | Dune_with_modules _ -> "_index_external"
-          | Fallback _ -> "_index_fallback"
-          | Nothing -> "_none_"
-        in
-        Command.Args.A "-I"
-        :: A ("../" ^ path ^ "/" ^ d)
-        :: Hidden_deps dep :: acc)
-      ~init:[] cs
+       )
+      cs
   in
 
-  let pkg_link_args =
-    Package.Name.Map.foldi packages ~init:link_args ~f:(fun name _ acc ->
-        let dep_odoc = Mld.(create ctx (Index (LocalPackage name))) in
-        let odoc_file = Mld.odoc_file ctx dep_odoc in
-        let dep =
-          odoc_file |> Path.build |> Dune_engine.Dep.file
-          |> Dune_engine.Dep.Set.singleton
-        in
-
-        Command.Args.A "-I"
-        :: A ("../_index_pages/" ^ Package.Name.to_string name)
-        :: Hidden_deps dep :: acc)
+  let local_indices =
+    Package.Name.Map.keys packages |> List.map ~f:(fun name ->
+        LocalPackage name)
   in
 
-  let children_args =
-    List.fold_left
-      ~f:(fun acc (d, _c) ->
-        Command.Args.A "--child" :: A ("page-\"" ^ d ^ "\"") :: acc)
-      ~init:[] cs
+  let children1 =
+    List.map ~f:(fun (d, _c) -> Page d) cs in
+  let children2 =
+    Package.Name.Map.keys packages |> List.map ~f:(fun p -> Page (Package.Name.to_string p))
   in
-  let children_args =
-    Package.Name.Map.foldi packages ~init:children_args ~f:(fun name _ acc ->
-        Command.Args.A "--child"
-        :: A ("page-\"" ^ Package.Name.to_string name ^ "\"")
-        :: acc)
+  let children =
+     match (children1 @ children2) with
+    | [] -> [Page "dummy"]
+    | x -> x
   in
-  let children_args =
-    match children_args with
-    | [] ->
-      Log.info
-        [ Pp.textf "FGH: Adding dummy child arg for mld: %s"
-            (Path.Build.to_string mld)
-        ];
-      [ Command.Args.A "--child"; A "page-dummy" ]
-    | x ->
-      Log.info
-        [ Pp.textf "FGH: No dummy child arg for mld: %s"
-            (Path.Build.to_string mld)
-        ];
 
-      x
+  let mld = Mld.create ctx (Index Toplevel) in
+  let f = Mld.odoc_input mld in
+  let* () = add_rule sctx (Action_builder.write_file f contents) in
+  let* _ = compile_mld sctx mld ~doc_dir:(Path.Build.parent_exn f) ~parent_opt:None ~children in
+  let mld = Paths.docs_mld ctx in
+  let dir = Path.Build.parent_exn mld in
+  let odoc = dir ++ "page-docs.odoc" in
+  let artefact =
+    create_odoc ctx ~target:(Index Toplevel)
+      ~source:(Mld (Path.build mld))
+      ~odocl_base:dir ~is_index:true odoc
   in
-  let target_arg f = Command.Args.[ A "-o"; Target f ] in
-
-  let* () = add_rule sctx (Action_builder.write_file mld contents) in
-  let* command =
-    run_odoc sctx
-      ~dir:(Path.build (Path.Build.parent_exn mld))
-      "compile" ~flags_for:None
-      Command.Args.((Dep (Path.build mld) :: target_arg odoc) @ children_args)
+  let* _ =
+    link_odoc_rules sctx artefact ~package:None ~requires:(Resolve.return []) ~indices:(local_indices @ ext_indices)
   in
-  let* () = add_rule sctx command in
-  let* command =
-    run_odoc sctx
-      ~dir:(Path.build (Path.Build.parent_exn mld))
-      "link" ~flags_for:None
-      Command.Args.((Dep (Path.build odoc) :: target_arg odocl) @ pkg_link_args)
-  in
-  let* () = add_rule sctx command in
   Memo.return ()
 
 let with_package pkg ~f =
