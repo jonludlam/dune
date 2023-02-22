@@ -927,7 +927,8 @@ let odoc_artefacts sctx target =
            Mld.create ctx (PkgPage (pkg, mld))
            |> Mld.odoc_file ctx
            |> create_odoc ctx ~odocl_base ~target ~source:(Mld (Path.build mld)))
-  | LocalPackage (_pkg, Some lib) ->
+  | LocalPackage (_, Some lib)
+  | PrivateLib (_, lib) ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
     let+ modules = entry_modules_by_lib sctx lib in
@@ -1056,9 +1057,11 @@ let setup_lib_html_rules_def =
       | Some pkg -> LocalPackage (pkg, Some lib)
       | None -> PrivateLib (lib_unique_name lib, lib)
     in
+    Log.info [Pp.textf "setup_lib_html_rules: lnu=%s" (lib_unique_name lib)];
     let* odocs = odoc_artefacts sctx target in
     let* () = Memo.parallel_iter odocs ~f:(fun odoc -> setup_html sctx odoc) in
     let html_files = List.map ~f:(fun o -> Path.build o.html_file) odocs in
+    (match html_files with | [] -> () | x::_ -> Log.info [Pp.textf "setup_lib_html_rules: html_file %s" (Path.to_string x)]);
     let static_html = List.map ~f:Path.build (static_html ctx) in
     let* requires = Lib.requires (Lib.Local.to_lib lib) in
     let* requires = Resolve.read_memo requires in
@@ -1285,7 +1288,8 @@ let setup_lnu_index_rules sctx lnu =
       compile_mld sctx
         (Mld.create ctx (Index index))
         ~doc_dir:(Path.Build.parent_exn index_path)
-        ~parent_opt:None ~children
+        ~parent_opt:(Some (Mld.create ctx (Index Toplevel)))
+        ~children
     in
     Memo.return ()
 
@@ -2173,6 +2177,7 @@ let gen_rules sctx ~dir rest =
       ((* TODO we can be a better with the error handling in the case where
           lib_unique_name_or_pkg is neither a valid pkg or lnu *)
        let ctx = Super_context.context sctx in
+       Log.info [Pp.textf "lib_unique_name_or_pkg: %s" lib_unique_name_or_pkg];
        let* lib, lib_db = Scope_key.of_string ctx lib_unique_name_or_pkg in
        let setup_pkg_html_rules pkg =
          let* pkg_libs = libs_of_pkg (Super_context.context sctx) ~pkg in
