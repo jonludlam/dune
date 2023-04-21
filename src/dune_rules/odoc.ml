@@ -4,6 +4,93 @@ open Memo.O
 
 let ( ++ ) = Path.Build.relative
 
+let best_effort_closure ctx (l : Lib.t list) : Lib.t list Memo.t =
+  (* [add_work todo l] adds the libraries in [l] to the list [todo],
+     that contains the libraries to handle next *)
+  let open Memo.O in
+  let add_work todo l = if List.is_empty l then todo else l :: todo in
+  (* [register_work todo l] reads the list of libraries [l] and adds
+     them to the todo list [todo] *)
+  let register_work (todo : Lib.t list list) libs fn =
+    Memo.List.fold_left libs ~f:(fun todo lib ->
+      let info = Lib.info lib in
+      let* l = fn info in
+      let+ l = Resolve.read_memo l in
+      List.iter ~f:(fun l -> Log.info [Pp.textf "for %s register_work: %s" (Lib_name.to_string (Lib_info.name info)) (Lib_name.to_string (Lib.name l))]) l;
+      add_work todo l) ~init:todo
+  in
+
+  let* findlib =
+    Findlib.create ~paths:ctx.Context.findlib_paths ~lib_config:ctx.lib_config
+  in
+
+  let* public_libs = Scope.DB.public_libs ctx in
+
+  (* [work todo acc] adds the transitive-reflexive closure of the
+     libraries that are contained in the todo list [todo] and are not
+     in the set of libraries [acc] to the initial set of libraries
+     [acc] *)
+  let rec work (todo : Lib.t list list) (acc : Lib.Set.t) =
+    match todo with
+    | [] -> Memo.return acc
+    | [] :: todo -> work todo acc
+    | (lib :: libs) :: todo ->
+      if Lib.Set.mem acc lib then work (add_work todo libs) acc
+      else
+        let todo = add_work todo libs
+        and acc = Lib.Set.add acc lib in
+        let pkg = Lib.info lib |> Lib_info.package in
+        let* new_libs =
+          match pkg with
+          | None -> Memo.return [lib]
+          | Some pkg ->
+            let* pkg_opt = Findlib.find_root_package findlib pkg in
+            match pkg_opt with
+            | Ok { entries; _ } ->
+                let names =
+                  List.filter_map (Lib_name.Map.to_list entries) 
+                    ~f:(function
+                    | (_, Library l) ->
+                      let info = Dune_package.Lib.info l in
+                      let deps = Lib_info.requires info in
+                      let lib_names = List.filter_map deps ~f:(function | Direct (_, l) -> Some l | _ -> None) in
+                      Some lib_names
+                    | _ -> None) |> List.flatten in
+                let+ libs = Memo.List.filter_map ~f:(Lib.DB.find public_libs) names in
+                lib::libs
+            | _ -> Memo.return [lib]
+        in
+        let get_work requires =
+          let+ requires =
+            requires
+            |> List.map ~f:(function dep ->
+                   Lib.DB.resolve_when_exists public_libs dep)
+            |> Memo.all
+          in
+          List.filter_map ~f:(fun x -> x) requires |> Resolve.all
+        in
+        let normal_requires info =
+          get_work
+            (Lib_info.requires info
+            |> List.filter_map ~f:(function
+                 | Lib_dep.Direct dep -> Some dep
+                 | _ -> None))
+        in
+        let ppx_requires info =
+          get_work
+            (Lib_info.ppx_runtime_deps info
+            |> List.map ~f:(fun (_, n) -> (Loc.none, n)))
+        in
+        let* todo = register_work todo new_libs normal_requires in
+        let* todo = register_work todo new_libs ppx_requires in
+
+        work todo acc
+  in
+  (* we compute the transitive closure *)
+  let+ trans_closure = work [ l ] Lib.Set.empty in
+  (* and then convert it to a list *)
+  Lib.Set.to_list trans_closure
+
 let find_project_by_key =
   let memo =
     let make_map projects =
@@ -310,11 +397,23 @@ let classify_local_dir ctx local_dir =
                 ((Loc.none, Lib_name.of_string "stdlib") :: requires)
               |> Resolve.Memo.all
             in
+            let* requires =
+              let* libs = Resolve.read_memo requires in
+              Lib.descriptive_closure libs
+            in
+            let requires = Resolve.return requires in
             let* resolved_lib =
               Lib.DB.resolve public_libs (Loc.none, Lib_info.name info)
             in
-            let+ lib = Resolve.read_memo resolved_lib in
+            let* lib = Resolve.read_memo resolved_lib in
             let package = Lib_info.package info |> Option.value_exn in
+            Log.info [Pp.textf "Package: %s\ndeps:\n" (Package.Name.to_string package)];
+            let+ () =
+              let* deps = Resolve.read_memo requires in
+              List.iter ~f:(fun dep -> 
+                Log.info [Pp.textf "%s" (Lib.name dep |> Lib_name.to_string)]) deps;
+              Memo.return ()              
+            in
             { local_dir
             ; lib_name
             ; dune_package_lib
@@ -1048,21 +1147,30 @@ let setup_lib_html_rules_def =
     in
     Log.info [Pp.textf "setup_lib_html_rules: lnu=%s" (lib_unique_name lib)];
     let* odocs = odoc_artefacts sctx target in
+    let odocs = match target with
+    | PrivateLib _ ->
+      (* No package, therefore we have to make the private library index page here *)
+      let index = create_index_odoc ctx (PerTarget target) in
+    index :: odocs
+    | _ -> odocs in 
+
     let* () = Memo.parallel_iter odocs ~f:(fun odoc -> setup_html sctx odoc) in
     let html_files = List.map ~f:(fun o -> Path.build o.html_file) odocs in
     (match html_files with | [] -> () | x::_ -> Log.info [Pp.textf "setup_lib_html_rules: html_file %s" (Path.to_string x)]);
     let static_html = List.map ~f:Path.build (static_html ctx) in
-    let* requires = Lib.requires (Lib.Local.to_lib lib) in
-    let* requires = Resolve.read_memo requires in
+    let* requires = best_effort_closure ctx [Lib.Local.to_lib lib] in
+    Log.info [Pp.textf "setup_lib_html_rules: lnu=%s requires length=%d" (lib_unique_name lib) (List.length requires)];
+
     let html_requires =
-      List.filter_map requires ~f:(fun lib ->
-          match Lib.Local.of_lib lib with
+      List.filter_map requires ~f:(fun lib' ->
+          Log.info [Pp.textf "setup_lib_html_rules: lnu=%s checking %s" (lib_unique_name lib) (Lib.name lib' |> Lib_name.to_string)];
+          match Lib.Local.of_lib lib' with
           | None ->
-            let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.obj_dir in
+            let obj_dir = Lib.info lib' |> Lib_info.obj_dir |> Obj_dir.obj_dir in
             let local_path = Paths.local_path_of_findlib_path ctx obj_dir in
             Log.info
               [ Pp.textf "XXY: lib %s depends on extlib %s"
-                  (Lib_name.to_string (Lib.name lib))
+                  (Lib_name.to_string (Lib.Local.to_lib lib |> Lib.name))
                   local_path
               ];
             (* We don't need to distinguish between Dune_with_modules and fallback here
@@ -1247,7 +1355,7 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Dune_file.Library.t) =
     Log.info
       [ Pp.textf "setup_private_library_doc_alias: %s" (lib_unique_name lib) ];
     let target = PrivateLib (lib_unique_name lib, lib) in
-    Rules.Produce.Alias.add_deps (Alias.private_doc ~dir)
+    Rules.Produce.Alias.add_deps (Alias.doc ~dir)
       (target |> Dep.html_alias ctx |> Dune_engine.Dep.alias
      |> Action_builder.dep)
 
@@ -1280,66 +1388,17 @@ let setup_lnu_index_rules sctx lnu =
         ~parent_opt:(Some (Mld.create ctx (Index Toplevel)))
         ~children
     in
+
+    let* _ =
+      let libs = [l] in
+      let* requires = best_effort_closure ctx (libs :> Lib.t list) in
+      let index = create_index_odoc ctx index in
+      link_odoc_rules sctx index ~package:None
+        ~requires:(Resolve.return requires) ~indices:[]
+    in
+
     Memo.return ()
 
-let best_effort_closure ctx (l : Lib.t list) : Lib.t list Memo.t =
-  (* [add_work todo l] adds the libraries in [l] to the list [todo],
-     that contains the libraries to handle next *)
-  let open Memo.O in
-  let add_work todo l = if List.is_empty l then todo else l :: todo in
-  (* [register_work todo l] reads the list of libraries [l] and adds
-     them to the todo list [todo] *)
-  let register_work todo l =
-    let+ l = Resolve.read_memo l in
-    add_work todo l
-  in
-
-  let* public_libs = Scope.DB.public_libs ctx in
-
-  (* [work todo acc] adds the transitive-reflexive closure of the
-     libraries that are contained in the todo list [todo] and are not
-     in the set of libraries [acc] to the initial set of libraries
-     [acc] *)
-  let rec work (todo : Lib.t list list) (acc : Lib.Set.t) =
-    match todo with
-    | [] -> Memo.return acc
-    | [] :: todo -> work todo acc
-    | (lib :: libs) :: todo ->
-      if Lib.Set.mem acc lib then work (add_work todo libs) acc
-      else
-        let todo = add_work todo libs
-        and acc = Lib.Set.add acc lib in
-        let info = Lib.info lib in
-        let get_work requires =
-          let+ requires =
-            requires
-            |> List.map ~f:(function dep ->
-                   Lib.DB.resolve_when_exists public_libs dep)
-            |> Memo.all
-          in
-          List.filter_map ~f:(fun x -> x) requires |> Resolve.all
-        in
-        let* normal_requires =
-          get_work
-            (Lib_info.requires info
-            |> List.filter_map ~f:(function
-                 | Lib_dep.Direct dep -> Some dep
-                 | _ -> None))
-        in
-        let* ppx_requires =
-          get_work
-            (Lib_info.ppx_runtime_deps info
-            |> List.map ~f:(fun (_, n) -> (Loc.none, n)))
-        in
-        let* todo = register_work todo normal_requires in
-        let* todo = register_work todo ppx_requires in
-
-        work todo acc
-  in
-  (* we compute the transitive closure *)
-  let+ trans_closure = work [ l ] Lib.Set.empty in
-  (* and then convert it to a list *)
-  Lib.Set.to_list trans_closure
 
 let setup_pkg_index_rules sctx pkg =
   let pkg = Package.name pkg in
@@ -1735,9 +1794,13 @@ let fallback_external_rules sctx local_dir libs subdirs all_requires =
       let open Resolve.O in
       let+ requires = all_requires in
       let cur_libs = List.map ~f:fst libs in
-      List.filter
+      let result = List.filter
         ~f:(fun x -> not (List.mem cur_libs (Lib.name x) ~equal:Lib_name.equal))
-        requires
+        requires in
+      Log.info [Pp.textf "Requires from directory: %s" local_dir];
+      List.iter ~f:(fun l ->
+        Log.info [Pp.textf "lib: %s" (Lib_name.to_string (Lib_info.name (Lib.info l)))]) result;
+      result
     in
     let* () =
       Memo.List.iter artefacts ~f:(fun artefact ->
@@ -1965,6 +2028,8 @@ let toplevel_index_contents _sctx packages cs pis =
     pis;
   Buffer.contents b
 
+(* type libty = LTPublic | LTPrivate of (Dune_project.t * Scope.t) *)
+
 let setup_main_index_rules sctx =
   let* packages = Only_packages.get () in
   let ctx = Super_context.context sctx in
@@ -1978,6 +2043,7 @@ let setup_main_index_rules sctx =
     Scope.DB.with_all ctx ~f:(fun find ->
         Memo.List.fold_left ~init:Lib.Set.empty
           ~f:(fun acc proj ->
+            Log.info [Pp.textf "Processing project %s" (Dune_project.name proj |> Dune_project.Name.to_string_hum)];
             let scope = find proj in
             let lib_db = Scope.libs scope in
             let+ libs = Lib.DB.all lib_db in
@@ -1985,6 +2051,9 @@ let setup_main_index_rules sctx =
           projects)
   in
   let* libs = libs in
+
+  Log.info [Pp.textf "libs:"];
+  Lib.Set.iter libs ~f:(fun lib -> Log.info [Pp.textf "%s" (Lib_name.to_string (Lib.name lib))]);
   (* let libs =
      Scope.DB.with_all ctx ~f:(fun () *)
   let* libs_list = best_effort_closure ctx (Lib.Set.to_list libs) in
@@ -2094,6 +2163,7 @@ let with_package pkg ~f =
   | Some pkg -> has_rules (f pkg)
 
 let gen_rules sctx ~dir:_ rest =
+  Log.info [Pp.textf "gen_rules: rest=[%s]" (String.concat ~sep:"," rest)];
   match rest with
   | [] ->
     Memo.return
