@@ -52,10 +52,8 @@ let best_effort_closure ctx (l : Lib.t list) : Lib.t list Memo.t =
                     ~f:(function
                     | (_, Library l) ->
                       let info = Dune_package.Lib.info l in
-                      let deps = Lib_info.requires info in
-                      let lib_names = List.filter_map deps ~f:(function | Direct (_, l) -> Some l | _ -> None) in
-                      Some lib_names
-                    | _ -> None) |> List.flatten in
+                      Some (Lib_info.name info)
+                    | _ -> None) in
                 let+ libs = Memo.List.filter_map ~f:(Lib.DB.find public_libs) names in
                 lib::libs
             | _ -> Memo.return [lib]
@@ -400,7 +398,7 @@ let classify_local_dir ctx local_dir =
             in
             let* requires =
               let* libs = Resolve.read_memo requires in
-              Lib.descriptive_closure ~with_pps:true libs
+              Lib.descriptive_closure ~with_pps:false libs
             in
             let requires = Resolve.return requires in
             let* resolved_lib =
@@ -856,31 +854,33 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let modules = Compilation_context.modules cctx in
   let modules_and_odoc_files =
     Modules.fold_no_vlib modules ~init:[] ~f:(fun m acc ->
-        let entry_modules = Modules.entry_modules modules in
-        let visible =
-          List.mem entry_modules m ~equal:(fun m1 m2 ->
-              Module_name.equal (Module.name m1) (Module.name m2))
-        in
-        let module_deps =
-          module_deps m ~obj_dir
-            ~dep_graphs:(Compilation_context.dep_graphs cctx)
-        in
+        try
+          let entry_modules = Modules.entry_modules modules in
+          let visible =
+            List.mem entry_modules m ~equal:(fun m1 m2 ->
+                Module_name.equal (Module.name m1) (Module.name m2))
+          in
+          let module_deps =
+            module_deps m ~obj_dir
+              ~dep_graphs:(Compilation_context.dep_graphs cctx)
+          in
 
-        let odocl_base = Paths.odocl ctx target in
-        let odoc_file = Obj_dir.Module.odoc obj_dir m in
-        let cmti_file =
-          Obj_dir.Module.cmti_file obj_dir ~cm_kind:(Ocaml Cmi) m
-        in
-        let artefact =
-          create_odoc ctx ~target ~odocl_base odoc_file
-            ~source:(Module (Path.build cmti_file, visible))
-        in
-        let parent_opt = if visible then Some parent else None in
-        let compiled =
-          compile_module sctx ~artefact ~requires ~package ~module_deps
-            ~parent_opt ~indices:[]
-        in
-        compiled :: acc)
+          let odocl_base = Paths.odocl ctx target in
+          let odoc_file = Obj_dir.Module.odoc obj_dir m in
+          let cmti_file =
+            Obj_dir.Module.cmti_file obj_dir ~cm_kind:(Ocaml Cmi) m
+          in
+          let artefact =
+            create_odoc ctx ~target ~odocl_base odoc_file
+              ~source:(Module (Path.build cmti_file, visible))
+          in
+          let parent_opt = if visible then Some parent else None in
+          let compiled =
+            compile_module sctx ~artefact ~requires ~package ~module_deps
+              ~parent_opt ~indices:[]
+          in
+          compiled :: acc
+        with _ -> acc)
   in
   let* modules_and_odoc_files = Memo.all_concurrently modules_and_odoc_files in
 
@@ -1976,7 +1976,16 @@ let setup_external_html_rules sctx local_dir =
   let html_requires =
     List.filter_map requires ~f:(fun l ->
         let obj_dir = Lib.info l |> Lib_info.obj_dir |> Obj_dir.dir in
-        let local = Paths.local_path_of_findlib_path ctx obj_dir in
+        let local_opt =
+          try 
+            Some (Paths.local_path_of_findlib_path ctx obj_dir)
+          with _ ->
+            Log.info [Pp.textf "Well this is odd, external %s seems to depend upon internal %s" local_dir (Path.to_string obj_dir)];
+            None
+        in
+        match local_opt with
+        | None -> None
+        | Some local ->
         let pkgpath = String.split ~on:'/' local |> List.hd in
         if pkgpath = local_dir then None
         else (
