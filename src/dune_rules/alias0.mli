@@ -8,6 +8,7 @@ val fmt : Name.t
 val doc : Name.t
 val lint : Name.t
 val private_doc : Name.t
+val doc_new : Name.t
 val check : Name.t
 val install : Name.t
 val runtest : Name.t

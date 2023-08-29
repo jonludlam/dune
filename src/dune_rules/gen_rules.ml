@@ -342,6 +342,7 @@ let gen_project_rules sctx project : unit Memo.t =
   let+ () = Opam_create.add_rules sctx project
   and+ () = Install_rules.gen_project_rules sctx project
   and+ () = Odoc.gen_project_rules sctx project
+  and+ () = Odoc_new.gen_project_rules sctx project
   and+ () =
     let version = 2, 8 in
     match Dune_project.allow_approximate_merlin project with
@@ -705,6 +706,7 @@ let gen_rules ~sctx ~dir components : Gen_rules.result Memo.t =
            ignored. *)
         Jsoo_rules.setup_separate_compilation_rules sctx rest)
   | "_doc" :: rest -> Odoc.gen_rules sctx rest ~dir
+  | "_doc_new" :: rest -> Odoc_new.gen_rules sctx rest ~dir
   | ".topmod" :: comps ->
     has_rules
       ~dir
