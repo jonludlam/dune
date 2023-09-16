@@ -671,25 +671,28 @@ end = struct
       mld_files source Mld true
 end
 
-let odoc_base_flags sctx build_dir =
+let odoc_base_flags sctx quiet build_dir =
   let open Memo.O in
   let+ conf = Super_context.env_node sctx ~dir:build_dir >>= Env_node.odoc  in
   match conf.Env_node.Odoc.warnings with
-  | Fatal -> Command.Args.A "--warn-error"
+  | Fatal ->
+    (* if quiet has been passed, we're running odoc on an external
+       artifact (e.g. stdlib.cmti) - so no point in warn-error *)
+    if quiet then Command.Args.S [] else A "--warn-error"
   | Nonfatal -> S []
 
 let odoc_program sctx dir =
   Super_context.resolve_program sctx ~dir "odoc" ~loc:None
     ~hint:"opam install odoc"
 
-let run_odoc sctx ~dir command ~flags_for args =
+let run_odoc sctx ~dir command ~quiet ~flags_for args =
   let build_dir = (Super_context.context sctx).build_dir in
   let open Memo.O in
   let* program = odoc_program sctx build_dir in
   let+ base_flags =
     match flags_for with
     | None -> Memo.return Command.Args.empty
-    | Some path -> odoc_base_flags sctx path
+    | Some path -> odoc_base_flags sctx quiet path
   in
   let deps = Action_builder.env_var "ODOC_SYNTAX" in
   let open Action_builder.With_targets.O in
@@ -773,7 +776,7 @@ let index_dep ctx all index =
   Artifact.odoc_file a |> Path.build |> Dune_engine.Dep.file
   |> Dune_engine.Dep.Set.singleton
 
-let compile_module sctx all ~artifact:a ~requires ~package ~module_deps
+let compile_module sctx all ~artifact:a ~quiet ~requires ~package ~module_deps
     ~parent_opt ~indices =
   let odoc_file = Artifact.odoc_file a in
   let open Memo.O in
@@ -782,6 +785,8 @@ let compile_module sctx all ~artifact:a ~requires ~package ~module_deps
   let iflags =
     Command.Args.memo (odoc_include_flags ctx all package requires indices)
   in
+  let quiet_arg =
+    if quiet then Command.Args.A "--print-warnings=false" else Command.Args.empty in
   let* valid_libs, _ = Valid.get ctx all in
   let file_deps = Dep.deps ctx all valid_libs package requires in
   let parent_args = parent_args parent_opt in
@@ -789,7 +794,7 @@ let compile_module sctx all ~artifact:a ~requires ~package ~module_deps
     let* action_with_targets =
       let doc_dir = Path.parent_exn (Path.build (Artifact.odoc_file a)) in
       let+ run_odoc =
-        run_odoc sctx ~dir:doc_dir "compile" ~flags_for:(Some odoc_file)
+        run_odoc sctx ~dir:doc_dir "compile" ~flags_for:(Some odoc_file) ~quiet
           ([ Command.Args.A "-I"
            ; Path doc_dir
            ; iflags
@@ -797,7 +802,7 @@ let compile_module sctx all ~artifact:a ~requires ~package ~module_deps
            ; Target odoc_file
            ; Dep cmti
            ]
-          @ parent_args)
+          @ parent_args @ [ quiet_arg ])
       in
       let open Action_builder.With_targets.O in
       Action_builder.with_no_targets file_deps
@@ -816,7 +821,7 @@ let compile_requires libs =
 
 let link_requires libs = Lib.closure libs ~linking:false
 
-let compile_mld sctx a ~doc_dir ~parent_opt ~is_index ~children =
+let compile_mld sctx a ~doc_dir ~parent_opt ~quiet ~is_index ~children =
   assert (Artifact.artifact_ty a = Artifact.Mld);
   let odoc_file = Artifact.odoc_file a in
   let odoc_input = Artifact.source_file a in
@@ -836,16 +841,19 @@ let compile_mld sctx a ~doc_dir ~parent_opt ~is_index ~children =
     else child_args
   in
 
+  let quiet_arg =
+    if quiet then Command.Args.A "--print-warnings=false" else Command.Args.empty in
+
   let* run_odoc =
     run_odoc sctx ~dir:(Path.build doc_dir) "compile"
-      ~flags_for:(Some odoc_file)
+      ~flags_for:(Some odoc_file) ~quiet
       (A "-o" :: Target odoc_file :: Dep odoc_input :: As child_args
-     :: parent_args)
+     :: quiet_arg :: parent_args )
   in
   let+ () = add_rule sctx run_odoc in
   odoc_file
 
-let link_odoc_rules sctx all (artifacts : Artifact.t list) ~package ~libs
+let link_odoc_rules sctx all (artifacts : Artifact.t list) ~quiet ~package ~libs
     ~indices =
   let ctx = Super_context.context sctx in
   let* requires = link_requires libs in
@@ -856,19 +864,22 @@ let link_odoc_rules sctx all (artifacts : Artifact.t list) ~package ~libs
       ~f:(fun x -> Command.Args.Hidden_deps (index_dep ctx all x))
       indices
   in
+  let quiet_arg =
+    if quiet then Command.Args.A "--print-warnings=false" else Command.Args.empty in
   let open Memo.O in
   Memo.List.iter artifacts ~f:(fun a ->
       let* run_odoc =
         run_odoc sctx
           ~dir:(Path.parent_exn (Path.build (Artifact.odocl_file a)))
           "link"
+          ~quiet
           ~flags_for:(Some (Artifact.odoc_file a))
           (index_deps
           @ [ odoc_include_flags ctx all package requires indices
             ; A "-o"
             ; Target (Artifact.odocl_file a)
             ; Dep (Path.build (Artifact.odoc_file a))
-            ])
+            ] @ [quiet_arg])
       in
       add_rule sctx
         (let open Action_builder.With_targets.O in
@@ -883,7 +894,7 @@ let html_generate sctx all (a : Artifact.t) =
     Path.reach (Path.build odoc_support_path) ~from:(Path.build html_output)
   in
   let* run_odoc =
-    run_odoc sctx ~dir:(Path.build html_output) "html-generate" ~flags_for:None
+    run_odoc sctx ~quiet:false ~dir:(Path.build html_output) "html-generate" ~flags_for:None
       [ A "-o"
       ; Path (Path.build html_output)
       ; A "--support-uri"
@@ -960,12 +971,12 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
           let compiled =
             let* c =
               compile_module sctx false ~artifact ~requires ~package
-                ~module_deps ~parent_opt ~indices:[]
+                ~quiet:false ~module_deps ~parent_opt ~indices:[]
             in
             let+ () =
               if visible then
                 link_odoc_rules sctx false [ artifact ] ~package
-                  ~libs:[ (local_lib :> Lib.t) ]
+                  ~libs:[ (local_lib :> Lib.t) ] ~quiet:false
                   ~indices:[]
               else Memo.return ()
             in
@@ -985,7 +996,7 @@ let setup_css_rule sctx all =
   let dir = Paths.odoc_support ctx all in
   let* run_odoc =
     let+ cmd =
-      run_odoc sctx ~dir:(Path.build ctx.build_dir) "support-files"
+      run_odoc sctx ~quiet:false ~dir:(Path.build ctx.build_dir) "support-files"
         ~flags_for:None
         [ A "-o"; Path (Path.build dir) ]
     in
@@ -1076,7 +1087,7 @@ let check_mlds_no_dupes ~pkg ~mlds =
   | Ok m -> m
   | Error (_, p1, p2) ->
     User_error.raise
-      [ Pp.textf "Package %s has two mld's with the same basename %s, %s"
+      [ Pp.textf "Package %s has two mld files with the same basename %s, %s"
           (Package.Name.to_string pkg)
           (Path.Build.to_string_maybe_quoted p1)
           (Path.Build.to_string_maybe_quoted p2)
@@ -1293,13 +1304,13 @@ let setup_package_odoc_rules sctx all ~pkg =
   in
   let* odocs =
     Memo.parallel_map artifacts ~f:(fun a ->
-        compile_mld sctx a ~parent_opt:(Some index)
+        compile_mld sctx a ~quiet:false ~parent_opt:(Some index)
           ~doc_dir:(Target.odocs_dir ctx all (Pkg pkg))
           ~is_index:false ~children:[])
   in
   let* () =
     link_odoc_rules sctx all ~package:(Some pkg)
-      ~libs:(libs :> Lib.t list)
+      ~libs:(libs :> Lib.t list) ~quiet:false
       ~indices:[] artifacts
   in
   let+ () =
@@ -1637,12 +1648,12 @@ let setup_toplevel_index_rules sctx all =
   let mld = create_index_odoc ctx all Toplevel in
   let* () = add_rule sctx (Action_builder.write_file f contents) in
   let* _ =
-    compile_mld sctx mld ~doc_dir:(Path.Build.parent_exn f) ~parent_opt:None
+    compile_mld sctx mld ~quiet:false ~doc_dir:(Path.Build.parent_exn f) ~parent_opt:None
       ~is_index:true ~children:artifacts
   in
   let artifact = create_index_odoc ctx all Toplevel in
   let* _ =
-    link_odoc_rules sctx all [ artifact ] ~package:None ~libs:[] ~indices:dts
+    link_odoc_rules sctx all [ artifact ] ~package:None ~libs:[] ~indices:dts ~quiet:false
   in
   Memo.return []
 
@@ -1665,12 +1676,12 @@ let general_index_rules sctx all package index index_content children libs =
   let mld = create_index_odoc ctx all index in
 
   let* _ =
-    compile_mld sctx mld
+    compile_mld sctx mld ~quiet:false
       ~doc_dir:(Path.Build.parent_exn index_path)
       ~parent_opt:(Some (create_index_odoc ctx all Toplevel))
       ~is_index:true ~children
   in
-  link_odoc_rules sctx all [ mld ] ~package ~libs ~indices:[]
+  link_odoc_rules sctx all [ mld ] ~package ~libs ~indices:[] ~quiet:false
 
 let setup_lnu_index_rules sctx all lnu =
   let ctx = Super_context.context sctx in
@@ -1793,7 +1804,7 @@ let external_module_deps_rule sctx all a =
     Memo.return (Some deps_file)
   | _ -> Memo.return None
 
-let compile_external_odocs sctx all artifacts parent libs =
+let compile_odocs sctx all ~quiet artifacts parent libs =
   let requires = compile_requires libs in
   let ctx = Super_context.context sctx in
   let* requires =
@@ -1832,14 +1843,14 @@ let compile_external_odocs sctx all artifacts parent libs =
         in
         let* _odoc_file =
           compile_module sctx all ~artifact:a ~requires ~module_deps
-            ~parent_opt ~package:None ~indices:[]
+            ~quiet ~parent_opt ~package:None ~indices:[]
         in
         Memo.return ())
 
-let artifact_rules sctx all artifacts libs parent package aliases =
+let artifact_rules sctx all ~quiet artifacts libs parent package aliases =
   let ctx = Super_context.context sctx in
-  let* () = compile_external_odocs sctx all artifacts parent libs in
-  let* () = link_odoc_rules sctx all artifacts ~package ~libs ~indices:[] in
+  let* () = compile_odocs sctx all ~quiet artifacts parent libs in
+  let* () = link_odoc_rules sctx all artifacts ~package ~libs ~indices:[] ~quiet in
   let all_deps =
     List.map ~f:(fun a -> Artifact.odoc_file a |> Path.build) artifacts
     |> Path.Set.of_list
@@ -1867,7 +1878,7 @@ let fallback_external_rules sctx local_dir fallback =
     let aliases =
       List.map artifacts ~f:(fun (dir, _, _) -> Target.ExtLib dir)
     in
-    artifact_rules sctx true all_artifacts all_libs parent None aliases
+    artifact_rules sctx true ~quiet:true all_artifacts all_libs parent None aliases
 
 let setup_internal_rules sctx lib_name =
   let ctx = Super_context.context sctx in
@@ -1891,7 +1902,7 @@ let setup_internal_rules sctx lib_name =
       create_index_odoc ctx true idx
     in
     let libs = [ (local_lib :> Lib.t) ] in
-    artifact_rules sctx true artifacts libs parent None [ Lib local_lib ]
+    artifact_rules sctx true ~quiet:false artifacts libs parent None [ Lib local_lib ]
 
 let singleton_external_rules sctx dwm =
   let ctx = Super_context.context sctx in
@@ -1904,7 +1915,7 @@ let singleton_external_rules sctx dwm =
   in
   let target = Target.ExtLib local_path in
   let artifacts = singleton_artifacts ctx dwm in
-  artifact_rules sctx true artifacts [ dwm.lib ] parent None [ target ]
+  artifact_rules sctx true ~quiet:true artifacts [ dwm.lib ] parent None [ target ]
 
 let setup_external_rules sctx local_dir =
   let* c = classify_local_dir (Super_context.context sctx) local_dir in
