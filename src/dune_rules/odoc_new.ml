@@ -403,6 +403,16 @@ let index_of_dwm dwm =
   | Private (pkg, n) ->
     ExternalDuneSubLib (ExternalDunePackage (Toplevel, pkg), Lib_name.Local.to_string n)
 
+let index_of_local_lib (lib : Lib.Local.t) =
+  let open Index in
+  match Lib_name.analyze (Lib.name (lib :> Lib.t)) with
+  | Public (pkg, rest) ->
+    Log.info [ Pp.textf "local: pkg=%s rest=[%s]" (Package.Name.to_string pkg) (String.concat ~sep:"," rest)];
+    List.fold_left ~f:(fun acc s -> LocalSubLib (acc, s)) rest
+      ~init:(LocalPackage (Toplevel, pkg))
+  | Private (_, _) ->
+    PrivateLib (Toplevel, lib_unique_name lib)
+
 module Valid = struct
   (* These functions return a whitelist of libraries and packages that
       should be documented. There is one single function that performs this
@@ -815,13 +825,7 @@ let odoc_include_flags ctx all pkg requires indices =
       (List.concat_map (Path.Set.to_list paths) ~f:(fun dir ->
            [ Command.Args.A "-I"; Path dir ])))
 
-let create_index_artifact ctx all index =
-  let x = Artifact.make ctx all (Index index) () in
-  Log.info [
-    let dyn = Index.to_dyn index in
-    Pp.textf "create_index_artifact: %s mld file=%s" (Dyn.to_string dyn) (Path.Build.to_string (Index.mld_path ctx all index))
-  ];
-  x
+(* Some utility functions to deal with sets of indexes *)
 
 let index_set_full indices = List.fold_left
   ~f:(fun acc x ->
@@ -847,6 +851,9 @@ let index_children index_set_full index =
       | LocalSubLib (p, _) when p=index ->
         idx::acc
       | _ -> acc)
+
+let create_index_artifact ctx all index =
+  Artifact.make ctx all (Index index) ()
 
 let index_child_artifacts ctx all index_set_full index =
   let children = index_children index_set_full index in
@@ -1307,7 +1314,7 @@ let singleton_artifacts ctx index dwm =
   in
   artifacts
 
-let ext_pkg_mld_artifacts ctx dir index pkg =
+let ext_pkg_mld_artifacts ctx dir pkg =
   let t = Target.ExtLib dir in
   let+ mlds = ext_package_mlds ctx pkg in
   let index_file, mlds =
@@ -1319,11 +1326,11 @@ let ext_pkg_mld_artifacts ctx dir index pkg =
     | _ -> None
   in
   let artifacts =
-    List.map mlds ~f:(fun m -> Artifact.make ctx true t (Mld (index, m)))
+    List.map mlds ~f:(fun m -> Artifact.make ctx true t (Mld (Index.ExternalDunePackage (Toplevel, pkg), m)))
   in
   (index_file, artifacts)
 
-let pkg_artifacts sctx all index pkg =
+let pkg_artifacts sctx all pkg =
   let ctx = Super_context.context sctx in
   let+ mlds = Packages.mlds sctx pkg in
   let index_file, mlds =
@@ -1338,7 +1345,7 @@ let pkg_artifacts sctx all index pkg =
   let mlds = check_mlds_no_dupes ~pkg ~mlds in
   let mlds =
     String.Map.values mlds
-    |> List.map ~f:(fun mld -> Artifact.make ctx all (Pkg pkg) (index, mld))
+    |> List.map ~f:(fun mld -> Artifact.make ctx all (Pkg pkg) (Index.LocalPackage (Toplevel, pkg), mld))
   in
   (index_file, mlds)
 
@@ -1468,7 +1475,7 @@ let setup_pkg_html_rules_def =
     let* libs = libs_of_pkg ctx ~pkg in
     let index = Index.LocalPackage (Toplevel, pkg) in
     let parent = create_index_artifact ctx all index in
-    let* _, pkg_artifacts = pkg_artifacts sctx all index pkg
+    let* _, pkg_artifacts = pkg_artifacts sctx all pkg
     and* lib_artifacts =
       Memo.parallel_map libs ~f:(fun lib -> local_lib_artifacts sctx all index lib)
     in
@@ -1538,7 +1545,7 @@ let default_index ~pkg_name ~pkg_opt ~subindexes entry_modules =
   | Some pkg -> (
     match pkg.Package.description with
     | None -> ()
-    | Some s -> Printf.bprintf b "%s" s));
+    | Some s -> Printf.bprintf b "%s\n" s));
 
   
   if List.length subindexes > 0 then begin
@@ -1806,39 +1813,85 @@ let setup_lnu_index_rules sctx all lnu =
     in
     Memo.return []
 
+
+module Index_info = struct
+  type t = {
+    index: Index.t;
+    artifacts: Artifact.t list;
+    lib: Lib.t;
+    entry_modules: Module_name.t list;
+  }
+
+  let lib x = x.lib
+  let index x = x.index
+end
+
+let hierarchical_index_rules sctx ~is_main ~main_index_path ~main_artifacts ~pkg_name ~index_infos =
+  let ctx = Super_context.context sctx in
+  let index_set_full = List.map ~f:Index_info.index index_infos |> index_set_full in
+  let index_list_full = IndexSet.to_list index_set_full in
+  let index_set_init = IndexSet.remove index_set_full Toplevel in
+
+  let* index_set = Memo.List.fold_left index_infos ~init:index_set_init ~f:(fun index_set {index; lib; artifacts; entry_modules} ->
+    let extra_children = index_child_artifacts ctx true index_set_full index in
+    let subindexes = index_children index_set_full index in
+    Log.info [Pp.textf "extra_children: [%s]" (String.concat ~sep:";;" (List.map extra_children ~f:(fun a -> Artifact.source_file a |> Path.to_string)))];
+
+    let ext_index, artifacts =
+      if is_main index then 
+        main_index_path, main_artifacts @ artifacts
+      else
+        None, artifacts
+    in
+
+    let index_content =
+      match ext_index with
+      | Some p -> Symlink p
+      | None ->
+        Generated (default_index ~pkg_name ~pkg_opt:None ~subindexes [(Lib.name lib, entry_modules)])
+    in
+
+    let libs = [lib] in
+    let* _ = general_index_rules sctx true None index index_content (extra_children @ artifacts) index_list_full libs in
+    let index_set = IndexSet.remove index_set index in
+    Memo.return index_set
+    ) in
+
+  Log.info [ Pp.textf "cardinal of index_set after: %d" (IndexSet.cardinal index_set)];
+  let others = IndexSet.fold index_set ~init:[] ~f:(
+    fun index acc ->
+      let subindexes = index_children index_set_full index in
+
+      let index_content = Generated (default_index ~pkg_name ~pkg_opt:None ~subindexes []) in
+
+      let extra_children = index_child_artifacts ctx true index_set_full index in
+
+      general_index_rules sctx true None index index_content extra_children index_list_full [] :: acc
+
+  ) in
+  let* _ = Memo.all others in
+
+  Memo.return []
+
 let setup_pkg_index_rules sctx all pkg =
   let pkg_name = Package.name pkg in
   let* entry_modules = entry_modules sctx ~pkg:pkg_name in
-  let entry_modules =
-    Lib.Local.Map.foldi ~init:[] entry_modules ~f:(fun lib modules acc ->
-        let info = Lib.Local.info lib in
-        let modules =
+  let* index_infos =
+    Lib.Local.Map.foldi ~init:(Memo.return []) entry_modules ~f:(fun lib modules acc ->
+      let* acc = acc in
+      let index = index_of_local_lib lib in
+      let* artifacts = local_lib_artifacts sctx all index lib in
+      let entry_modules =
           modules
           |> List.filter ~f:(fun m -> Module.visibility m = Visibility.Public)
           |> List.map ~f:Module.name
-        in
-        (Lib_info.name info, modules) :: acc)
+      in
+      let lib = (lib :> Lib.t) in
+      Memo.return ({Index_info.index; lib; artifacts; entry_modules} :: acc))
   in
-  let ctx = Super_context.context sctx in
-  let* libs = libs_of_pkg ctx ~pkg:pkg_name in
-  let index = Index.LocalPackage (Toplevel, pkg_name) in
-  let* index_path, pkg_artifacts = pkg_artifacts sctx all index pkg_name in
-  let* lib_artifacts =
-    List.map ~f:(fun l -> local_lib_artifacts sctx all index l) libs |> Memo.all
-  in
-  let artifacts = List.concat (pkg_artifacts :: lib_artifacts) in
-
-  let index_content =
-    match index_path with
-    | Some p -> Symlink p
-    | None ->
-      Generated (default_index ~pkg_name ~pkg_opt:(Some pkg) ~subindexes:[] entry_modules)
-  in
-  let* _ =
-    general_index_rules sctx all (Some pkg_name) index index_content artifacts
-      [] (libs :> Lib.t list)
-  in
-  Memo.return []
+  let is_main = function | Index.LocalPackage _ -> true | _ -> false in
+  let* main_index_path, main_artifacts = pkg_artifacts sctx all pkg_name in
+  hierarchical_index_rules sctx ~is_main ~main_index_path ~main_artifacts ~pkg_name ~index_infos
 
 let setup_external_index_rules sctx dir =
   let ctx = Super_context.context sctx in
@@ -1861,74 +1914,26 @@ let setup_external_index_rules sctx dir =
       general_index_rules sctx true None index index_content all_artifacts [] libs
     in
     Memo.return []
-  | DuneWithModules (pkg, dwms) ->
+  | DuneWithModules (pkg_name, dwms) ->
     let* dwms = Valid.filter_dwms ctx true dwms in
-    let all_indexes = List.map ~f:(fun dwm -> index_of_dwm dwm) dwms in
-
-    let index_set_full = index_set_full all_indexes in
-
-    let index_set_init = IndexSet.remove index_set_full Toplevel in
-
-    let index_list_full = IndexSet.to_list index_set_full in
-
-    Log.info [ Pp.textf "cardinal of index_set before: %d" (IndexSet.cardinal index_set_init)];
-    
-    let* pkg_index, pkg_artifacts = ext_pkg_mld_artifacts ctx dir Toplevel pkg in
-
-
-    let* index_set = Memo.List.fold_left dwms ~init:index_set_init ~f:(fun index_set dwm ->
-      let index = index_of_dwm dwm in
-      let extra_children = index_child_artifacts ctx true index_set_full index in
-      let subindexes = index_children index_set_full index in
-      Log.info [Pp.textf "extra_children: [%s]" (String.concat ~sep:";;" (List.map extra_children ~f:(fun a -> Artifact.source_file a |> Path.to_string)))];
-      let entry_modules =
+    let index_infos =
+      List.fold_left ~init:[] dwms ~f:(fun acc dwm ->
         let info = Lib.info dwm.lib in
-        match Lib_info.entry_modules info with
-        | External (Ok entry_modules) ->
-          (Lib_info.name info, entry_modules)
-        | _ -> 
-          (Lib_info.name info, [])
-      in
+        let index = index_of_dwm dwm in
+        let lib = dwm.lib in
+        let artifacts = singleton_artifacts ctx index dwm in
+        let entry_modules =
+          match Lib_info.entry_modules info with
+          | External (Ok modules) -> modules
+          | _ -> []
+        in
+        {Index_info.index; lib; artifacts; entry_modules} :: acc)
+    in
 
-      let lib_artifacts = singleton_artifacts ctx index dwm in
+    let is_main = function | Index.ExternalDunePackage _ -> true | _ -> false in
+    let* main_index_path, main_artifacts = ext_pkg_mld_artifacts ctx dir pkg_name in
 
-      let ext_index, artifacts =
-        match index with
-        | ExternalDunePackage _ ->
-          pkg_index, pkg_artifacts @ lib_artifacts
-        | _ ->
-          None, lib_artifacts
-      in
-
-      let index_content =
-        match ext_index with
-        | Some p -> Symlink p
-        | None ->
-          Generated (default_index ~pkg_name:pkg ~pkg_opt:None ~subindexes [entry_modules])
-      in
-
-      let libs = [dwm.lib] in
-      let* libs = Valid.filter_libs ctx true libs in
-      let* _ = general_index_rules sctx true None index index_content (extra_children @ artifacts) index_list_full libs in
-      let index_set = IndexSet.remove index_set index in
-      Memo.return index_set
-      ) in
-
-    Log.info [ Pp.textf "cardinal of index_set after: %d" (IndexSet.cardinal index_set)];
-    let others = IndexSet.fold index_set ~init:[] ~f:(
-      fun index acc ->
-        let subindexes = index_children index_set_full index in
-
-        let index_content = Generated (default_index ~pkg_name:pkg ~pkg_opt:None ~subindexes []) in
-
-        let extra_children = index_child_artifacts ctx true index_set_full index in
-
-        general_index_rules sctx true None index index_content extra_children index_list_full [] :: acc
-
-    ) in
-    let* _ = Memo.all others in
-
-    Memo.return []
+    hierarchical_index_rules sctx ~is_main ~main_index_path ~main_artifacts ~pkg_name ~index_infos
 
 (* End of index rules *)
 
@@ -2042,15 +2047,8 @@ let setup_internal_rules sctx lib_name =
   match lib with
   | None -> Memo.return []
   | Some local_lib ->
-    let info = Lib.Local.info local_lib in
-    let package = Lib_info.package info in
-    let index =
-      match package with
-      | Some package -> Index.LocalPackage (Toplevel, package)
-      | None -> PrivateLib (Toplevel, lib_unique_name local_lib)
-    in
-    let parent = create_index_artifact ctx true index
-    in
+    let index = index_of_local_lib local_lib in
+    let parent = create_index_artifact ctx true index in
     let* artifacts = local_lib_artifacts sctx true index local_lib in
     let libs = [ (local_lib :> Lib.t) ] in
     artifact_rules sctx true ~quiet:false artifacts libs parent None [ Lib local_lib ]
