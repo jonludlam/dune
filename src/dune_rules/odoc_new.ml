@@ -102,103 +102,89 @@ end
 module Index = struct
   type external_fallback = EF of string
 
-  type t =
-    | Toplevel
-    | LocalPackage of t * Package.Name.t
-    | LocalSubLib of t * string
-    | PrivateLib of t * string
-    | ExternalDunePackage of t * Package.Name.t
-    | ExternalDuneSubLib of t * string
-    | ExternalFallback of t * external_fallback
-    | ExternalFallbackSubDir of t * string
+  type ty =
+    | LocalPackage of Package.Name.t
+    | LocalSubLib of string
+    | PrivateLib of string
+    | ExternalDunePackage of Package.Name.t
+    | ExternalDuneSubLib of string
+    | ExternalFallback of external_fallback
+    | ExternalFallbackSubDir of string
 
-  let rec name = function
-    | Toplevel -> "toplevel"
-    | LocalPackage (_, pkg) -> Package.Name.to_string pkg
-    | LocalSubLib (p, str) -> name p ^ "." ^ str
-    | PrivateLib (_, lnu) -> lnu
-    | ExternalDunePackage (_, pkg) -> Package.Name.to_string pkg
-    | ExternalDuneSubLib (p, str) -> name p ^ "." ^ str
-    | ExternalFallback (_, EF s) -> s
-    | ExternalFallbackSubDir (p, str) -> name p ^ "." ^ str
+  type t = ty list
+
+  let ty_name = function
+    | LocalPackage pkg -> Package.Name.to_string pkg
+    | LocalSubLib str -> str
+    | PrivateLib lnu -> lnu
+    | ExternalDunePackage pkg -> Package.Name.to_string pkg
+    | ExternalDuneSubLib str -> str
+    | ExternalFallback (EF s) -> s
+    | ExternalFallbackSubDir str -> str
   ;;
 
-  let rec to_dyn x =
+  let name : t -> string = function
+    | [] -> "toplevel"
+    | xs -> String.concat ~sep:"." (List.map xs ~f:ty_name)
+  ;;
+
+  let ty_to_dyn x =
     let open Dyn in
     match x with
-    | Toplevel -> variant "Toplevel" []
-    | LocalPackage (parent, pkg) ->
-      variant "LocalPackage" [ to_dyn parent; Package.Name.to_dyn pkg ]
-    | LocalSubLib (parent, str) -> variant "LocalSubLib" [ to_dyn parent; String str ]
-    | PrivateLib (parent, lnu) -> variant "PrivateLib" [ to_dyn parent; String lnu ]
-    | ExternalDunePackage (parent, pkg) ->
-      variant "ExternalDunePackage" [ to_dyn parent; Package.Name.to_dyn pkg ]
-    | ExternalDuneSubLib (parent, str) ->
-      variant "ExternalDuneSubLib" [ to_dyn parent; String str ]
-    | ExternalFallback (parent, EF l) ->
-      variant "ExternalFallback" [ to_dyn parent; String l ]
-    | ExternalFallbackSubDir (parent, str) ->
-      variant "ExternalFallbackSubDir" [ to_dyn parent; String str ]
+    | LocalPackage pkg -> variant "LocalPackage" [ Package.Name.to_dyn pkg ]
+    | LocalSubLib str -> variant "LocalSubLib" [ String str ]
+    | PrivateLib lnu -> variant "PrivateLib" [ String lnu ]
+    | ExternalDunePackage pkg -> variant "ExternalDunePackage" [ Package.Name.to_dyn pkg ]
+    | ExternalDuneSubLib str -> variant "ExternalDuneSubLib" [ String str ]
+    | ExternalFallback (EF l) -> variant "ExternalFallback" [ String l ]
+    | ExternalFallbackSubDir str -> variant "ExternalFallbackSubDir" [ String str ]
   ;;
 
+  let to_dyn x = Dyn.list ty_to_dyn x
   let to_string x = Dyn.to_string (to_dyn x)
   let compare x y = Dyn.compare (to_dyn x) (to_dyn y)
+  let compare_ty x y = Dyn.compare (ty_to_dyn x) (ty_to_dyn y)
 
   let top_dir_of_external_fallback = function
     | EF s -> String.split ~on:'/' s |> List.hd
   ;;
 
-  let rec obj_dir ctx all : t -> Path.Build.t =
-    let root = Paths.root ctx all in
-    function
-    | Toplevel -> root ++ "index"
-    | LocalPackage (p, pkg) -> obj_dir ctx all p ++ "local" ++ Package.Name.to_string pkg
-    | LocalSubLib (p, str) -> obj_dir ctx all p ++ str
-    | ExternalDunePackage (p, pkg) ->
-      obj_dir ctx all p ++ "external" ++ Package.Name.to_string pkg
-    | ExternalDuneSubLib (p, str) -> obj_dir ctx all p ++ str
-    | ExternalFallback (p, d) ->
-      obj_dir ctx all p ++ "external" ++ top_dir_of_external_fallback d
-    | PrivateLib (p, lnu) -> obj_dir ctx all p ++ "private" ++ lnu
-    | ExternalFallbackSubDir (p, str) ->
-      obj_dir ctx all p ++ str
+  let obj_dir ctx all : t -> Path.Build.t =
+    let root = Paths.root ctx all ++ "index" in
+    let subdir = function
+      | LocalPackage pkg -> "local/" ^ Package.Name.to_string pkg
+      | LocalSubLib str -> str
+      | ExternalDunePackage pkg -> "external/" ^ Package.Name.to_string pkg
+      | ExternalDuneSubLib str -> str
+      | ExternalFallback d -> "external/" ^ top_dir_of_external_fallback d
+      | PrivateLib lnu -> "private/" ^ lnu
+      | ExternalFallbackSubDir str -> str
+    in
+    List.fold_right ~f:(fun x acc -> acc ++ subdir x) ~init:root
   ;;
 
-  let rec html_dir ctx all (m : t) =
-    match m with
-    | Toplevel -> Paths.html_root ctx all ++ "docs"
-    | ExternalDunePackage (parent, pkg) | LocalPackage (parent, pkg) ->
-      html_dir ctx all parent ++ Package.Name.to_string pkg
-    | LocalSubLib (parent, str) | ExternalDuneSubLib (parent, str) ->
-      html_dir ctx all parent ++ str
-    | PrivateLib (parent, lnu) -> html_dir ctx all parent ++ lnu
-    | ExternalFallback (parent, p) ->
-      html_dir ctx all parent ++ top_dir_of_external_fallback p
-    | ExternalFallbackSubDir (parent, str) ->
-      html_dir ctx all parent ++ str
+  let html_dir ctx all (m : t) =
+    let init = Paths.html_root ctx all ++ "docs" in
+    let subdir x =
+      match x with
+      | ExternalDunePackage pkg | LocalPackage pkg -> Package.Name.to_string pkg
+      | LocalSubLib str | ExternalDuneSubLib str -> str
+      | PrivateLib lnu -> lnu
+      | ExternalFallback p -> top_dir_of_external_fallback p
+      | ExternalFallbackSubDir str -> str
+    in
+    List.fold_right ~f:(fun x acc -> acc ++ subdir x) ~init m
   ;;
 
   let mld_name : t -> string = function
-    | Toplevel -> "docs"
-    | ExternalDunePackage (_, pkg) | LocalPackage (_, pkg) -> Package.Name.to_string pkg
-    | ExternalDuneSubLib (_, str) | LocalSubLib (_, str) -> str
-    | PrivateLib (_, s) -> s
-    | ExternalFallback (_, ef) -> top_dir_of_external_fallback ef
-    | ExternalFallbackSubDir (_, str) -> str
+    | [] -> "docs"
+    | ExternalDunePackage pkg :: _ | LocalPackage pkg :: _ -> Package.Name.to_string pkg
+    | ExternalDuneSubLib str :: _ | LocalSubLib str :: _ -> str
+    | PrivateLib s :: _ -> s
+    | ExternalFallback ef :: _ -> top_dir_of_external_fallback ef
+    | ExternalFallbackSubDir str :: _ -> str
   ;;
 
-  let rec to_list_rev : t -> t list = function
-    | Toplevel -> [ Toplevel ]
-    | LocalPackage (p, _) as idx -> idx :: to_list_rev p
-    | LocalSubLib (p, _) as idx -> idx :: to_list_rev p
-    | ExternalDunePackage (p, _) as idx -> idx :: to_list_rev p
-    | ExternalDuneSubLib (p, _) as idx -> idx :: to_list_rev p
-    | PrivateLib (p, _) as idx -> idx :: to_list_rev p
-    | ExternalFallback (p, _) as idx -> idx :: to_list_rev p
-    | ExternalFallbackSubDir (p, _) as idx -> idx :: to_list_rev p 
-  ;;
-
-  let to_list x = List.rev (to_list_rev x)
   let mld_filename index = mld_name index ^ ".mld"
   let mld_path ctx all index = obj_dir ctx all index ++ mld_filename index
 end
@@ -425,18 +411,23 @@ let index_of_dwm dwm =
           (String.concat ~sep:"," rest)
       ];
     List.fold_left
-      ~f:(fun acc s -> ExternalDuneSubLib (acc, s))
+      ~f:(fun acc s -> ExternalDuneSubLib s :: acc)
       rest
-      ~init:(ExternalDunePackage (Toplevel, pkg))
+      ~init:[ ExternalDunePackage pkg ]
   | Private (pkg, n) ->
-    ExternalDuneSubLib (ExternalDunePackage (Toplevel, pkg), Lib_name.Local.to_string n)
+    [ ExternalDuneSubLib (Lib_name.Local.to_string n); ExternalDunePackage pkg ]
 ;;
 
 let index_of_local_dir local_dir =
   let open Index in
   match String.split ~on:'/' local_dir with
   | [] -> assert false
-  | x :: xs -> List.fold_left ~f:(fun acc s -> ExternalFallbackSubDir (acc, s)) ~init:(ExternalFallback (Toplevel, EF x)) xs
+  | x :: xs ->
+    List.fold_left
+      ~f:(fun acc s -> ExternalFallbackSubDir s :: acc)
+      ~init:[ ExternalFallback (EF x) ]
+      xs
+;;
 
 let index_of_local_lib (lib : Lib.Local.t) =
   let open Index in
@@ -453,11 +444,11 @@ let index_of_local_lib (lib : Lib.Local.t) =
              (String.concat ~sep:"," rest)
          ];
        List.fold_left
-         ~f:(fun acc s -> LocalSubLib (acc, s))
+         ~f:(fun acc s -> LocalSubLib s :: acc)
          rest
-         ~init:(LocalPackage (Toplevel, pkg))
-     | Private (_, _) -> PrivateLib (Toplevel, lib_unique_name lib))
-  | None -> PrivateLib (Toplevel, lib_unique_name lib)
+         ~init:[ LocalPackage pkg ]
+     | Private (_, _) -> [ PrivateLib (lib_unique_name lib) ])
+  | None -> [ PrivateLib (lib_unique_name lib) ]
 ;;
 
 module Valid = struct
@@ -919,7 +910,8 @@ let odoc_include_flags ctx all pkg requires indices =
      let+ libs = requires in
      let paths =
        List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
-        Log.info [ Pp.textf "odoc_include_flags: lib=%s" (Lib.name lib |> Lib_name.to_string)];
+         Log.info
+           [ Pp.textf "odoc_include_flags: lib=%s" (Lib.name lib |> Lib_name.to_string) ];
          match Lib.Local.of_lib lib with
          | None ->
            let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.obj_dir in
@@ -943,36 +935,8 @@ let odoc_include_flags ctx all pkg requires indices =
           [ Command.Args.A "-I"; Path dir ])))
 ;;
 
-(* Some utility functions to deal with sets of indexes *)
-
-let index_set_full indices =
-  List.fold_left
-    ~f:(fun acc x ->
-      let l = Index.to_list x in
-      List.fold_left ~f:(fun acc x -> IndexSet.add acc x) ~init:acc l)
-    ~init:IndexSet.empty
-    indices
-;;
-
-let index_children index_set_full index =
-  IndexSet.fold index_set_full ~init:[] ~f:(fun idx acc ->
-    match idx with
-    | LocalPackage (p, _) when p = index -> idx :: acc
-    | ExternalDunePackage (p, _) when p = index -> idx :: acc
-    | ExternalFallback (p, _) when p = index -> idx :: acc
-    | PrivateLib (p, _) when p = index -> idx :: acc
-    | ExternalDuneSubLib (p, _) when p = index -> idx :: acc
-    | LocalSubLib (p, _) when p = index -> idx :: acc
-    | _ -> acc)
-;;
-
 let create_index_artifact ctx all index =
   Artifact.make ctx all (Index index) () |> Artifact.mini_artifact
-;;
-
-let index_child_artifacts ctx all index_set_full index =
-  let children = index_children index_set_full index in
-  List.map ~f:(create_index_artifact ctx all) children
 ;;
 
 let index_dep ctx all index =
@@ -1327,7 +1291,13 @@ let fallback_artifacts
             let dir = if subpath = "" then local_dir else local_dir ^ "/" ^ subpath in
             let target = Target.ExtLib dir in
             let index = index_of_local_dir dir in
-            Log.info [Pp.textf "cmti: %s (%s) index: %s" (Path.to_string cmti_file) dir (Index.to_string index)];
+            Log.info
+              [ Pp.textf
+                  "cmti: %s (%s) index: %s"
+                  (Path.to_string cmti_file)
+                  dir
+                  (Index.to_string index)
+              ];
             let artifact =
               Artifact.make
                 ctx
@@ -1429,7 +1399,7 @@ let ext_pkg_mld_artifacts ctx dir pkg =
   in
   let artifacts =
     List.map mlds ~f:(fun m ->
-      Artifact.make ctx true t (Mld (Index.ExternalDunePackage (Toplevel, pkg), m))
+      Artifact.make ctx true t (Mld ([ Index.ExternalDunePackage pkg ], m))
       |> Artifact.mini_artifact)
   in
   index_file, artifacts
@@ -1450,7 +1420,7 @@ let pkg_artifacts sctx all pkg =
   let mlds =
     String.Map.values mlds
     |> List.map ~f:(fun mld ->
-      Artifact.make ctx all (Pkg pkg) (Index.LocalPackage (Toplevel, pkg), mld)
+      Artifact.make ctx all (Pkg pkg) ([ Index.LocalPackage pkg ], mld)
       |> Artifact.mini_artifact)
   in
   index_file, mlds
@@ -1491,7 +1461,7 @@ let setup_package_odoc_rules sctx all ~pkg =
   let* mlds = package_mlds sctx ~pkg in
   let ctx = Super_context.context sctx in
   let pkg = Package.name pkg in
-  let index = Index.LocalPackage (Toplevel, pkg) in
+  let index = [ Index.LocalPackage pkg ] in
   let parent_opt = Some (create_index_artifact ctx all index) in
   let* libs = libs_of_pkg ctx ~pkg in
   let artifacts =
@@ -1526,68 +1496,68 @@ let setup_package_odoc_rules sctx all ~pkg =
 
 module Index_info = struct
   type index_info =
-    { index : Index.t
-    ; artifacts : MiniArtifact.t list
+    { artifacts : MiniArtifact.t list
     ; predefined_index : Path.t option
     ; lib : (Lib.t * Module_name.t list) list
     }
-
-  let index x = x.index
 end
 
 module IndexTree = struct
-  type t = Br of Index_info.index_info * t list
+  type 'a t = Br of Index.ty * 'a * 'a t list
 
-  let of_index_info indexes =
+  let of_index_list :
+        'a. empty:'a -> combine:('a -> 'a -> 'a) -> (Index.t * 'a) list -> 'a t list
+    =
+    fun ~empty ~combine indexes ->
     Log.info [ Pp.textf "of_index_info: %d indexes" (List.length indexes) ];
     let cmp x y =
       match y with
-      | Br (y, _) -> Index.compare x y.index = Eq
+      | Br (y, _, _) -> Index.compare_ty x y = Eq
     in
-    let combine ty index x y =
-      match x, y with
-      | None, None -> None
-      | Some x, None -> Some x
-      | None, Some x -> Some x
-      | Some x, Some _ ->
-        Log.info
-          [ Pp.textf "IndexTree: duplicate %s info for index %s" ty (Index.name index) ];
-        Some x
-    in
-    let add_one (cur : t list) index_info =
-      let list = Index.to_list (Index_info.index index_info) in
-      let list = List.filter ~f:(fun x -> x <> Index.Toplevel) list in
-      let rec inner (tree : t list) index_list =
+    let add_one (cur : 'a t list) (index, index_info) =
+      let list = List.rev index in
+      let rec inner (tree : 'a t list) index_list =
         match tree, index_list with
         | x, [] -> x
         | ys, [ x ] ->
           (match List.partition ys ~f:(cmp x) with
-           | [ Br (ii, children) ], others ->
-             let artifacts = ii.artifacts @ index_info.artifacts in
-             let lib = ii.lib @ index_info.lib in
-             let predefined_index =
-               combine
-                 "predefined_index"
-                 (Index_info.index index_info)
-                 ii.predefined_index
-                 index_info.predefined_index
-             in
-             Br ({ ii with artifacts; lib; predefined_index }, children) :: others
-           | [], others -> Br (index_info, []) :: others
+           | [ Br (x, ii, children) ], others ->
+             Br (x, combine ii index_info, children) :: others
+           | [], others -> Br (x, index_info, []) :: others
            | _ -> assert false)
         | ys, x :: xs ->
           (match List.partition ys ~f:(cmp x) with
-           | [ Br (ii, children) ], others -> Br (ii, inner children xs) :: others
-           | [], others ->
-             Br
-               ( { index = x; artifacts = []; lib = []; predefined_index = None }
-               , inner [] xs )
-             :: others
+           | [ Br (v, ii, children) ], others -> Br (v, ii, inner children xs) :: others
+           | [], others -> Br (x, empty, inner [] xs) :: others
            | _ -> assert false)
       in
       inner cur list
     in
     List.fold_left indexes ~init:[] ~f:add_one
+  ;;
+
+  let of_index_info =
+    let empty = { Index_info.artifacts = []; predefined_index = None; lib = [] } in
+    let combine x y =
+      let predefined_index =
+        match x.Index_info.predefined_index, y.Index_info.predefined_index with
+        | None, None -> None
+        | Some x, None | None, Some x -> Some x
+        | Some x, Some y ->
+          Log.info
+            [ Pp.textf
+                "of_index_info: duplicate predefined index: %s %s"
+                (Path.to_string x)
+                (Path.to_string y)
+            ];
+          Some x
+      in
+      { Index_info.artifacts = x.Index_info.artifacts @ y.Index_info.artifacts
+      ; predefined_index
+      ; lib = x.lib @ y.lib
+      }
+    in
+    fun x -> of_index_list ~empty ~combine x
   ;;
 end
 
@@ -1604,16 +1574,16 @@ let index_info_of_local_pkg sctx all pkg_name =
         |> List.filter ~f:(fun m -> Module.visibility m = Visibility.Public)
         |> List.map ~f:Module.name
       in
-      let lib = [(lib :> Lib.t), entry_modules] in
-      Memo.return ({ Index_info.index; lib; artifacts; predefined_index = None } :: acc))
+      let lib = [ (lib :> Lib.t), entry_modules ] in
+      Memo.return ((index, { Index_info.lib; artifacts; predefined_index = None }) :: acc))
   in
   let+ main_index_path, main_artifacts = pkg_artifacts sctx all pkg_name in
   let pkg_index_info =
-    { Index_info.index = Index.LocalPackage (Toplevel, pkg_name)
-    ; lib = []
-    ; artifacts = main_artifacts
-    ; predefined_index = main_index_path
-    }
+    ( [ Index.LocalPackage pkg_name ]
+    , { Index_info.lib = []
+      ; artifacts = main_artifacts
+      ; predefined_index = main_index_path
+      } )
   in
   pkg_index_info :: index_infos
 ;;
@@ -1625,8 +1595,8 @@ let index_info_of_private_lib sctx all lnu =
     let+ lib = Lib.DB.find lib_db lib in
     Option.bind ~f:Lib.Local.of_lib lib
   in
-  let index = Index.PrivateLib (Toplevel, lnu) in
-  let* lib, artifacts = 
+  let index = [ Index.PrivateLib lnu ] in
+  let* lib, artifacts =
     match lib with
     | None -> Memo.return ([], [])
     | Some lib ->
@@ -1637,10 +1607,10 @@ let index_info_of_private_lib sctx all lnu =
         |> List.filter ~f:(fun m -> Module.visibility m = Visibility.Public)
         |> List.map ~f:Module.name
       in
-      let lib = [(lib :> Lib.t), entry_modules] in
-      (lib, artifacts)
+      let lib = [ (lib :> Lib.t), entry_modules ] in
+      lib, artifacts
   in
-  Memo.return { Index_info.index; lib; artifacts; predefined_index = None }
+  Memo.return (index, { Index_info.lib; artifacts; predefined_index = None })
 ;;
 
 let index_info_of_dune_with_modules ctx dir pkg_name dwms =
@@ -1656,15 +1626,15 @@ let index_info_of_dune_with_modules ctx dir pkg_name dwms =
         | External (Ok modules) -> modules
         | _ -> []
       in
-      let lib = [dwm.lib, entry_modules] in
-      { Index_info.index; lib; artifacts; predefined_index = None } :: acc)
+      let lib = [ dwm.lib, entry_modules ] in
+      (index, { Index_info.lib; artifacts; predefined_index = None }) :: acc)
   in
   let pkg_index_info =
-    { Index_info.index = Index.ExternalDunePackage (Toplevel, pkg_name)
-    ; lib = []
-    ; artifacts = main_artifacts
-    ; predefined_index = main_index_path
-    }
+    ( [ Index.ExternalDunePackage pkg_name ]
+    , { Index_info.lib = []
+      ; artifacts = main_artifacts
+      ; predefined_index = main_index_path
+      } )
   in
   pkg_index_info :: index_infos
 ;;
@@ -1675,20 +1645,21 @@ let index_info_of_external_fallback sctx (fallback : fallback) =
   let* artifacts = fallback_artifacts sctx libs in
   List.fold_left ~init:(Memo.return []) artifacts ~f:(fun acc (dir, artifacts, libs) ->
     let* acc = acc in
-    Log.info [Pp.textf "index_info_of_external_fallback: %s" dir];
+    Log.info [ Pp.textf "index_info_of_external_fallback: %s" dir ];
     let* libs = Valid.filter_libs ctx true libs in
     let index = index_of_local_dir dir in
-    let libs = List.map libs ~f:(fun lib ->
-      let info = Lib.info lib in
-      let entry_modules =
-        match Lib_info.entry_modules info with
-        | External (Ok modules) -> modules
-        | _ -> []
-      in
-      (lib, entry_modules))
+    let libs =
+      List.map libs ~f:(fun lib ->
+        let info = Lib.info lib in
+        let entry_modules =
+          match Lib_info.entry_modules info with
+          | External (Ok modules) -> modules
+          | _ -> []
+        in
+        lib, entry_modules)
     in
-    Memo.return ({ Index_info.artifacts; index; lib = libs; predefined_index = None } :: acc))
-
+    Memo.return
+      ((index, { Index_info.artifacts; lib = libs; predefined_index = None }) :: acc))
 ;;
 
 type index_content =
@@ -1818,22 +1789,22 @@ let toplevel_index_contents _sctx indices =
   output_indices
     "Local packages"
     (List.filter indices ~f:(function
-      | Index.LocalPackage _ -> true
+      | Index.LocalPackage _ :: _ -> true
       | _ -> false));
   output_indices
     "Switch-installed packages"
     (List.filter indices ~f:(function
-      | Index.ExternalDunePackage _ -> true
+      | Index.ExternalDunePackage _ :: _ -> true
       | _ -> false));
   output_indices
     "Other switch library directories"
     (List.filter indices ~f:(function
-      | Index.ExternalFallback _ -> true
+      | Index.ExternalFallback _ :: _ -> true
       | _ -> false));
   output_indices
     "Private libraries"
     (List.filter indices ~f:(function
-      | Index.PrivateLib _ -> true
+      | Index.PrivateLib _ :: _ -> true
       | _ -> false));
   Buffer.contents b
 ;;
@@ -1848,9 +1819,8 @@ let indexes =
           match Lib.Local.of_lib lib with
           | Some local ->
             (match Lib_info.package (Lib.Local.info local) with
-             | Some pkg -> dirset, Index.LocalPackage (Toplevel, pkg) :: indexes
-             | None ->
-               dirset, Index.PrivateLib (Toplevel, lib_unique_name local) :: indexes)
+             | Some pkg -> dirset, [ Index.LocalPackage pkg ] :: indexes
+             | None -> dirset, [ Index.PrivateLib (lib_unique_name local) ] :: indexes)
           | None ->
             let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.dir in
             let local = Paths.local_path_of_findlib_path ctx obj_dir in
@@ -1860,26 +1830,26 @@ let indexes =
     in
     let* lib_indexes =
       String.Set.fold dirs ~init:(Memo.return local_indexes) ~f:(fun dir acc ->
-        Log.info [Pp.textf "indexes: %s" dir];
+        Log.info [ Pp.textf "indexes: %s" dir ];
         let* acc = acc in
         let* c = classify_local_dir ctx dir in
         match c with
         | DuneWithModules (_package_name, dwms) ->
-          Log.info [Pp.textf "indexes: %s=DuneWithModules" dir];
+          Log.info [ Pp.textf "indexes: %s=DuneWithModules" dir ];
           let+ dwms = Valid.filter_dwms ctx all dwms in
           List.fold_left
             ~f:(fun (acc : Index.t list) dwm : Index.t list -> index_of_dwm dwm :: acc)
             ~init:acc
             dwms
         | Fallback _ ->
-          Log.info [Pp.textf "indexes: %s=Fallback" dir];
-          Memo.return (Index.ExternalFallback (Toplevel, EF dir) :: acc)
+          Log.info [ Pp.textf "indexes: %s=Fallback" dir ];
+          Memo.return ([ Index.ExternalFallback (EF dir) ] :: acc)
         | Nothing ->
-          Log.info [Pp.textf "indexes: %s=Nothing" dir];
+          Log.info [ Pp.textf "indexes: %s=Nothing" dir ];
           Memo.return acc)
     in
     let local_pkg_indexes =
-      List.map ~f:(fun name -> Index.LocalPackage (Toplevel, name)) packages
+      List.map ~f:(fun name -> [ Index.LocalPackage name ]) packages
     in
     Memo.return (local_pkg_indexes @ lib_indexes)
   in
@@ -1910,14 +1880,8 @@ let general_index_rules sctx all package index index_content children indices li
   let mld = create_index_artifact ctx all index in
   let parent_opt =
     match index with
-    | ExternalDunePackage (parent, _)
-    | LocalPackage (parent, _)
-    | ExternalDuneSubLib (parent, _)
-    | PrivateLib (parent, _)
-    | ExternalFallback (parent, _)
-    | ExternalFallbackSubDir (parent, _)
-    | LocalSubLib (parent, _) -> Some (create_index_artifact ctx all parent)
-    | Toplevel -> None
+    | _ :: x -> Some (create_index_artifact ctx all x)
+    | [] -> None
   in
   let* _ =
     compile_mld
@@ -1938,12 +1902,12 @@ let hierarchical_index_rules sctx indexes =
   let tree = IndexTree.of_index_info indexes in
   let main_name =
     match tree with
-    | [ Br (ii, _) ] -> Index.name (Index_info.index ii)
+    | [ Br (i, _, _) ] -> Index.ty_name i
     | _ -> "index"
   in
-  let rec inner tree =
-    Memo.List.iter tree ~f:(fun (IndexTree.Br (ii, children)) ->
-      let index = Index_info.index ii in
+  let rec inner idx tree =
+    Memo.List.iter tree ~f:(fun (IndexTree.Br (i, ii, children)) ->
+      let index = i :: idx in
       Log.info
         [ Pp.textf
             "hierarchical_index_rules: %s (%d children)"
@@ -1953,11 +1917,11 @@ let hierarchical_index_rules sctx indexes =
       let subindexes =
         List.map
           ~f:(function
-            | IndexTree.Br (ii, _) -> Index_info.index ii)
+            | IndexTree.Br (x, _, _) -> x :: index)
           children
       in
       let extra_children = List.map ~f:(create_index_artifact ctx true) subindexes in
-      let liblist = List.map ~f:(fun (l, x) -> (Lib.name l, x)) ii.lib in
+      let liblist = List.map ~f:(fun (l, x) -> Lib.name l, x) ii.Index_info.lib in
       let index_content =
         match ii.predefined_index with
         | Some p -> Symlink p
@@ -1972,22 +1936,22 @@ let hierarchical_index_rules sctx indexes =
           index
           index_content
           (extra_children @ ii.artifacts)
-          (List.map ~f:Index_info.index indexes)
+          [] (* (List.map ~f:Index_info.index indexes)*)
           libs
       in
-      inner children)
+      inner index children)
   in
-  inner tree
+  inner [] tree
 ;;
 
 let hierarchical_html_rules sctx html_alias index_info =
   let ctx = Super_context.context sctx in
   let tree = IndexTree.of_index_info index_info in
-  let rec inner dirs tree =
+  let rec inner idx dirs tree =
     Memo.List.fold_left
       tree
-      ~f:(fun dirs (IndexTree.Br (ii, children)) ->
-        let index = Index_info.index ii in
+      ~f:(fun dirs (IndexTree.Br (i, ii, children)) ->
+        let index = i :: idx in
         let index_artifact = create_index_artifact ctx true index in
         Log.info
           [ Pp.textf
@@ -1998,7 +1962,7 @@ let hierarchical_html_rules sctx html_alias index_info =
         let artifacts =
           List.filter
             ~f:(fun a -> MiniArtifact.is_visible a)
-            (index_artifact :: ii.artifacts)
+            (index_artifact :: ii.Index_info.artifacts)
         in
         let* new_dirs =
           Memo.List.filter_map artifacts ~f:(fun a -> html_generate sctx true a)
@@ -2009,10 +1973,10 @@ let hierarchical_html_rules sctx html_alias index_info =
         let* () =
           Rules.Produce.Alias.add_deps html_alias (Action_builder.paths html_files)
         in
-        inner (new_dirs @ dirs) children)
+        inner index (new_dirs @ dirs) children)
       ~init:dirs
   in
-  inner [] tree
+  inner [] [] tree
 ;;
 
 let setup_lib_html_rules_def =
@@ -2031,7 +1995,7 @@ let setup_lib_html_rules_def =
   in
   let f (sctx, all, lib) =
     let ctx = Super_context.context sctx in
-    let index = Index.PrivateLib (Toplevel, lib_unique_name lib) in
+    let index = [ Index.PrivateLib (lib_unique_name lib) ] in
     let* artifacts = local_lib_artifacts sctx all index lib in
     let parent = create_index_artifact ctx all index in
     let artifacts =
@@ -2103,7 +2067,7 @@ let setup_pkg_html_rules sctx all ~pkg =
 
 let setup_toplevel_html_rule sctx all =
   let ctx = Super_context.context sctx in
-  let artifact = create_index_artifact ctx all Toplevel in
+  let artifact = create_index_artifact ctx all [] in
   let* libs_list, pkgs = Valid.get ctx all in
   let deps =
     List.map libs_list ~f:(fun lib ->
@@ -2126,7 +2090,7 @@ let setup_toplevel_html_rule sctx all =
   let deps = Dune_engine.Dep.Set.of_list deps in
   let* () =
     Rules.Produce.Alias.add_deps
-      (Dep.html_alias ctx all (Index Toplevel))
+      (Dep.html_alias ctx all (Index []))
       (Action_builder.deps deps)
   in
   html_generate sctx all artifact
@@ -2135,11 +2099,18 @@ let setup_toplevel_html_rule sctx all =
 let setup_toplevel_index_rules sctx all =
   let ctx = Super_context.context sctx in
   let* indices = get_indexes sctx all in
-  let index_set_full = index_set_full indices in
-  let artifacts = index_child_artifacts ctx all index_set_full Toplevel in
+  let tree =
+    IndexTree.of_index_list
+      ~empty:()
+      ~combine:(fun x _ -> x)
+      (List.map indices ~f:(fun i -> i, ()))
+  in
+  let artifacts =
+    List.map ~f:(fun (IndexTree.Br (i, _, _)) -> create_index_artifact ctx all [ i ]) tree
+  in
   let contents = toplevel_index_contents sctx indices in
-  let f = Index.mld_path ctx all Toplevel in
-  let mld = create_index_artifact ctx all Toplevel in
+  let f = Index.mld_path ctx all [] in
+  let mld = create_index_artifact ctx all [] in
   let* () = add_rule sctx (Action_builder.write_file f contents) in
   let* _ =
     compile_mld
@@ -2151,7 +2122,7 @@ let setup_toplevel_index_rules sctx all =
       ~is_index:true
       ~children:artifacts
   in
-  let artifact = create_index_artifact ctx all Toplevel in
+  let artifact = create_index_artifact ctx all [] in
   let* _ =
     link_odoc_rules sctx all [ artifact ] ~package:None ~libs:[] ~indices ~quiet:false
   in
@@ -2160,7 +2131,7 @@ let setup_toplevel_index_rules sctx all =
 
 let setup_lnu_index_rules sctx all lnu =
   let* index_info = index_info_of_private_lib sctx all lnu in
-  let* () = hierarchical_index_rules sctx [index_info] in 
+  let* () = hierarchical_index_rules sctx [ index_info ] in
   Memo.return []
 ;;
 
@@ -2293,7 +2264,17 @@ let fallback_external_rules sctx local_dir fallback =
       let* acc = acc in
       let index = index_of_local_dir dir in
       let parent = create_index_artifact ctx true index in
-      let* res = artifact_rules sctx true ~quiet:true artifacts libs parent None [Target.ExtLib dir] in
+      let* res =
+        artifact_rules
+          sctx
+          true
+          ~quiet:true
+          artifacts
+          libs
+          parent
+          None
+          [ Target.ExtLib dir ]
+      in
       Memo.return (res @ acc)))
 ;;
 
@@ -2374,7 +2355,7 @@ let gen_project_rules sctx project =
       Path.Build.append_source ctx.build_dir pkg_dir
     in
     let register alias all =
-      let top_alias = Dep.html_alias ctx all (Index Toplevel) in
+      let top_alias = Dep.html_alias ctx all (Index []) in
       Dune_engine.Dep.alias top_alias
       |> Dune_engine.Dep.Set.singleton
       |> Action_builder.deps
