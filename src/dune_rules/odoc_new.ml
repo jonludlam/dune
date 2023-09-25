@@ -176,13 +176,16 @@ module Index = struct
     List.fold_right ~f:(fun x acc -> acc ++ subdir x) ~init m
   ;;
 
+  let mld_name_ty : ty -> string = function
+    | ExternalDunePackage pkg | LocalPackage pkg -> Package.Name.to_string pkg
+    | ExternalDuneSubLib str | LocalSubLib str -> str
+    | PrivateLib s  -> s
+    | ExternalFallback ef -> top_dir_of_external_fallback ef
+    | ExternalFallbackSubDir str -> str
+
   let mld_name : t -> string = function
     | [] -> "docs"
-    | ExternalDunePackage pkg :: _ | LocalPackage pkg :: _ -> Package.Name.to_string pkg
-    | ExternalDuneSubLib str :: _ | LocalSubLib str :: _ -> str
-    | PrivateLib s :: _ -> s
-    | ExternalFallback ef :: _ -> top_dir_of_external_fallback ef
-    | ExternalFallbackSubDir str :: _ -> str
+    | x :: _ -> mld_name_ty x
   ;;
 
   let mld_filename index = mld_name index ^ ".mld"
@@ -565,7 +568,7 @@ module Valid = struct
       if Lib_name.Map.cardinal filtered > 0 then Some filtered else None)
   ;;
 
-  type _categorized =
+  type categorized =
     { packages : Package.Name.Set.t
     ; local : Lib.Local.t Lib_name.Map.t
     ; localprivate : Lib.Local.t Import.String.Map.t
@@ -580,60 +583,76 @@ module Valid = struct
     }
   ;;
 
-  let _get_categorized ctx all =
-    let* libs, packages = get ctx all in
-    let init =
-      Memo.return { empty_categorized with packages = Package.Name.Set.of_list packages }
+  let get_categorized_memo =
+    let run (ctx, all) =
+      let* libs, packages = get ctx all in
+      let init =
+        Memo.return { empty_categorized with packages = Package.Name.Set.of_list packages }
+      in
+      List.fold_left libs ~init ~f:(fun cats lib ->
+        let* cats = cats in
+        match Lib.Local.of_lib lib with
+        | Some llib ->
+          (match Lib_info.package (Lib.Local.info llib) with
+          | Some _pkg ->
+            let local =
+              match Lib_name.Map.add cats.local (Lib.name (llib :> Lib.t)) llib with
+              | Ok l -> l
+              | Error _ ->
+                Log.info
+                  [ Pp.textf
+                      "Error adding local library %s to categorized map"
+                      (Lib.name (llib :> Lib.t) |> Lib_name.to_string)
+                  ];
+                cats.local
+            in
+            Memo.return { cats with local }
+          | None ->
+            let lnu = lib_unique_name llib in
+            let localprivate =
+              match Import.String.Map.add cats.localprivate lnu llib with
+              | Ok l -> l
+              | Error _ ->
+                Log.info
+                  [ Pp.textf
+                      "Error adding local private library %s to categorized map"
+                      (Lib.name (llib :> Lib.t) |> Lib_name.to_string)
+                  ];
+                cats.localprivate
+            in
+            Memo.return { cats with localprivate })
+        | None ->
+          let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.dir in
+          let local = Paths.local_path_of_findlib_path ctx obj_dir in
+          let top_dir = local |> String.split ~on:'/' |> List.hd in
+          if String.Map.mem cats.external_dirs top_dir
+          then Memo.return cats
+          else
+            let* c = classify_local_dir ctx top_dir in
+            let external_dirs =
+              match Import.String.Map.add cats.external_dirs top_dir c with
+              | Ok l -> l
+              | Error _ ->
+                Log.info
+                  [ Pp.textf "Error adding external dir %s to categorized map" top_dir ];
+                cats.external_dirs
+            in
+            Memo.return { cats with external_dirs })
     in
-    List.fold_left libs ~init ~f:(fun cats lib ->
-      let* cats = cats in
-      match Lib.Local.of_lib lib with
-      | Some llib ->
-        (match Lib_info.package (Lib.Local.info llib) with
-         | Some _pkg ->
-           let local =
-             match Lib_name.Map.add cats.local (Lib.name (llib :> Lib.t)) llib with
-             | Ok l -> l
-             | Error _ ->
-               Log.info
-                 [ Pp.textf
-                     "Error adding local library %s to categorized map"
-                     (Lib.name (llib :> Lib.t) |> Lib_name.to_string)
-                 ];
-               cats.local
-           in
-           Memo.return { cats with local }
-         | None ->
-           let lnu = lib_unique_name llib in
-           let localprivate =
-             match Import.String.Map.add cats.localprivate lnu llib with
-             | Ok l -> l
-             | Error _ ->
-               Log.info
-                 [ Pp.textf
-                     "Error adding local private library %s to categorized map"
-                     (Lib.name (llib :> Lib.t) |> Lib_name.to_string)
-                 ];
-               cats.localprivate
-           in
-           Memo.return { cats with localprivate })
-      | None ->
-        let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.dir in
-        let local = Paths.local_path_of_findlib_path ctx obj_dir in
-        let top_dir = local |> String.split ~on:'/' |> List.hd in
-        if String.Map.mem cats.external_dirs top_dir
-        then Memo.return cats
-        else
-          let* c = classify_local_dir ctx top_dir in
-          let external_dirs =
-            match Import.String.Map.add cats.external_dirs top_dir c with
-            | Ok l -> l
-            | Error _ ->
-              Log.info
-                [ Pp.textf "Error adding external dir %s to categorized map" top_dir ];
-              cats.external_dirs
-          in
-          Memo.return { cats with external_dirs })
+    let module Input = struct
+      type t = Context.t * bool
+
+      let equal (c1, b1) (c2, b2) =
+        Context.equal c1 c2 && b1 = b2
+      ;;
+
+      let hash (c, b) = Poly.hash (Context.hash c, b)
+      let to_dyn _ = Dyn.Opaque
+    end
+    in
+    Memo.create "categorized" ~input:(module Input) run
+
+    let get_categorized ctx all = Memo.exec get_categorized_memo (ctx, all)
   ;;
 end
 
@@ -714,13 +733,7 @@ module MiniArtifact : sig
   val reference : t -> string
   val module_name : t -> Module_name.t option
 
-  val v
-    :  source:Path.t
-    -> odoc:Path.Build.t
-    -> html_dir:Path.Build.t
-    -> html_file:Path.Build.t
-    -> ty:artifact_ty
-    -> t
+  val make : 'a. Context.t -> bool -> 'a Target.t -> 'a -> t
 end = struct
   type artifact_ty =
     | Module of bool
@@ -771,31 +784,6 @@ end = struct
   ;;
 
   let v ~source ~odoc ~html_dir ~html_file ~ty = { source; odoc; html_dir; html_file; ty }
-end
-
-module Artifact : sig
-  type t
-
-  val make : Context.t -> bool -> 'a Target.t -> 'a -> t
-  val mini_artifact : t -> MiniArtifact.t
-end = struct
-  type artifact_ty = MiniArtifact.artifact_ty =
-    | Module of bool
-    | Mld
-
-  type filenames =
-    { source : Path.t
-    ; odoc : string
-    ; html : string (* nb, this might have a dir too, ie Foo/index.html *)
-    }
-
-  type t = Target.dirs * filenames * artifact_ty
-
-  let odoc_file (ds, fs, _ty) = ds.Target.odocs ++ fs.odoc
-  let html_dir (ds, _fs, _ty) = ds.Target.html
-  let html_file (ds, fs, _ty) = ds.Target.html ++ fs.html
-  let artifact_ty (_ds, _fs, ty) = ty
-  let source_file (_ds, fs, _ty) = fs.source
 
   let make : type a. Context.t -> bool -> a Target.t -> a -> t =
     fun ctx all target source ->
@@ -804,19 +792,17 @@ end = struct
       let basename =
         Path.basename source |> Filename.chop_extension |> Stdune.String.uncapitalize
       in
-      let odoc = basename ^ ".odoc" in
-      let html = "index.html" in
-      let html_dir = Index.html_dir ctx all index in
-      ( { dirs with html = html_dir ++ Stdune.String.capitalize basename }
-      , { odoc; html; source }
-      , ty )
+      let odoc = dirs.Target.odocs ++ (basename ^ ".odoc") in
+      let html_dir = Index.html_dir ctx all index ++ Stdune.String.capitalize basename in
+      let html = html_dir ++ "index.html" in
+      v ~source ~odoc ~html_dir ~html_file:html ~ty
     in
     let mld_files index source ty is_index =
       let basename = Path.basename source |> Filename.chop_extension in
-      let odoc = "page-" ^ basename ^ ".odoc" in
-      let html = if is_index then "index.html" else sprintf "%s.html" basename in
+      let odoc = dirs.Target.odocs ++ ("page-" ^ basename ^ ".odoc") in
       let html_dir = if is_index then dirs.html else Index.html_dir ctx all index in
-      { dirs with html = html_dir }, { odoc; html; source }, ty
+      let html = html_dir ++ if is_index then "index.html" else sprintf "%s.html" basename in
+      v ~source ~odoc ~html_dir ~html_file:html ~ty
     in
     match target with
     | Lib _ ->
@@ -837,14 +823,6 @@ end = struct
       mld_files index source Mld true
   ;;
 
-  let mini_artifact a =
-    MiniArtifact.v
-      ~source:(source_file a)
-      ~odoc:(odoc_file a)
-      ~ty:(artifact_ty a)
-      ~html_dir:(html_dir a)
-      ~html_file:(html_file a)
-  ;;
 end
 
 let odoc_base_flags sctx quiet build_dir =
@@ -927,7 +905,7 @@ let odoc_include_flags ctx all pkg requires indices =
      in
      let paths =
        List.fold_left indices ~init:paths ~f:(fun p index ->
-         let odoc_dir = Target.odocs_dir ctx all (Index index) in
+         let odoc_dir = MiniArtifact.odoc_file index |> Path.Build.parent_exn in
          Path.Set.add p (Path.build odoc_dir))
      in
      Command.Args.S
@@ -936,12 +914,11 @@ let odoc_include_flags ctx all pkg requires indices =
 ;;
 
 let create_index_artifact ctx all index =
-  Artifact.make ctx all (Index index) () |> Artifact.mini_artifact
+  MiniArtifact.make ctx all (Index index) ()
 ;;
 
-let index_dep ctx all index =
-  let a = create_index_artifact ctx all index in
-  MiniArtifact.odoc_file a
+let index_dep index =
+  MiniArtifact.odoc_file index
   |> Path.build
   |> Dune_engine.Dep.file
   |> Dune_engine.Dep.Set.singleton
@@ -1062,7 +1039,7 @@ let link_odoc_rules
   let* valid_libs, _ = Valid.get ctx all in
   let deps = Dep.deps ctx all valid_libs package requires in
   let index_deps =
-    List.map ~f:(fun x -> Command.Args.Hidden_deps (index_dep ctx all x)) indices
+    List.map ~f:(fun x -> Command.Args.Hidden_deps (index_dep x)) indices
   in
   let quiet_arg =
     if quiet then Command.Args.A "--print-warnings=false" else Command.Args.empty
@@ -1299,7 +1276,7 @@ let fallback_artifacts
                   (Index.to_string index)
               ];
             let artifact =
-              Artifact.make
+              MiniArtifact.make
                 ctx
                 true
                 target
@@ -1307,7 +1284,6 @@ let fallback_artifacts
                    ( index
                    , cmti_file
                    , not (contains_double_underscore (Module_name.to_string mod_name)) ))
-              |> Artifact.mini_artifact
             in
             artifact :: acc)
         in
@@ -1378,8 +1354,7 @@ let singleton_artifacts ctx index dwm =
           Module_name.equal m1 m2)
       in
       let artifact =
-        Artifact.make ctx true target (Module (index, cmti_file, visible))
-        |> Artifact.mini_artifact
+        MiniArtifact.make ctx true target (Module (index, cmti_file, visible))
       in
       artifact :: acc)
   in
@@ -1399,8 +1374,7 @@ let ext_pkg_mld_artifacts ctx dir pkg =
   in
   let artifacts =
     List.map mlds ~f:(fun m ->
-      Artifact.make ctx true t (Mld ([ Index.ExternalDunePackage pkg ], m))
-      |> Artifact.mini_artifact)
+      MiniArtifact.make ctx true t (Mld ([ Index.ExternalDunePackage pkg ], m)))
   in
   index_file, artifacts
 ;;
@@ -1420,8 +1394,7 @@ let pkg_artifacts sctx all pkg =
   let mlds =
     String.Map.values mlds
     |> List.map ~f:(fun mld ->
-      Artifact.make ctx all (Pkg pkg) ([ Index.LocalPackage pkg ], mld)
-      |> Artifact.mini_artifact)
+      MiniArtifact.make ctx all (Pkg pkg) ([ Index.LocalPackage pkg ], mld))
   in
   index_file, mlds
 ;;
@@ -1449,8 +1422,7 @@ let local_lib_artifacts sctx all index lib =
             Module_name.equal (Module.name m1) (Module.name m2))
         in
         let cmti_file = Obj_dir.Module.cmti_file obj_dir ~cm_kind m in
-        (Artifact.make ctx all (Lib lib) (index, cmti_file, visible)
-         |> Artifact.mini_artifact)
+        (MiniArtifact.make ctx all (Lib lib) (index, cmti_file, visible))
         :: acc)
       modules
   in
@@ -1466,7 +1438,7 @@ let setup_package_odoc_rules sctx all ~pkg =
   let* libs = libs_of_pkg ctx ~pkg in
   let artifacts =
     List.map
-      ~f:(fun f -> Artifact.make ctx all (Pkg pkg) (index, f) |> Artifact.mini_artifact)
+      ~f:(fun f -> MiniArtifact.make ctx all (Pkg pkg) (index, f))
       (String.Map.values mlds)
   in
   let* odocs =
@@ -1499,6 +1471,7 @@ module Index_info = struct
     { artifacts : MiniArtifact.t list
     ; predefined_index : Path.t option
     ; lib : (Lib.t * Module_name.t list) list
+    ; html_alias : Alias.t
     }
 end
 
@@ -1536,8 +1509,8 @@ module IndexTree = struct
     List.fold_left indexes ~init:[] ~f:add_one
   ;;
 
-  let of_index_info =
-    let empty = { Index_info.artifacts = []; predefined_index = None; lib = [] } in
+  let of_index_info html_alias =
+    let empty = { Index_info.artifacts = []; predefined_index = None; lib = []; html_alias } in
     let combine x y =
       let predefined_index =
         match x.Index_info.predefined_index, y.Index_info.predefined_index with
@@ -1555,6 +1528,7 @@ module IndexTree = struct
       { Index_info.artifacts = x.Index_info.artifacts @ y.Index_info.artifacts
       ; predefined_index
       ; lib = x.lib @ y.lib
+      ; html_alias
       }
     in
     fun x -> of_index_list ~empty ~combine x
@@ -1562,8 +1536,10 @@ module IndexTree = struct
 end
 
 let index_info_of_local_pkg sctx all pkg_name =
+  let ctx = Super_context.context sctx in
   Log.info [ Pp.textf "index_info_of_local_pkg: %s" (Package.Name.to_string pkg_name) ];
   let* entry_modules = entry_modules sctx ~pkg:pkg_name in
+  let html_alias = Dep.html_alias ctx all (Pkg pkg_name) in
   let* index_infos =
     Lib.Local.Map.foldi ~init:(Memo.return []) entry_modules ~f:(fun lib modules acc ->
       let* acc = acc in
@@ -1575,7 +1551,7 @@ let index_info_of_local_pkg sctx all pkg_name =
         |> List.map ~f:Module.name
       in
       let lib = [ (lib :> Lib.t), entry_modules ] in
-      Memo.return ((index, { Index_info.lib; artifacts; predefined_index = None }) :: acc))
+      Memo.return ((index, { Index_info.lib; artifacts; predefined_index = None; html_alias }) :: acc))
   in
   let+ main_index_path, main_artifacts = pkg_artifacts sctx all pkg_name in
   let pkg_index_info =
@@ -1583,39 +1559,32 @@ let index_info_of_local_pkg sctx all pkg_name =
     , { Index_info.lib = []
       ; artifacts = main_artifacts
       ; predefined_index = main_index_path
+      ; html_alias
       } )
   in
-  pkg_index_info :: index_infos
+  IndexTree.of_index_info html_alias (pkg_index_info :: index_infos)
 ;;
 
-let index_info_of_private_lib sctx all lnu =
+let index_info_of_private_lib sctx all lnu lib =
   let ctx = Super_context.context sctx in
-  let* lib, lib_db = Scope_key.of_string ctx lnu in
-  let* lib =
-    let+ lib = Lib.DB.find lib_db lib in
-    Option.bind ~f:Lib.Local.of_lib lib
-  in
   let index = [ Index.PrivateLib lnu ] in
-  let* lib, artifacts =
-    match lib with
-    | None -> Memo.return ([], [])
-    | Some lib ->
-      let* artifacts = local_lib_artifacts sctx all index lib in
-      let+ modules = entry_modules_by_lib sctx lib in
-      let entry_modules =
-        modules
-        |> List.filter ~f:(fun m -> Module.visibility m = Visibility.Public)
-        |> List.map ~f:Module.name
-      in
-      let lib = [ (lib :> Lib.t), entry_modules ] in
-      lib, artifacts
+  let html_alias = Dep.html_alias ctx all (Lib lib) in
+  let* artifacts = local_lib_artifacts sctx all index lib in
+  let+ modules = entry_modules_by_lib sctx lib in
+  let entry_modules =
+    modules
+    |> List.filter ~f:(fun m -> Module.visibility m = Visibility.Public)
+    |> List.map ~f:Module.name
   in
-  Memo.return (index, { Index_info.lib; artifacts; predefined_index = None })
+  let lib = [ (lib :> Lib.t), entry_modules ] in
+  IndexTree.of_index_info html_alias [(index, { Index_info.lib; artifacts; predefined_index = None; html_alias })]
 ;;
 
-let index_info_of_dune_with_modules ctx dir pkg_name dwms =
+let index_info_of_dune_with_modules ctx all dir pkg_name dwms =
   let* dwms = Valid.filter_dwms ctx true dwms in
   let+ main_index_path, main_artifacts = ext_pkg_mld_artifacts ctx dir pkg_name in
+  let target = Target.ExtLib dir in
+  let html_alias = Dep.html_alias ctx all target in
   let index_infos =
     List.fold_left ~init:[] dwms ~f:(fun acc dwm ->
       let info = Lib.info dwm.lib in
@@ -1627,26 +1596,29 @@ let index_info_of_dune_with_modules ctx dir pkg_name dwms =
         | _ -> []
       in
       let lib = [ dwm.lib, entry_modules ] in
-      (index, { Index_info.lib; artifacts; predefined_index = None }) :: acc)
+
+      (index, { Index_info.lib; artifacts; predefined_index = None; html_alias }) :: acc)
   in
   let pkg_index_info =
     ( [ Index.ExternalDunePackage pkg_name ]
     , { Index_info.lib = []
       ; artifacts = main_artifacts
       ; predefined_index = main_index_path
-      } )
+      ; html_alias} )
   in
-  pkg_index_info :: index_infos
+  IndexTree.of_index_info html_alias (pkg_index_info :: index_infos)
 ;;
 
-let index_info_of_external_fallback sctx (fallback : fallback) =
+let index_info_of_external_fallback sctx all dir (fallback : fallback) =
   let ctx = Super_context.context sctx in
   let* libs = Valid.filter_fallback_libs ctx true fallback.libs in
   let* artifacts = fallback_artifacts sctx libs in
-  List.fold_left ~init:(Memo.return []) artifacts ~f:(fun acc (dir, artifacts, libs) ->
+  let target = Target.ExtLib dir in
+  let html_alias = Dep.html_alias ctx all target in
+  let+ index_infos = List.fold_left ~init:(Memo.return []) artifacts ~f:(fun acc (dir, artifacts, libs) ->
     let* acc = acc in
     Log.info [ Pp.textf "index_info_of_external_fallback: %s" dir ];
-    let* libs = Valid.filter_libs ctx true libs in
+    let+ libs = Valid.filter_libs ctx true libs in
     let index = index_of_local_dir dir in
     let libs =
       List.map libs ~f:(fun lib ->
@@ -1658,13 +1630,9 @@ let index_info_of_external_fallback sctx (fallback : fallback) =
         in
         lib, entry_modules)
     in
-    Memo.return
-      ((index, { Index_info.artifacts; lib = libs; predefined_index = None }) :: acc))
+  (index, { Index_info.artifacts; lib = libs; predefined_index = None; html_alias }) :: acc) in
+  IndexTree.of_index_info html_alias index_infos
 ;;
-
-type index_content =
-  | Symlink of Path.t
-  | Generated of string
 
 (* Index generation
 
@@ -1771,11 +1739,9 @@ let default_index ~main_name ~pkg_opt ~subindexes entry_modules =
   Buffer.contents b
 ;; *)
 
-let toplevel_index_contents _sctx indices =
-  let set =
-    List.fold_left ~f:(fun acc dt -> IndexSet.add acc dt) ~init:IndexSet.empty indices
-  in
-  let indices = IndexSet.to_list set in
+let toplevel_index_contents _sctx tree =
+  let top = List.map tree ~f:(function | IndexTree.Br (i, _, _) -> i) in
+
   let b = Buffer.create 1024 in
   Printf.bprintf b "{0 Docs}\n\n";
   let output_indices label = function
@@ -1783,137 +1749,53 @@ let toplevel_index_contents _sctx indices =
     | indices ->
       Printf.bprintf b "{1 %s}\n" label;
       List.iter
-        ~f:(fun i -> Printf.bprintf b "- {!page-\"%s\"}\n" (Index.mld_name i))
+        ~f:(fun i -> Printf.bprintf b "- {!page-\"%s\"}\n" (Index.mld_name_ty i))
         indices
   in
   output_indices
     "Local packages"
-    (List.filter indices ~f:(function
-      | Index.LocalPackage _ :: _ -> true
+    (List.filter top ~f:(function
+      | Index.LocalPackage _ -> true
       | _ -> false));
   output_indices
     "Switch-installed packages"
-    (List.filter indices ~f:(function
-      | Index.ExternalDunePackage _ :: _ -> true
+    (List.filter top ~f:(function
+      | Index.ExternalDunePackage _ -> true
       | _ -> false));
   output_indices
     "Other switch library directories"
-    (List.filter indices ~f:(function
-      | Index.ExternalFallback _ :: _ -> true
+    (List.filter top ~f:(function
+      | Index.ExternalFallback _ -> true
       | _ -> false));
   output_indices
     "Private libraries"
-    (List.filter indices ~f:(function
-      | Index.PrivateLib _ :: _ -> true
+    (List.filter top ~f:(function
+      | Index.PrivateLib _  -> true
       | _ -> false));
   Buffer.contents b
 ;;
 
-let indexes =
-  let run (ctx, all) =
-    let* libs_list, packages = Valid.get ctx all in
-    let dirs, local_indexes =
-      List.fold_left
-        ~init:(String.Set.empty, [])
-        ~f:(fun (dirset, indexes) lib ->
-          match Lib.Local.of_lib lib with
-          | Some local ->
-            (match Lib_info.package (Lib.Local.info local) with
-             | Some pkg -> dirset, [ Index.LocalPackage pkg ] :: indexes
-             | None -> dirset, [ Index.PrivateLib (lib_unique_name local) ] :: indexes)
-          | None ->
-            let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.dir in
-            let local = Paths.local_path_of_findlib_path ctx obj_dir in
-            let top_dir = local |> String.split ~on:'/' |> List.hd in
-            String.Set.add dirset top_dir, indexes)
-        libs_list
-    in
-    let* lib_indexes =
-      String.Set.fold dirs ~init:(Memo.return local_indexes) ~f:(fun dir acc ->
-        Log.info [ Pp.textf "indexes: %s" dir ];
-        let* acc = acc in
-        let* c = classify_local_dir ctx dir in
-        match c with
-        | DuneWithModules (_package_name, dwms) ->
-          Log.info [ Pp.textf "indexes: %s=DuneWithModules" dir ];
-          let+ dwms = Valid.filter_dwms ctx all dwms in
-          List.fold_left
-            ~f:(fun (acc : Index.t list) dwm : Index.t list -> index_of_dwm dwm :: acc)
-            ~init:acc
-            dwms
-        | Fallback _ ->
-          Log.info [ Pp.textf "indexes: %s=Fallback" dir ];
-          Memo.return ([ Index.ExternalFallback (EF dir) ] :: acc)
-        | Nothing ->
-          Log.info [ Pp.textf "indexes: %s=Nothing" dir ];
-          Memo.return acc)
-    in
-    let local_pkg_indexes =
-      List.map ~f:(fun name -> [ Index.LocalPackage name ]) packages
-    in
-    Memo.return (local_pkg_indexes @ lib_indexes)
-  in
-  let module Input = struct
-    type t = Context.t * bool
-
-    let equal (c1, b1) (c2, b2) = Context.equal c1 c2 && b1 = b2
-    let hash (c, b) = Poly.hash (Context.hash c, b)
-    let to_dyn _ = Dyn.Opaque
-  end
-  in
-  Memo.create "main_indexes" ~input:(module Input) run
-;;
-
-let get_indexes sctx all =
-  let ctx = Super_context.context sctx in
-  Memo.exec indexes (ctx, all)
-;;
-
-let general_index_rules sctx all package index index_content children indices libs =
-  let ctx = Super_context.context sctx in
-  let index_path = Index.mld_path ctx all index in
-  let* () =
-    match index_content with
-    | Symlink mld -> add_rule sctx (Action_builder.symlink ~src:mld ~dst:index_path)
-    | Generated content -> add_rule sctx (Action_builder.write_file index_path content)
-  in
-  let mld = create_index_artifact ctx all index in
-  let parent_opt =
-    match index with
-    | _ :: x -> Some (create_index_artifact ctx all x)
-    | [] -> None
-  in
-  let* _ =
-    compile_mld
-      sctx
-      mld
-      ~quiet:false
-      ~doc_dir:(Path.Build.parent_exn index_path)
-      ~parent_opt
-      ~is_index:true
-      ~children
-  in
-  link_odoc_rules sctx all [ mld ] ~package ~libs ~indices ~quiet:false
-;;
-
-let hierarchical_index_rules sctx indexes =
+let hierarchical_index_rules sctx all tree =
   Log.info [ Pp.textf "hierarchical_index_rules" ];
   let ctx = Super_context.context sctx in
-  let tree = IndexTree.of_index_info indexes in
   let main_name =
     match tree with
-    | [ Br (i, _, _) ] -> Index.ty_name i
+    | [ IndexTree.Br (i, _, _) ] -> Index.ty_name i
     | _ -> "index"
   in
+  let rec gather_mlds idx acc tree =
+    List.fold_left tree ~init:acc ~f:(fun acc (IndexTree.Br (i, _ii, children)) ->
+      let index = i::idx in
+      let mld = create_index_artifact ctx all index in
+      gather_mlds index (mld :: acc) children)
+  in
+  let all_mlds = gather_mlds [] [] tree in
   let rec inner idx tree =
     Memo.List.iter tree ~f:(fun (IndexTree.Br (i, ii, children)) ->
       let index = i :: idx in
-      Log.info
-        [ Pp.textf
-            "hierarchical_index_rules: %s (%d children)"
-            (Index.name index)
-            (List.length children)
-        ];
+      let index_path = Index.mld_path ctx all index in
+      let mld = create_index_artifact ctx all index in
+      let parent_opt = Some (create_index_artifact ctx all idx) in
       let subindexes =
         List.map
           ~f:(function
@@ -1922,31 +1804,32 @@ let hierarchical_index_rules sctx indexes =
       in
       let extra_children = List.map ~f:(create_index_artifact ctx true) subindexes in
       let liblist = List.map ~f:(fun (l, x) -> Lib.name l, x) ii.Index_info.lib in
-      let index_content =
+      let* () =
         match ii.predefined_index with
-        | Some p -> Symlink p
-        | None -> Generated (default_index ~main_name ~pkg_opt:None ~subindexes liblist)
+        | Some p -> add_rule sctx (Action_builder.symlink ~src:p ~dst:index_path)
+        | None -> add_rule sctx (Action_builder.write_file index_path (default_index ~main_name ~pkg_opt:None ~subindexes liblist))
       in
       let libs = List.map ~f:fst ii.lib in
-      let* () =
-        general_index_rules
-          sctx
-          true
-          None
-          index
-          index_content
-          (extra_children @ ii.artifacts)
-          [] (* (List.map ~f:Index_info.index indexes)*)
-          libs
+      let* _ =
+        compile_mld
+        sctx
+        mld
+        ~quiet:false
+        ~doc_dir:(Path.Build.parent_exn index_path)
+        ~parent_opt
+        ~is_index:true
+        ~children:(extra_children @ ii.artifacts)
       in
+      let* () = link_odoc_rules sctx all [mld] ~package:None ~libs ~indices:all_mlds ~quiet:false in
+
       inner index children)
   in
   inner [] tree
+
 ;;
 
-let hierarchical_html_rules sctx html_alias index_info =
+let hierarchical_html_rules sctx tree =
   let ctx = Super_context.context sctx in
-  let tree = IndexTree.of_index_info index_info in
   let rec inner idx dirs tree =
     Memo.List.fold_left
       tree
@@ -1971,7 +1854,7 @@ let hierarchical_html_rules sctx html_alias index_info =
           List.map artifacts ~f:(fun a -> Path.build (MiniArtifact.html_file a))
         in
         let* () =
-          Rules.Produce.Alias.add_deps html_alias (Action_builder.paths html_files)
+          Rules.Produce.Alias.add_deps ii.html_alias (Action_builder.paths html_files)
         in
         inner index (new_dirs @ dirs) children)
       ~init:dirs
@@ -1979,136 +1862,36 @@ let hierarchical_html_rules sctx html_alias index_info =
   inner [] [] tree
 ;;
 
-let setup_lib_html_rules_def =
-  let module Input = struct
-    module Super_context = Super_context.As_memo_key
-
-    type t = Super_context.t * bool * Lib.Local.t
-
-    let equal (sc1, b1, l1) (sc2, b2, l2) =
-      Super_context.equal sc1 sc2 && Lib.Local.equal l1 l2 && b1 = b2
-    ;;
-
-    let hash (sc, b, l) = Poly.hash (Super_context.hash sc, b, Lib.Local.hash l)
-    let to_dyn _ = Dyn.Opaque
-  end
-  in
-  let f (sctx, all, lib) =
-    let ctx = Super_context.context sctx in
-    let index = [ Index.PrivateLib (lib_unique_name lib) ] in
-    let* artifacts = local_lib_artifacts sctx all index lib in
-    let parent = create_index_artifact ctx all index in
-    let artifacts =
-      List.filter
-        ~f:(fun a ->
-          match MiniArtifact.artifact_ty a with
-          | Module true | Mld -> true
-          | _ -> false)
-        artifacts
-    in
-    let* dirs = Memo.parallel_map artifacts ~f:(fun a -> html_generate sctx all a) in
-    let dirs = List.filter_map ~f:(fun x -> x) dirs in
-    let html_files =
-      List.map ~f:(fun a -> Path.build (MiniArtifact.html_file a)) (parent :: artifacts)
-    in
-    let static_html = List.map ~f:(fun b -> Path.build b) (static_html ctx all) in
-    let* _ = html_generate sctx all parent in
-    let+ () =
-      Rules.Produce.Alias.add_deps
-        (Dep.html_alias ctx all (Lib lib))
-        (Action_builder.paths (List.rev_append static_html html_files))
-    in
-    dirs
-  in
-  Memo.With_implicit_output.create
-    "setup-library-html-rules"
-    ~implicit_output:Rules.implicit_output
-    ~input:(module Input)
-    f
-;;
-
-let setup_lib_html_rules sctx all lib =
-  Memo.With_implicit_output.exec setup_lib_html_rules_def (sctx, all, lib)
-;;
-
-let setup_pkg_html_rules_def =
-  let module Input = struct
-    module Super_context = Super_context.As_memo_key
-
-    type t = Super_context.t * bool * string
-
-    let equal (sc1, b1, l1) (sc2, b2, l2) =
-      Super_context.equal sc1 sc2 && String.equal l1 l2 && b1 = b2
-    ;;
-
-    let hash (sc, b, l) = Poly.hash (Super_context.hash sc, b, String.hash l)
-    let to_dyn _ = Dyn.Opaque
-  end
-  in
-  let f (sctx, all, pkg_name) =
-    let ctx = Super_context.context sctx in
-    let pkg = Package.Name.of_string pkg_name in
-    let html_alias = Dep.html_alias ctx all (Pkg pkg) in
-    let* index_info = index_info_of_local_pkg sctx all pkg in
-    hierarchical_html_rules sctx html_alias index_info
-  in
-  Memo.With_implicit_output.create
-    "setup_pkg_html_rules"
-    ~implicit_output:Rules.implicit_output
-    ~input:(module Input)
-    f
-;;
-
-let setup_pkg_html_rules sctx all ~pkg =
-  Memo.With_implicit_output.exec
-    setup_pkg_html_rules_def
-    (sctx, all, Package.Name.to_string pkg)
-;;
-
-let setup_toplevel_html_rule sctx all =
+let all_indexes sctx all =
   let ctx = Super_context.context sctx in
-  let artifact = create_index_artifact ctx all [] in
-  let* libs_list, pkgs = Valid.get ctx all in
-  let deps =
-    List.map libs_list ~f:(fun lib ->
-      match Lib.Local.of_lib lib with
-      | Some local ->
-        (match Lib_info.package (Lib.Local.info local) with
-         | Some pkg -> Dep.html_alias ctx all (Target.Pkg pkg)
-         | None -> Dep.html_alias ctx all (Target.Lib local))
-      | None ->
-        let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.dir in
-        let local = Paths.local_path_of_findlib_path ctx obj_dir in
-        let top_dir = local |> String.split ~on:'/' |> List.hd in
-        Dep.html_alias ctx all (Target.ExtLib top_dir))
-  in
-  let pkgs = List.map ~f:(fun p -> Dep.html_alias ctx all (Target.Pkg p)) pkgs in
-  let deps =
-    Dune_engine.Dep.file (Path.build (MiniArtifact.html_file artifact))
-    :: List.map ~f:Dune_engine.Dep.alias (deps @ pkgs)
-  in
-  let deps = Dune_engine.Dep.Set.of_list deps in
-  let* () =
-    Rules.Produce.Alias.add_deps
-      (Dep.html_alias ctx all (Index []))
-      (Action_builder.deps deps)
-  in
-  html_generate sctx all artifact
-;;
+  let* categorized = Valid.get_categorized ctx all in
+  let indexes = Package.Name.Set.fold ~init:(Memo.return []) categorized.Valid.packages ~f:(fun pkg acc ->
+    let* acc = acc in
+    let+ ii = index_info_of_local_pkg sctx all pkg in
+    List.rev_append ii acc) in
+  let indexes = String.Map.foldi ~init:indexes categorized.localprivate ~f:(fun name lib acc ->
+    let* acc = acc in
+    let+ ii = index_info_of_private_lib sctx all name lib in
+    List.rev_append ii acc) in
+  String.Map.foldi ~init:indexes categorized.external_dirs ~f:(fun dir ty acc ->
+    let* acc = acc in
+    match ty with
+    | DuneWithModules (pkg_name, dwms) ->
+      let+ ii = index_info_of_dune_with_modules (Super_context.context sctx) all dir pkg_name dwms in
+      List.rev_append ii acc
+    | Fallback fallback ->
+      let+ ii = index_info_of_external_fallback sctx all dir fallback in
+      List.rev_append ii acc
+    | Nothing -> Memo.return acc) 
 
-let setup_toplevel_index_rules sctx all =
+let setup_all_index_rules sctx all =
   let ctx = Super_context.context sctx in
-  let* indices = get_indexes sctx all in
-  let tree =
-    IndexTree.of_index_list
-      ~empty:()
-      ~combine:(fun x _ -> x)
-      (List.map indices ~f:(fun i -> i, ()))
-  in
+  let* tree = all_indexes sctx all in
+  let* () = hierarchical_index_rules sctx all tree in
   let artifacts =
     List.map ~f:(fun (IndexTree.Br (i, _, _)) -> create_index_artifact ctx all [ i ]) tree
   in
-  let contents = toplevel_index_contents sctx indices in
+  let contents = toplevel_index_contents sctx tree in
   let f = Index.mld_path ctx all [] in
   let mld = create_index_artifact ctx all [] in
   let* () = add_rule sctx (Action_builder.write_file f contents) in
@@ -2124,38 +1907,35 @@ let setup_toplevel_index_rules sctx all =
   in
   let artifact = create_index_artifact ctx all [] in
   let* _ =
-    link_odoc_rules sctx all [ artifact ] ~package:None ~libs:[] ~indices ~quiet:false
+    link_odoc_rules sctx all [ artifact ] ~package:None ~libs:[] ~indices:artifacts ~quiet:false
   in
   Memo.return []
-;;
 
-let setup_lnu_index_rules sctx all lnu =
-  let* index_info = index_info_of_private_lib sctx all lnu in
-  let* () = hierarchical_index_rules sctx [ index_info ] in
-  Memo.return []
-;;
 
-let setup_pkg_index_rules sctx all pkg =
-  let* index_info = index_info_of_local_pkg sctx all pkg in
-  let* () = hierarchical_index_rules sctx index_info in
-  Memo.return []
-;;
-
-let setup_external_index_rules sctx dir =
+let setup_all_html_rules sctx all =
   let ctx = Super_context.context sctx in
-  let* c = classify_local_dir ctx dir in
-  match c with
-  | Nothing -> Memo.return []
-  | Fallback f ->
-    let* index_info = index_info_of_external_fallback sctx f in
-    let* () = hierarchical_index_rules sctx index_info in
-    Memo.return []
-  | DuneWithModules (pkg_name, dwms) ->
-    let* index_info = index_info_of_dune_with_modules ctx dir pkg_name dwms in
-    let* () = hierarchical_index_rules sctx index_info in
-    Memo.return []
-;;
+  let* tree = all_indexes sctx all in
+  let artifact = create_index_artifact ctx all [] in
+  let rec get_deps tree =
+    List.map tree ~f:(fun (IndexTree.Br (_, ii, children)) ->
+      Dune_engine.Dep.alias ii.Index_info.html_alias :: (get_deps children)) |> List.concat in
+  let deps = Dune_engine.Dep.Set.of_list (get_deps tree) in
+  let html = List.map ~f:(fun b -> Path.build b) (MiniArtifact.html_file artifact :: static_html ctx all) in
+  let* () =
+    Rules.Produce.Alias.add_deps
+        (Dep.html_alias ctx all (Index []))
+        (Action_builder.paths html) in
+  let* () =
+    Rules.Produce.Alias.add_deps
+      (Dep.html_alias ctx all (Index []))
+      (Action_builder.deps deps)
+  in
+  let* dirs = hierarchical_html_rules sctx tree in
+  let* () = setup_css_rule sctx all in
+  let* _ = html_generate sctx all artifact in
+  Memo.return (Paths.odoc_support ctx all :: dirs)
 
+  
 (* End of index rules *)
 
 (* External rules *)
@@ -2321,28 +2101,25 @@ let setup_external_rules sctx local_dir =
   | Fallback f -> fallback_external_rules sctx local_dir f
 ;;
 
-let dwm_html_rules sctx local_dir pkg_name dwms =
+(* let dwm_html_rules sctx all local_dir pkg_name dwms =
   let ctx = Super_context.context sctx in
-  let* index_info = index_info_of_dune_with_modules ctx local_dir pkg_name dwms in
-  let html_alias = Dep.html_alias ctx true (ExtLib local_dir) in
-  hierarchical_html_rules sctx html_alias index_info
+  let* index_info = index_info_of_dune_with_modules ctx all local_dir pkg_name dwms in
+  hierarchical_html_rules sctx index_info
 ;;
 
-let fallback_html_rules sctx local_dir fallback =
-  let ctx = Super_context.context sctx in
-  let* index_info = index_info_of_external_fallback sctx fallback in
-  let html_alias = Dep.html_alias ctx true (ExtLib local_dir) in
-  hierarchical_html_rules sctx html_alias index_info
-;;
+let fallback_html_rules sctx all local_dir fallback =
+  let* index_info = index_info_of_external_fallback sctx all local_dir fallback in
+  hierarchical_html_rules sctx index_info
+;; *)
 
-let setup_external_html_rules sctx local_dir =
+(* let setup_external_html_rules sctx local_dir =
   let ctx = Super_context.context sctx in
   let* c = classify_local_dir ctx local_dir in
   match c with
   | Nothing -> Memo.return []
-  | DuneWithModules (package, dwms) -> dwm_html_rules sctx local_dir package dwms
-  | Fallback f -> fallback_html_rules sctx local_dir f
-;;
+  | DuneWithModules (package, dwms) -> dwm_html_rules sctx true local_dir package dwms
+  | Fallback f -> fallback_html_rules sctx true local_dir f
+;; *)
 
 (* End of external rules *)
 
@@ -2411,137 +2188,6 @@ let with_package sctx pkg_name ~f =
     | _ -> Memo.return no_rules)
 ;;
 
-(** Take 14 *)
-(*
-   module Docs = struct
-  type index = {
-    artifact: MiniArtifact.t;
-    odocs_subdir : string;
-    html_subdir : string;
-    content: index_content;
-  }
-
-  type toplevel_info = {
-    packages : package list;
-    switch_packages : switch_package list;
-    switch_otherdirs : switch_otherdir list;
-    private_libraries : private_library list;
-  }
-
-  type toplevel =
-    | Toplevel of index * toplevel_info
-
-  type sublibrary =
-    | Sublibrary of {
-      library : library option;
-      sublibraries : (index * sublibrary) list;
-      }
-
-  type package =
-    | LocalPackage of index * {
-        pkg_artifacts : MiniArtifact.t list;
-        sublibraries : sublibrary list;
-      }
-
-  type library = {
-    lib : Lib.t;
-    artifacts : MiniArtifact.t list;
-  }
-end *)
-(*
-   type package =
-  | Mld of MiniArtifact.t
-  | Module of MiniArtifact.t
-
-
-let package_index ctx 
-
-let toplevel_index ctx odocs_path html_path cat =
-    let b = Buffer.create 1024 in
-    Printf.bprintf b "{0 Docs}\n\n";
-  
-    let output_indices label = function
-      | [] -> ()
-      | indices ->
-        Printf.bprintf b "{1 %s}\n" label;
-        List.iter
-          ~f:(fun i -> Printf.bprintf b "- {!page-\"%s\"}\n" (MiniArtifact.reference i.artifact))
-          indices
-    in
-
-    let package_indexes = Package.Name.Set.fold ~init:indexes ~f:(fun pkg ->
-      let index = package_index ctx all in 
-      ) in
-    
-    output_indices "Local packages" package_indexes;
-
-
-
-
-let indexes =
-  let run (ctx, all) =
-    let categorized = Valid.get_categorized ctx all in
-
-    let content = toplevel_index_contents_cat ctx categorized in
-
-    let dirs, local_indexes =
-      List.fold_left ~init:(String.Set.empty, [])
-        ~f:(fun (dirset, indexes) lib ->
-          match Lib.Local.of_lib lib with
-          | Some local -> (
-            match Lib_info.package (Lib.Local.info local) with
-            | Some pkg -> (dirset, Index.LocalPackage (Toplevel, pkg) :: indexes)
-            | None ->
-              (dirset, Index.PrivateLib (Toplevel, lib_unique_name local) :: indexes))
-          | None ->
-            let obj_dir = Lib.info lib |> Lib_info.obj_dir |> Obj_dir.dir in
-            let local = Paths.local_path_of_findlib_path ctx obj_dir in
-            let top_dir = local |> String.split ~on:'/' |> List.hd in
-            (String.Set.add dirset top_dir, indexes))
-        libs_list
-    in
-
-    let* lib_indexes =
-      String.Set.fold dirs ~init:(Memo.return local_indexes) ~f:(fun dir acc ->
-          let* acc = acc in
-          let* c = classify_local_dir ctx dir in
-          match c with
-          | DuneWithModules (_package_name, dwms) ->
-            let+ dwms = Valid.filter_dwms ctx all dwms in
-            List.fold_left ~f:(fun (acc : Index.t list) dwm : Index.t list ->
-              index_of_dwm dwm :: acc
-            ) ~init:acc dwms
-          | Fallback _ -> Memo.return (Index.ExternalFallback (Toplevel, EF dir) :: acc)
-          | Nothing -> Memo.return acc)
-    in
-
-    let local_pkg_indexes =
-      List.map ~f:(fun name -> Index.LocalPackage (Toplevel, name)) packages
-    in
-
-    Memo.return (local_pkg_indexes @ lib_indexes)
-  in
-  let module Input = struct
-    type t = Context.t * bool
-
-    let equal (c1, b1) (c2, b2) = Context.equal c1 c2 && b1 = b2
-
-    let hash (c, b) = Poly.hash (Context.hash c, b)
-
-    let to_dyn _ = Dyn.Opaque
-  end in
-  Memo.create "main_indexes" ~input:(module Input) run
-  
-  let get_indexes sctx all =
-    let ctx = Super_context.context sctx in
-    Memo.exec indexes (ctx, all)
-  
-let get_tree sctx =
-  let ctx = Super_context.context sctx in
-  let* (libs, packages) = Valid.get ctx true in
-
-
-let setup_new_index_rules sctx = *)
 
 let gen_rules sctx ~dir rest =
   let all = true in
@@ -2552,37 +2198,11 @@ let gen_rules sctx ~dir rest =
          ~build_dir_only_sub_dirs:
            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
          (Memo.return Rules.empty))
-  | [ "html" ] ->
-    let ctx = Super_context.context sctx in
-    let rules =
-      let* () = setup_css_rule sctx all in
-      let+ _ = setup_toplevel_html_rule sctx all in
-      [ Paths.odoc_support ctx all ]
-    in
-    has_rules rules
-  | [ "index" ] -> has_rules (setup_toplevel_index_rules sctx all)
-  (* | [ "index-new" ] -> has_rules (setup_new_index_rules sctx) *)
   | [ "odoc"; "pkg"; pkg ] ->
     with_package sctx pkg ~f:(fun pkg -> setup_package_odoc_rules sctx all ~pkg)
   | [ "odoc"; "external"; pkg ] -> has_rules (setup_external_rules sctx pkg)
   | [ "odoc"; "internal"; lib ] -> has_rules (setup_internal_rules sctx lib)
-  | [ "index"; lib_unique_name_or_pkg ] ->
-    with_target sctx lib_unique_name_or_pkg (function
-      | Package pkg -> has_rules (setup_pkg_index_rules sctx all (Package.name pkg))
-      | PrivateLib lib -> has_rules (setup_lnu_index_rules sctx all (lib_unique_name lib))
-      | ExtLib ->
-        if all
-        then has_rules (setup_external_index_rules sctx lib_unique_name_or_pkg)
-        else Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-      | Unknown -> Memo.return no_rules)
-  | [ "html"; "docs"; lib_unique_name_or_pkg ] ->
-    Log.info [ Pp.textf "html rules called for dir %s" lib_unique_name_or_pkg ];
-    with_target sctx lib_unique_name_or_pkg (function
-      | Package pkg ->
-        Log.info [ Pp.textf "html rules for package %s" lib_unique_name_or_pkg ];
-        has_rules (setup_pkg_html_rules sctx all ~pkg:(Package.name pkg))
-      | PrivateLib lib -> has_rules (setup_lib_html_rules sctx all lib)
-      | ExtLib -> has_rules (setup_external_html_rules sctx lib_unique_name_or_pkg)
-      | Unknown -> Memo.return no_rules)
+  | [ "index"; ] -> has_rules (setup_all_index_rules sctx all)
+  | [ "html"; "docs"; ] -> has_rules (setup_all_html_rules sctx all)
   | _ -> Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
 ;;
