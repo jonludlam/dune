@@ -152,12 +152,12 @@ module Index = struct
   let obj_dir ctx all : t -> Path.Build.t =
     let root = Paths.root ctx all ++ "index" in
     let subdir = function
-      | LocalPackage pkg -> "local/" ^ Package.Name.to_string pkg
+      | LocalPackage pkg -> Package.Name.to_string pkg
       | LocalSubLib str -> str
-      | ExternalDunePackage pkg -> "external/" ^ Package.Name.to_string pkg
+      | ExternalDunePackage pkg -> Package.Name.to_string pkg
       | ExternalDuneSubLib str -> str
-      | ExternalFallback d -> "external/" ^ top_dir_of_external_fallback d
-      | PrivateLib lnu -> "private/" ^ lnu
+      | ExternalFallback d -> top_dir_of_external_fallback d
+      | PrivateLib lnu -> lnu
       | ExternalFallbackSubDir str -> str
     in
     List.fold_right ~f:(fun x acc -> acc ++ subdir x) ~init:root
@@ -2562,19 +2562,19 @@ let gen_rules sctx ~dir rest =
     has_rules rules
   | [ "index" ] -> has_rules (setup_toplevel_index_rules sctx all)
   (* | [ "index-new" ] -> has_rules (setup_new_index_rules sctx) *)
-  | [ "index"; "local"; pkg ] ->
-    Log.info [ Pp.textf "index rules called for local pkg %s" pkg ];
-    with_package sctx pkg ~f:(fun pkg ->
-      setup_pkg_index_rules sctx all (Package.name pkg))
-  | [ "index"; "private"; lnu ] -> has_rules (setup_lnu_index_rules sctx all lnu)
-  | [ "index"; "external"; pkg ] ->
-    if all
-    then has_rules (setup_external_index_rules sctx pkg)
-    else Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
   | [ "odoc"; "pkg"; pkg ] ->
     with_package sctx pkg ~f:(fun pkg -> setup_package_odoc_rules sctx all ~pkg)
   | [ "odoc"; "external"; pkg ] -> has_rules (setup_external_rules sctx pkg)
   | [ "odoc"; "internal"; lib ] -> has_rules (setup_internal_rules sctx lib)
+  | [ "index"; lib_unique_name_or_pkg ] ->
+    with_target sctx lib_unique_name_or_pkg (function
+      | Package pkg -> has_rules (setup_pkg_index_rules sctx all (Package.name pkg))
+      | PrivateLib lib -> has_rules (setup_lnu_index_rules sctx all (lib_unique_name lib))
+      | ExtLib ->
+        if all
+        then has_rules (setup_external_index_rules sctx lib_unique_name_or_pkg)
+        else Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
+      | Unknown -> Memo.return no_rules)
   | [ "html"; "docs"; lib_unique_name_or_pkg ] ->
     Log.info [ Pp.textf "html rules called for dir %s" lib_unique_name_or_pkg ];
     with_target sctx lib_unique_name_or_pkg (function
