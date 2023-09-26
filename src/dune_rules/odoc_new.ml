@@ -2101,26 +2101,6 @@ let setup_external_rules sctx local_dir =
   | Fallback f -> fallback_external_rules sctx local_dir f
 ;;
 
-(* let dwm_html_rules sctx all local_dir pkg_name dwms =
-  let ctx = Super_context.context sctx in
-  let* index_info = index_info_of_dune_with_modules ctx all local_dir pkg_name dwms in
-  hierarchical_html_rules sctx index_info
-;;
-
-let fallback_html_rules sctx all local_dir fallback =
-  let* index_info = index_info_of_external_fallback sctx all local_dir fallback in
-  hierarchical_html_rules sctx index_info
-;; *)
-
-(* let setup_external_html_rules sctx local_dir =
-  let ctx = Super_context.context sctx in
-  let* c = classify_local_dir ctx local_dir in
-  match c with
-  | Nothing -> Memo.return []
-  | DuneWithModules (package, dwms) -> dwm_html_rules sctx true local_dir package dwms
-  | Fallback f -> fallback_html_rules sctx true local_dir f
-;; *)
-
 (* End of external rules *)
 
 let gen_project_rules sctx project =
