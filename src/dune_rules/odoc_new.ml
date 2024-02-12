@@ -159,20 +159,37 @@ module Index = struct
 
   let of_external_loc maps (loc : Dune_package.External_location.t) : t option =
     let open Option.O in
-    let* top, local =
-      match loc with
-      | Relative_to_stdlib local_path -> Some (Relative_to_stdlib, local_path)
-      | Relative_to_findlib (findlib_path, local_path) ->
-        let+ n = Path.Map.find maps.findlib_paths findlib_path in
-        Relative_to_findlib (n, findlib_path), local_path
-      | Absolute _ -> None
+    let map = [
+      (Dune_package.External_location.Relative_to_stdlib (Path.Local.of_string ".")), [Sub_dir "stdlib"; Sub_dir "my"; Top_dir Other];
+      (Relative_to_findlib (Path.of_string "/", Path.Local.of_string "unix")), [Sub_dir "unix"; Sub_dir "unox"; Sub_dir "minix"; Sub_dir "posix"; Top_dir Other]
+    ] in
+    let is_mapped loc =
+      match List.find_opt ~f:(fun (x, _) ->
+        let open Dune_package.External_location in
+        match x, loc with
+        | Relative_to_stdlib a, Relative_to_stdlib b -> Path.Local.equal a b
+        | Relative_to_findlib (_, a), Relative_to_findlib (_, b) -> Path.Local.equal a b
+        | _, _ -> false) map with
+      | Some (_, y) -> Some y
+      | _ -> None
     in
-    let s = Path.Local.explode local in
-    let index =
-      List.fold_left s ~f:(fun acc s -> Sub_dir s :: acc) ~init:[ Top_dir top ]
-    in
-    Some index
-  ;;
+    match is_mapped loc with
+    | Some x -> Some x
+    | None ->
+      let* top, local =
+        match loc with
+        | Relative_to_stdlib local_path -> Some (Relative_to_stdlib, local_path)
+        | Relative_to_findlib (findlib_path, local_path) ->
+          let+ n = Path.Map.find maps.findlib_paths findlib_path in
+          Relative_to_findlib (n, findlib_path), local_path
+        | Absolute _ -> None
+      in
+      let s = Path.Local.explode local in
+      let index =
+        List.fold_left s ~f:(fun acc s -> Sub_dir s :: acc) ~init:[ Top_dir top ]
+      in
+      Some index
+    ;;
 
   let of_external_lib maps lib =
     let name = Lib.name lib in
