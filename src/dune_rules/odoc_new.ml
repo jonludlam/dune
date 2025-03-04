@@ -127,6 +127,11 @@ module Index = struct
     List.fold_right ~f:(fun x acc -> acc ++ subdir x) ~init m
   ;;
 
+  let classify_dir ctx ~all (m : t) =
+    let init = Paths.root ctx ~all ++ "classify" in
+    List.fold_right ~f:(fun x acc -> acc ++ subdir x) ~init m
+  ;;
+
   let mld_name_ty : ty -> string = subdir
 
   let mld_name : t -> string = function
@@ -1048,6 +1053,30 @@ let html_generate sctx all ~search_db (a : Artifact.t) =
   in
   let+ () = add_rule sctx rule in
   result
+;;
+(* |> Dune_engine.Dep.file
+      |> Dune_engine.Dep.Set.singleton *)
+let classify_rule sctx ~all modules_dir dir =
+  let ctx = Super_context.context sctx in
+  let dir = Index.classify_dir ctx ~all dir in
+  let file = dir ++ "classify" in
+  Log.info [ Pp.textf "Classifying %s" (Path.Build.to_string dir) ];
+  let odoc = Odoc.odoc_program sctx (Paths.root ctx ~all) in
+  let* deps = Fs_memo.dir_contents (Path.as_outside_build_dir_exn modules_dir) in
+  let deps = match deps with
+    | Ok x -> Fs_cache.Dir_contents.to_list x |> List.filter_map ~f:(function (x, Unix.S_REG) -> Some (Path.append_local modules_dir (Path.Local.of_string x)) | _ -> None)
+    | Error _ -> []
+  in
+  let deps = Dune_engine.Dep.Set.of_files deps in
+  let+ () = Super_context.add_rule
+    sctx
+    ~dir:(Paths.root ctx ~all)
+    (Command.run_dyn_prog
+      odoc
+      ~dir:(Path.parent_exn (Path.build file))
+      ~stdout_to:file
+      [ A "classify"; A (Path.to_string modules_dir); Hidden_deps deps ]) in
+  file
 ;;
 
 (* Intra-library module dependencies have to be found out for
@@ -2004,6 +2033,25 @@ let gen_project_rules sctx project =
     ())
 ;;
 
+let setup_classify_rules sctx ~all =
+  let ctx = Super_context.context sctx in
+  Log.info [ Pp.text "Classifying libraries" ];
+  let* (libs, _) = Valid.get ctx ~all in
+  let* map = libs_maps_general ctx (List.map ~f:(fun l -> Lib.name l) libs) in
+  let dirs = List.fold_left ~f:(fun map lib ->
+    let dir = Lib_info.obj_dir (Lib.info lib) |> Obj_dir.dir in
+    Path.Map.add_exn (Path.Map.remove map dir) dir lib) ~init:Path.Map.empty libs in
+  let list = Path.Map.to_list dirs in
+  let+ _ = Memo.List.filter_map ~f:(fun (dir,lib) ->
+    Log.info [Pp.textf "Classifying dir %s" (dir |> Path.to_string)];
+    if Lib.is_local lib
+    then Memo.return None
+  else 
+     
+    let+ result = classify_rule sctx ~all dir (Index.of_external_lib map lib) in
+    Some result) list in
+  []
+
 let has_rules m =
   let* dirs, rules = Rules.collect (fun () -> m) in
   let directory_targets =
@@ -2014,6 +2062,7 @@ let has_rules m =
 
 let gen_rules sctx ~dir rest =
   let all = true in
+  Log.info [Pp.textf "gen_rules %s" (String.concat ~sep:" " rest)];
   match rest with
   | [] ->
     Memo.return
@@ -2021,6 +2070,7 @@ let gen_rules sctx ~dir rest =
          ~build_dir_only_sub_dirs:
            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
          (Memo.return Rules.empty))
+  | [ "classify"; ] -> has_rules (setup_classify_rules sctx ~all)
   | [ "odoc" ] -> has_rules (setup_odoc_rules sctx ~all)
   | [ "index" ] -> has_rules (setup_all_index_rules sctx ~all)
   | [ "html"; "docs" ] -> has_rules (setup_all_html_rules sctx ~all)
