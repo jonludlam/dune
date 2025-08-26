@@ -259,29 +259,95 @@ This fundamental difference means migrating to `--parent-id` will:
 3. **Cross-references**: Same linking behavior between pages
 4. **API surface**: Same user-facing documentation structure
 
+## Output Directory Layout Changes in odoc v3
+
+### Current Layout (`odoc_new.ml`)
+The hierarchical system creates a deep directory structure:
+```
+_doc_new/html/docs/
+├── local/
+│   ├── package1/
+│   │   ├── index.html
+│   │   ├── Lib1/
+│   │   │   └── Module1/index.html
+│   │   └── Lib2/
+│   │       └── Module2/index.html
+│   └── package2/
+│       └── ...
+├── stdlib/
+│   └── ...
+└── findlib-N/
+    └── ...
+```
+
+### odoc v3 Layout (Package-Centric)
+The new layout will be flatter and package-focused:
+```
+_doc/
+├── package1/
+│   ├── index.html              # Package index
+│   ├── lib1/
+│   │   ├── index.html          # Library index
+│   │   └── Module1/index.html  # Module documentation
+│   └── lib2/
+│       ├── index.html
+│       └── Module2/index.html
+├── package2/
+│   └── ...
+└── odoc.support/
+    └── ...                     # CSS, JS, search files
+```
+
+### Key Layout Differences
+
+| Aspect | `odoc_new.ml` (current) | odoc v3 (planned) |
+|--------|-------------------------|-------------------|
+| **Top level** | Category-based (`local/`, `stdlib/`, etc.) | Package-based (`package1/`, `package2/`) |
+| **Hierarchy depth** | Deep categorization | Shallow package focus |
+| **Library organization** | Mixed with categorization | Direct subdirectories of packages |
+| **External packages** | Separate category trees | Same structure as local packages |
+| **Navigation model** | Category → Package → Library | Package → Library |
+
+### Migration Implications for Directory Layout
+
+#### Path Generation Changes
+1. **HTML file paths**: Must change from category-based to package-based
+2. **Cross-references**: Internal links need path updates
+3. **Search indexing**: Different base paths for search database
+4. **CSS/JS paths**: Relative path calculations change
+
+#### Compatibility Considerations
+1. **Bookmark breakage**: Existing documentation URLs will change
+2. **Integration points**: Tools expecting hierarchical paths need updates
+3. **Web server config**: Serving documentation may need path updates
+
 ## Considerations for odoc v3 Migration
 
 When migrating to odoc v3's `--parent-id` mechanism, consider:
 
 1. **Build dependency elimination**: Remove `Hidden_deps` and parent compilation requirements
 2. **Parallel compilation enablement**: Restructure rules for independent compilation
-3. **Reference format changes**: The new mechanism may use different reference formats
-4. **Dependency graph simplification**: How to maintain correctness without parent dependencies
-5. **Child registration**: Whether child registration remains necessary
-6. **Path determination**: How output paths are computed from parent IDs
-7. **Backward compatibility**: Supporting both mechanisms during transition
-8. **Index handling**: Special cases for index pages may change
-9. **Entry module filtering**: How visible/hidden modules affect hierarchy
-10. **Virtual library integration**: Maintaining filtering of implementations
-11. **External library classification**: Cross-boundary relationships
-12. **Multi-format output**: JSON and HTML generation consistency
+3. **Output layout restructuring**: Change from hierarchical categories to package-centric structure
+4. **Path generation overhaul**: Update HTML path computation for new directory layout
+5. **Reference format changes**: The new mechanism may use different reference formats
+6. **Dependency graph simplification**: How to maintain correctness without parent dependencies
+7. **Child registration**: Whether child registration remains necessary
+8. **Backward compatibility**: Handle URL changes and directory structure migration
+9. **Index handling**: Special cases for index pages may change
+10. **Entry module filtering**: How visible/hidden modules affect hierarchy
+11. **Virtual library integration**: Maintaining filtering of implementations
+12. **External library classification**: Integration into package-centric layout
+13. **Multi-format output**: JSON and HTML generation consistency
+14. **Search integration**: Update search paths and indexing for new layout
 
 The current implementation tightly couples the hierarchy with the compilation phase through build dependencies. The new `--parent-id` mechanism in odoc v3 decouples these concerns, potentially allowing for:
 - **Independent compilation**: No build dependencies on parent existence
 - **Better parallelization**: More opportunities within module/library dependency constraints
 - **Simplified build graphs**: Hierarchy only matters for output generation
+- **Package-focused organization**: Cleaner, more intuitive directory structure
 - **Dynamic hierarchy changes**: Parent relationships not baked into compilation
 - **Better support for external documentation**: No need to compile parents
+- **Unified layout**: Same structure for all packages regardless of origin
 - **Cleaner integration**: Hierarchy separate from dependency management
 
 ### Preserved Dependencies

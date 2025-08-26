@@ -8,3 +8,14 @@
  (package dune-private-libs)
  (action
   (run ./sexp_tests.exe)))
+
+(executable
+ (name package_discovery_tests)
+ (modules package_discovery_tests)
+ (libraries stdune dune_lang dune_engine dune_rules))
+
+(rule
+ (alias runtest)
+ (package dune-private-libs)
+ (action
+  (run ./package_discovery_tests.exe)))

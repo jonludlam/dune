@@ -421,6 +421,45 @@ Both implementations convert `.odocl` files to HTML, but with differences:
 
 The HTML generation preserves the hierarchical structure, creating a navigable documentation tree with proper parent-child relationships and cross-references.
 
+### Directory Layout Evolution
+
+#### Current Layouts
+**odoc.ml**: Package-centric flat structure
+```
+_doc/_html/
+├── package1/
+│   ├── index.html
+│   ├── Lib1/
+│   │   └── Module1/index.html
+│   └── Lib2/
+│       └── Module2/index.html
+└── odoc.support/
+```
+
+**odoc_new.ml**: Category-based hierarchical structure
+```
+_doc_new/html/docs/
+├── local/package1/
+├── stdlib/
+└── findlib-N/
+```
+
+#### Planned odoc v3 Layout
+Package-centric with library subdirectories (similar to odoc.ml but enhanced):
+```
+_doc/
+├── package1/
+│   ├── index.html              # Package index
+│   ├── lib1/
+│   │   ├── index.html          # Library index  
+│   │   └── Module1/index.html  # Module docs
+│   └── lib2/
+│       └── Module2/index.html
+└── odoc.support/
+```
+
+This represents a return to the package-centric approach of `odoc.ml` but with explicit library subdirectories, eliminating the deep categorization of `odoc_new.ml` while preserving library organization within packages.
+
 ## Additional Features
 
 ### JSON Output Format
