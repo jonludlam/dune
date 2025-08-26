@@ -306,6 +306,57 @@ let module_deps (m : Module.t) ~obj_dir ~(dep_graphs : Dep_graph.Ml_kind.t) =
      List.map deps ~f:(fun m -> Path.build (Obj_dir.Module.odoc obj_dir m)))
 ;;
 
+(* ===== Package-centric path helpers for odoc v3 ===== *)
+
+(* Package-centric path helpers *)
+let doc_root_v3 ctx = Path.Build.relative (Context.build_dir ctx) "_doc"
+
+let package_dir_v3 ctx pkg = 
+  Path.Build.relative (doc_root_v3 ctx) (Package.Name.to_string pkg)
+
+let library_dir_v3 ctx pkg lib =
+  Path.Build.relative (package_dir_v3 ctx pkg) (Lib_name.to_string lib)
+
+let odoc_file_v3 ctx pkg lib module_ =
+  let parent_dir = package_dir_v3 ctx pkg in
+  let parent_id_path = Path.Build.relative parent_dir (Lib_name.to_string lib) in
+  let basename = Module.name module_ |> Module_name.to_string |> String.uncapitalize_ascii in
+  Path.Build.relative parent_id_path (basename ^ ".odoc")
+
+(* Parent ID computation helpers *)
+let parent_id_of_module pkg lib =
+  Printf.sprintf "%s/%s" (Package.Name.to_string pkg) (Lib_name.to_string lib)
+
+let parent_id_of_library pkg =
+  Package.Name.to_string pkg
+
+let parent_id_root = ""
+
+(* Helper to determine package ownership of a library *)
+let determine_package_for_library sctx lib_name =
+  let ctx = Super_context.context sctx in
+  let package_discovery = Package_discovery.create ~context:ctx in
+  Memo.run (
+    let* _package_discovery = package_discovery in
+    match Lib_name.to_string lib_name with
+    | lib_str when String.is_prefix lib_str ~prefix:"dune" -> 
+        (* Fallback: libraries starting with "dune" likely belong to dune package *)
+        Memo.return (Package.Name.of_string "dune")
+    | _ ->
+        (* Default: assume library name matches package name for now *)
+        (* TODO: This needs refinement to use actual package discovery *)
+        Memo.return (Package.Name.of_string (Lib_name.to_string lib_name))
+  )
+
+(* Prevent unused value warnings until we integrate these functions *)
+let () = 
+  ignore library_dir_v3;
+  ignore odoc_file_v3;
+  ignore parent_id_of_module;
+  ignore parent_id_of_library;
+  ignore parent_id_root;
+  ignore determine_package_for_library
+
 let compile_module
       sctx
       ~obj_dir
