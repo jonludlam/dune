@@ -333,20 +333,22 @@ let parent_id_of_library pkg =
 let parent_id_root = ""
 
 (* Helper to determine package ownership of a library *)
-let determine_package_for_library sctx lib_name =
+let determine_package_for_library_memo sctx lib_name =
   let ctx = Super_context.context sctx in
   let package_discovery = Package_discovery.create ~context:ctx in
-  Memo.run (
-    let* _package_discovery = package_discovery in
-    match Lib_name.to_string lib_name with
-    | lib_str when String.is_prefix lib_str ~prefix:"dune" -> 
-        (* Fallback: libraries starting with "dune" likely belong to dune package *)
-        Memo.return (Package.Name.of_string "dune")
-    | _ ->
-        (* Default: assume library name matches package name for now *)
-        (* TODO: This needs refinement to use actual package discovery *)
-        Memo.return (Package.Name.of_string (Lib_name.to_string lib_name))
-  )
+  let* _package_discovery = package_discovery in
+  match Lib_name.to_string lib_name with
+  | lib_str when String.is_prefix lib_str ~prefix:"dune" -> 
+      (* Fallback: libraries starting with "dune" likely belong to dune package *)
+      Memo.return (Package.Name.of_string "dune")
+  | _ ->
+      (* Default: assume library name matches package name for now *)
+      (* TODO: This needs refinement to use actual package discovery *)
+      Memo.return (Package.Name.of_string (Lib_name.to_string lib_name))
+
+(* Synchronous version for immediate use *)
+let determine_package_for_library sctx lib_name =
+  Memo.run (determine_package_for_library_memo sctx lib_name)
 
 (* Prevent unused value warnings until we integrate these functions *)
 let () = 
@@ -366,10 +368,34 @@ let compile_module
       ~pkg_or_lnu
       ~mode
   =
-  let odoc_file = Obj_dir.Module.odoc obj_dir m in
+  let ctx = Super_context.context sctx in
+  
+  (* Extract library name from obj_dir - use the directory basename as library name *)
+  let lib_name = 
+    let obj_dir_path = Obj_dir.odoc_dir obj_dir in
+    Lib_name.of_string (Path.Build.basename obj_dir_path)
+  in
+  
+  (* Determine package - try to extract from pkg_or_lnu first *)
+  let* pkg_name = 
+    (* pkg_or_lnu is either a package name or library unique name *)
+    (* If it looks like a package name (no dots), use it; otherwise use package discovery *)
+    if String.contains pkg_or_lnu '.' then
+      (* This looks like a library unique name, use package discovery *)
+      determine_package_for_library_memo sctx lib_name
+    else
+      (* This looks like a package name, use it directly *)
+      Memo.return (Package.Name.of_string pkg_or_lnu)
+  in
+  
+  (* Use v3-style paths and parent ID *)
+  let parent_id = parent_id_of_module pkg_name lib_name in
+  let output_dir = package_dir_v3 ctx pkg_name in
+  let odoc_file = odoc_file_v3 ctx pkg_name lib_name m in
+  
   let+ () =
     let action_with_targets =
-      let doc_dir = Path.build (Obj_dir.odoc_dir obj_dir) in
+      let doc_dir = Path.build output_dir in  (* Use package directory as doc_dir *)
       let run_odoc =
         run_odoc
           sctx
@@ -377,13 +403,14 @@ let compile_module
           "compile"
           ~quiet:false
           ~flags_for:(Some odoc_file)
-          [ A "-I"
+          [ A "--output-dir"          (* Explicit output directory for v3 *)
           ; Path doc_dir
-          ; iflags
-          ; As [ "--pkg"; pkg_or_lnu ]
-          ; A "-o"
-          ; Target odoc_file
-          ; Dep
+          ; A "--parent-id"           (* NEW: Add parent ID for v3 *)
+          ; A parent_id               (* NEW: Use computed parent ID *)
+          ; A "-I"                    (* Keep include paths *)
+          ; Path doc_dir
+          ; iflags                    (* Keep existing include flags *)
+          ; Dep                       (* Input file dependency *)
               (Path.build
                  (Obj_dir.Module.cmti_file
                     ~cm_kind:
