@@ -365,37 +365,13 @@ let compile_module
       (m : Module.t)
       ~includes:(file_deps, iflags)
       ~dep_graphs
-      ~pkg_or_lnu
+      ~pkg_or_lnu:_
       ~mode
   =
-  let ctx = Super_context.context sctx in
-  
-  (* Extract library name from obj_dir - use the directory basename as library name *)
-  let lib_name = 
-    let obj_dir_path = Obj_dir.odoc_dir obj_dir in
-    Lib_name.of_string (Path.Build.basename obj_dir_path)
-  in
-  
-  (* Determine package - try to extract from pkg_or_lnu first *)
-  let* pkg_name = 
-    (* pkg_or_lnu is either a package name or library unique name *)
-    (* If it looks like a package name (no dots), use it; otherwise use package discovery *)
-    if String.contains pkg_or_lnu '.' then
-      (* This looks like a library unique name, use package discovery *)
-      determine_package_for_library_memo sctx lib_name
-    else
-      (* This looks like a package name, use it directly *)
-      Memo.return (Package.Name.of_string pkg_or_lnu)
-  in
-  
-  (* Use v3-style paths and parent ID *)
-  let parent_id = parent_id_of_module pkg_name lib_name in
-  let output_dir = package_dir_v3 ctx pkg_name in
-  let odoc_file = odoc_file_v3 ctx pkg_name lib_name m in
-  
+  let odoc_file = Obj_dir.Module.odoc obj_dir m in
   let+ () =
     let action_with_targets =
-      let doc_dir = Path.build output_dir in  (* Use package directory as doc_dir *)
+      let doc_dir = Path.build (Obj_dir.odoc_dir obj_dir) in
       let run_odoc =
         run_odoc
           sctx
@@ -403,14 +379,12 @@ let compile_module
           "compile"
           ~quiet:false
           ~flags_for:(Some odoc_file)
-          [ A "--output-dir"          (* Explicit output directory for v3 *)
+          [ A "-I"
           ; Path doc_dir
-          ; A "--parent-id"           (* NEW: Add parent ID for v3 *)
-          ; A parent_id               (* NEW: Use computed parent ID *)
-          ; A "-I"                    (* Keep include paths *)
-          ; Path doc_dir
-          ; iflags                    (* Keep existing include flags *)
-          ; Dep                       (* Input file dependency *)
+          ; iflags
+          ; A "-o"
+          ; Target odoc_file
+          ; Dep
               (Path.build
                  (Obj_dir.Module.cmti_file
                     ~cm_kind:
@@ -1021,9 +995,13 @@ let package_mlds =
 let setup_package_odoc_rules sctx ~pkg =
   let* mlds = package_mlds sctx ~pkg >>| fst in
   let ctx = Super_context.context sctx in
-  (* CR-someday jeremiedimino: it is weird that we drop the [Package.t] and go
-     back to a package name here. Need to try and change that one day. *)
-  let* odocs =
+  let* package_discovery = Package_discovery.create ~context:ctx in
+  
+  (* Find all libraries in this package using package discovery *)
+  let libraries_in_package = Package_discovery.libraries_of_package package_discovery pkg in
+  
+  (* Compile MLDs as before *)
+  let* mld_odocs =
     Filename.Map.values mlds
     |> Memo.parallel_map ~f:(fun mld ->
       compile_mld
@@ -1033,7 +1011,20 @@ let setup_package_odoc_rules sctx ~pkg =
         ~doc_dir:(Paths.odocs ctx (Pkg pkg))
         ~includes:(Action_builder.return []))
   in
-  Dep.setup_deps ctx (Pkg pkg) (Path.set_of_build_paths_list odocs)
+  
+  (* Set up odocl rules for all libraries in the package *)
+  let* () =
+    libraries_in_package
+    |> Memo.parallel_iter ~f:(fun lib ->
+      match Lib.Local.of_lib lib with
+      | None -> Memo.return ()
+      | Some local_lib ->
+        let* requires = Lib.closure [ lib ] ~linking:false in
+        setup_lib_odocl_rules sctx local_lib ~requires)
+  in
+  
+  (* Set up deps for the package using the compiled mlds *)
+  Dep.setup_deps ctx (Pkg pkg) (Path.set_of_build_paths_list mld_odocs)
 ;;
 
 let gen_project_rules sctx project =
