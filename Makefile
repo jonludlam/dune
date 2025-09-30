@@ -85,6 +85,9 @@ dev-switch:
 test: $(BIN)
 	$(BIN) runtest
 
+test-odoc: $(BIN)
+	$(BIN) runtest test/blackbox-tests/test-cases/odoc
+
 test-windows: $(BIN)
 	$(BIN) build @runtest-windows
 
