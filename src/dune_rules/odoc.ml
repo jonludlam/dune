@@ -1084,6 +1084,41 @@ let with_package pkg ~f =
   | None -> Memo.return Gen_rules.no_rules
 ;;
 
+(* Helper to find a library by package and name *)
+let find_lib_for_package sctx ~pkg ~lib_name =
+  let ctx = Super_context.context sctx in
+  let* lib_opt =
+    let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+    Lib.DB.find public_libs lib_name
+  in
+  let () = match lib_opt with
+    | Some l -> Log.info [ Pp.textf "odoc v3: Found library %s" (Lib_name.to_string (Lib.name l)) ]
+    | None -> Log.info [ Pp.textf "odoc v3: Library %s not found" (Lib_name.to_string lib_name) ]
+  in
+  match lib_opt with
+  | None -> Memo.return None
+  | Some lib ->
+    let info = Lib.info lib in
+    let lib_pkg_opt = Lib_info.package info in
+    let () = match lib_pkg_opt with
+      | Some p -> Log.info [ Pp.textf "odoc v3: Library %s has package %s, looking for %s"
+                               (Lib_name.to_string lib_name)
+                               (Package.Name.to_string p)
+                               (Package.Name.to_string pkg) ]
+      | None -> Log.info [ Pp.textf "odoc v3: Library %s has no package, looking for %s"
+                             (Lib_name.to_string lib_name)
+                             (Package.Name.to_string pkg) ]
+    in
+    let pkg_matches = match lib_pkg_opt with
+      | Some p -> Package.Name.equal p pkg
+      | None -> false
+    in
+    if pkg_matches then
+      Memo.return (Some lib)
+    else
+      Memo.return None
+;;
+
 let gen_rules sctx ~dir rest =
   Log.info [ Pp.textf "odoc v3: gen_rules called for dir %s with rest %s"
       (Path.Build.to_string dir)
@@ -1131,55 +1166,65 @@ let gen_rules sctx ~dir rest =
            (Memo.return Rules.empty))
   | [ "_odoc"; pkg_name; lib_name ] ->
     (* v3 library directory: _doc/_odoc/{package}/{library} *)
+    Log.info [ Pp.textf "odoc v3: Handling library dir for pkg=%s lib=%s" pkg_name lib_name ];
     has_rules (
       let pkg = Package.Name.of_string pkg_name in
-      let requested_lib_name = Lib_name.of_string lib_name in
+      let lib_name = Lib_name.of_string lib_name in
       let ctx = Super_context.context sctx in
 
-      (* Find the specific library that matches this directory *)
-      let* lib_opt =
-        Scope.DB.with_all ctx ~f:(fun find_scope ->
-          let* projects = Dune_load.dune_files (Context.name ctx) in
-          let rec find_lib projects =
-            match projects with
-            | [] -> Memo.return None
-            | dune_file :: rest ->
-              let* stanzas = Dune_file.stanzas dune_file in
-              let* result =
-                Memo.List.find_map stanzas ~f:(fun stanza ->
-                  match Stanza.repr stanza with
-                  | Library.T lib ->
-                    let scope = find_scope (Dune_file.project dune_file) in
-                    let lib_db = Scope.libs scope in
-                    let* resolved_lib = Lib.DB.find lib_db (Library.best_name lib) in
-                    (match resolved_lib with
-                    | None -> Memo.return None
-                    | Some resolved_lib ->
-                      let info = Lib.info resolved_lib in
-                      let lib_name_matches = Lib_name.equal (Lib.name resolved_lib) requested_lib_name in
-                      let pkg_matches = match Lib_info.package info with
-                        | Some p -> Package.Name.equal p pkg
-                        | None -> false
-                      in
-                      if lib_name_matches && pkg_matches then
-                        Memo.return (Some resolved_lib)
-                      else
-                        Memo.return None)
-                  | _ -> Memo.return None)
-              in
-              match result with
-              | Some lib -> Memo.return (Some lib)
-              | None -> find_lib rest
-          in
-          find_lib projects)
-      in
+      let* lib_opt = find_lib_for_package sctx ~pkg ~lib_name in
 
-      let* lib_opt = lib_opt in
       match lib_opt with
       | None -> Memo.return ()
       | Some lib ->
         match Lib.Local.of_lib lib with
-        | None -> Memo.return ()
+        | None ->
+          (* Library is installed (not local) - read classify file to determine modules *)
+          let info = Lib.info lib in
+          let archives = Lib_info.archives info in
+          let archive_names =
+            Mode.Dict.get archives Mode.Byte
+            |> List.map ~f:(fun p -> Path.basename p |> Filename.remove_extension)
+          in
+          let classify_file =
+            Paths.root ctx ++ "classify" ++ pkg_name ++ Lib_name.to_string lib_name ++ "odoc.classify"
+          in
+
+          Log.info [ Pp.textf "odoc v3: Looking for archives %s for %s/%s"
+                       (String.concat ~sep:", " archive_names) pkg_name (Lib_name.to_string lib_name) ];
+
+          (* Parse classify file to find modules for this library's archives *)
+          let parse_classify_for_archives lines =
+            (* Each line format: <archive> <Module1> <Module2> ... *)
+            List.concat_map lines ~f:(fun line ->
+              match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
+              | [] -> []
+              | archive :: modules ->
+                if List.mem archive_names archive ~equal:String.equal
+                then modules
+                else []
+            )
+          in
+
+          (* Create rules to compile modules from the classify file *)
+          let compile_installed_modules =
+            let open Action_builder.O in
+            let+ classify_lines = Action_builder.lines_of (Path.build classify_file) in
+            let module_names = parse_classify_for_archives classify_lines in
+            Log.info [ Pp.textf "odoc v3: Found modules for %s/%s: %s"
+                         pkg_name (Lib_name.to_string lib_name)
+                         (String.concat ~sep:", " module_names) ];
+            module_names
+          in
+
+          (* TODO: Use compile_installed_modules to generate odoc compilation rules *)
+          let dummy_target = Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name ++ ".modules" in
+          let dummy_rule = Action_builder.write_file_dyn dummy_target (
+            let open Action_builder.O in
+            let+ modules = compile_installed_modules in
+            String.concat ~sep:"\n" modules
+          ) in
+          add_rule sctx dummy_rule
         | Some local_lib ->
           let* modules = entry_modules_by_lib sctx local_lib in
           let obj_dir = Lib.Local.obj_dir local_lib in
@@ -1258,5 +1303,45 @@ let gen_rules sctx ~dir rest =
            setup_pkg_html_rules sctx ~pkg:name
        in
        ())
+  | [ "classify"; pkg_name; lib_name ] ->
+    (* classify library directory: _doc/classify/{package}/{library} *)
+    Log.info [ Pp.textf "odoc v3: Handling classify dir for pkg=%s lib=%s" pkg_name lib_name ];
+    has_rules (
+      let pkg = Package.Name.of_string pkg_name in
+      let lib_name = Lib_name.of_string lib_name in
+      let ctx = Super_context.context sctx in
+
+      let* lib_opt = find_lib_for_package sctx ~pkg ~lib_name in
+
+      match lib_opt with
+      | None ->
+        Log.info [ Pp.textf "odoc v3: Library %s not found for classify" (Lib_name.to_string lib_name) ];
+        Memo.return ()
+      | Some lib ->
+        (* Only generate classify for installed libraries, not local ones *)
+        match Lib.Local.of_lib lib with
+        | Some _local_lib ->
+          Log.info [ Pp.textf "odoc v3: Library %s is local, skipping classify" (Lib_name.to_string lib_name) ];
+          Memo.return () (* Local library - no classify needed *)
+        | None ->
+          (* Library is installed - generate odoc classify *)
+          Log.info [ Pp.textf "odoc v3: Library %s is installed, generating classify" (Lib_name.to_string lib_name) ];
+          let info = Lib.info lib in
+          let src_dir = Lib_info.src_dir info in
+          let classify_output =
+            Paths.root ctx ++ "classify" ++ pkg_name ++ Lib_name.to_string lib_name ++ "odoc.classify"
+          in
+          let run_classify =
+            let program = odoc_program sctx (Context.build_dir ctx) in
+            let deps = Action_builder.env_var "ODOC_SYNTAX" in
+            let open Action_builder.With_targets.O in
+            Action_builder.with_no_targets deps
+            >>> Command.run_dyn_prog
+                  ~dir:(Path.build (Context.build_dir ctx))
+                  ~stdout_to:classify_output
+                  program
+                  [ A "classify"; A (Path.to_string src_dir) ]
+          in
+          add_rule sctx run_classify)
   | _ -> Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
 ;;
