@@ -116,7 +116,19 @@ module Paths = struct
     | Lib lib -> pkg_or_lnu (Lib.Local.to_lib lib)
   ;;
 
-  let html ctx m = add_pkg_lnu (html_root ctx) m
+  let html ctx = function
+    | Lib lib ->
+      let info = Lib.Local.info lib in
+      (match Lib_info.package info with
+       | Some pkg ->
+         (* Use v3 paths for libraries with packages: _doc/_html/{package}/{library} *)
+         let lib_name = Lib.name (Lib.Local.to_lib lib) in
+         html_root ctx ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+       | None ->
+         (* Fallback to v2 paths for libraries without packages *)
+         add_pkg_lnu (html_root ctx) (Lib lib))
+    | Pkg pkg -> html_root ctx ++ Package.Name.to_string pkg
+  ;;
 
   let odocl ctx = function
     | Lib lib ->
@@ -130,6 +142,7 @@ module Paths = struct
          (* Fallback to v2 paths for libraries without packages *)
          add_pkg_lnu (odocl_root ctx) (Lib lib))
     | Pkg pkg -> odocl_root ctx ++ Package.Name.to_string pkg
+  ;;
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
   let odoc_support ctx = html_root ctx ++ odoc_support_dirname
   let toplevel_index ctx = html_root ctx ++ "index.html"

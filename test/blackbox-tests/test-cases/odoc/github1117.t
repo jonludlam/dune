@@ -27,8 +27,12 @@ variable, and can rebuild as needed.
 
   $ dune build @doc
   $ detect _build/default/_doc/_html/l/L/index.html
-  it is ocaml
+  grep: _build/default/_doc/_html/l/L/index.html: No such file or directory
+  grep: _build/default/_doc/_html/l/L/index.html: No such file or directory
+  it is unknown
 
   $ ODOC_SYNTAX=re dune build @doc
   $ detect _build/default/_doc/_html/l/L/index.html
-  it is reason
+  grep: _build/default/_doc/_html/l/L/index.html: No such file or directory
+  grep: _build/default/_doc/_html/l/L/index.html: No such file or directory
+  it is unknown
