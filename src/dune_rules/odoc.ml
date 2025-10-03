@@ -1084,39 +1084,61 @@ let with_package pkg ~f =
   | None -> Memo.return Gen_rules.no_rules
 ;;
 
-(* Helper to find a library by package and name *)
+(* Helper to find a library by package and name.
+   For local libraries, uses Lib_info.package to check package membership.
+   For installed libraries, uses Package_discovery. *)
 let find_lib_for_package sctx ~pkg ~lib_name =
   let ctx = Super_context.context sctx in
-  let* lib_opt =
-    let* public_libs = Scope.DB.public_libs (Context.name ctx) in
-    Lib.DB.find public_libs lib_name
-  in
-  let () = match lib_opt with
-    | Some l -> Log.info [ Pp.textf "odoc v3: Found library %s" (Lib_name.to_string (Lib.name l)) ]
-    | None -> Log.info [ Pp.textf "odoc v3: Library %s not found" (Lib_name.to_string lib_name) ]
-  in
+
+  (* Look up the library first *)
+  let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+  let* lib_opt = Lib.DB.find public_libs lib_name in
+
   match lib_opt with
-  | None -> Memo.return None
+  | None ->
+    Log.info [ Pp.textf "odoc v3: Library %s not found in public libs"
+                 (Lib_name.to_string lib_name) ];
+    Memo.return None
   | Some lib ->
-    let info = Lib.info lib in
-    let lib_pkg_opt = Lib_info.package info in
-    let () = match lib_pkg_opt with
-      | Some p -> Log.info [ Pp.textf "odoc v3: Library %s has package %s, looking for %s"
-                               (Lib_name.to_string lib_name)
-                               (Package.Name.to_string p)
-                               (Package.Name.to_string pkg) ]
-      | None -> Log.info [ Pp.textf "odoc v3: Library %s has no package, looking for %s"
-                             (Lib_name.to_string lib_name)
-                             (Package.Name.to_string pkg) ]
-    in
-    let pkg_matches = match lib_pkg_opt with
-      | Some p -> Package.Name.equal p pkg
-      | None -> false
-    in
-    if pkg_matches then
-      Memo.return (Some lib)
-    else
-      Memo.return None
+    (* Check if this is a local or installed library *)
+    (match Lib.Local.of_lib lib with
+    | Some _ ->
+      (* Local library - check package via Lib_info.package *)
+      let info = Lib.info lib in
+      let lib_pkg = Lib_info.package info in
+      if Option.is_some lib_pkg && Package.Name.equal (Option.value_exn lib_pkg) pkg then (
+        Log.info [ Pp.textf "odoc v3: Found local library %s in package %s"
+                     (Lib_name.to_string lib_name)
+                     (Package.Name.to_string pkg) ];
+        Memo.return (Some lib)
+      ) else (
+        Log.info [ Pp.textf "odoc v3: Local library %s not in package %s (has package %s)"
+                     (Lib_name.to_string lib_name)
+                     (Package.Name.to_string pkg)
+                     (match lib_pkg with Some p -> Package.Name.to_string p | None -> "none") ];
+        Memo.return None
+      )
+    | None ->
+      (* Installed library - use Package_discovery *)
+      let* pkg_discovery = Package_discovery.create ~context:ctx in
+      let discovered_pkg = Package_discovery.package_of_library pkg_discovery lib in
+      (match discovered_pkg with
+      | Some discovered_pkg when Package.Name.equal discovered_pkg pkg ->
+        Log.info [ Pp.textf "odoc v3: Found installed library %s in package %s"
+                     (Lib_name.to_string lib_name)
+                     (Package.Name.to_string pkg) ];
+        Memo.return (Some lib)
+      | Some other_pkg ->
+        Log.info [ Pp.textf "odoc v3: Installed library %s is in package %s, not %s"
+                     (Lib_name.to_string lib_name)
+                     (Package.Name.to_string other_pkg)
+                     (Package.Name.to_string pkg) ];
+        Memo.return None
+      | None ->
+        Log.info [ Pp.textf "odoc v3: Installed library %s not in package %s (not found in Package_discovery)"
+                     (Lib_name.to_string lib_name)
+                     (Package.Name.to_string pkg) ];
+        Memo.return None))
 ;;
 
 let gen_rules sctx ~dir rest =
@@ -1183,8 +1205,19 @@ let gen_rules sctx ~dir rest =
           let info = Lib.info lib in
           let archives = Lib_info.archives info in
           let archive_names =
-            Mode.Dict.get archives Mode.Byte
-            |> List.map ~f:(fun p -> Path.basename p |> Filename.remove_extension)
+            let byte_archives = Mode.Dict.get archives Mode.Byte in
+            match byte_archives with
+            | [] ->
+              (* Special case for stdlib which has no META file and reports no archives *)
+              if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+              then [ "stdlib" ]
+              else (
+                Log.info [ Pp.textf "odoc v3: Warning: Library %s has no byte archives"
+                             (Lib_name.to_string lib_name) ];
+                []
+              )
+            | archives ->
+              List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
           in
           let classify_file =
             Paths.root ctx ++ "classify" ++ pkg_name ++ Lib_name.to_string lib_name ++ "odoc.classify"
@@ -1193,10 +1226,17 @@ let gen_rules sctx ~dir rest =
           Log.info [ Pp.textf "odoc v3: Looking for archives %s for %s/%s"
                        (String.concat ~sep:", " archive_names) pkg_name (Lib_name.to_string lib_name) ];
 
+          (* Get source directory for installed library - this is where .cmti files are *)
+          let src_dir = Lib_info.src_dir info in
+
+          (* Read the classify file to get the list of modules *)
+          let* classify_content = Build_system.read_file (Path.build classify_file) in
+          let classify_lines = String.split_lines classify_content in
+
           (* Parse classify file to find modules for this library's archives *)
-          let parse_classify_for_archives lines =
+          let module_names =
             (* Each line format: <archive> <Module1> <Module2> ... *)
-            List.concat_map lines ~f:(fun line ->
+            List.concat_map classify_lines ~f:(fun line ->
               match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
               | [] -> []
               | archive :: modules ->
@@ -1206,25 +1246,57 @@ let gen_rules sctx ~dir rest =
             )
           in
 
-          (* Create rules to compile modules from the classify file *)
-          let compile_installed_modules =
-            let open Action_builder.O in
-            let+ classify_lines = Action_builder.lines_of (Path.build classify_file) in
-            let module_names = parse_classify_for_archives classify_lines in
-            Log.info [ Pp.textf "odoc v3: Found modules for %s/%s: %s"
-                         pkg_name (Lib_name.to_string lib_name)
-                         (String.concat ~sep:", " module_names) ];
-            module_names
-          in
+          Log.info [ Pp.textf "odoc v3: Read classify file, found %d modules for %s/%s: %s"
+                       (List.length module_names)
+                       pkg_name (Lib_name.to_string lib_name)
+                       (String.concat ~sep:", " module_names) ];
 
-          (* TODO: Use compile_installed_modules to generate odoc compilation rules *)
-          let dummy_target = Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name ++ ".modules" in
-          let dummy_rule = Action_builder.write_file_dyn dummy_target (
-            let open Action_builder.O in
-            let+ modules = compile_installed_modules in
-            String.concat ~sep:"\n" modules
-          ) in
-          add_rule sctx dummy_rule
+          (* Generate compile-deps and odoc compile rules for each module *)
+          let parent_id = parent_id_of_module pkg lib_name in
+
+          Memo.parallel_iter module_names ~f:(fun module_name ->
+            let module_name_lower = String.uncapitalize_ascii module_name in
+            let cmti_file = Path.relative src_dir (module_name_lower ^ ".cmti") in
+            let deps_file =
+              Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name ++ (module_name ^ ".deps")
+            in
+            let odoc_file =
+              Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name ++ (module_name_lower ^ ".odoc")
+            in
+
+            let program = odoc_program sctx (Context.build_dir ctx) in
+
+            (* Generate compile-deps rule *)
+            let* () =
+              let run_compile_deps =
+                Command.run_dyn_prog
+                  program
+                  ~dir:(Path.build (Context.build_dir ctx))
+                  ~stdout_to:deps_file
+                  [ A "compile-deps"; Dep cmti_file ]
+              in
+              add_rule sctx run_compile_deps
+            in
+
+            (* Generate odoc compile rule *)
+            let run_odoc =
+              Action_builder.With_targets.add ~file_targets:[odoc_file]
+                (run_odoc
+                  sctx
+                  ~dir:(Path.build (Paths.odocs ctx (Pkg pkg)))
+                  "compile"
+                  ~quiet:false
+                  ~flags_for:(Some odoc_file)
+                  [ A "-I"
+                  ; Path (Path.build (Paths.odocs ctx (Pkg pkg)))
+                  ; A "--output-dir"
+                  ; Path (Path.build (odoc_root_v3 ctx))
+                  ; A "--parent-id"
+                  ; A parent_id
+                  ; Dep cmti_file
+                  ])
+            in
+            add_rule sctx run_odoc)
         | Some local_lib ->
           let* modules = entry_modules_by_lib sctx local_lib in
           let obj_dir = Lib.Local.obj_dir local_lib in

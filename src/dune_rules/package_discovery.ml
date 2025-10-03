@@ -95,13 +95,24 @@ let discover_opam_packages ~opam_prefix =
 
 let find_package_for_library ~file_to_package_map lib =
   let lib_info = Lib.info lib in
-  
+  let lib_name = Lib.name lib in
+
   (* Get the actual archive files for this library *)
   let archives = Lib_info.archives lib_info in
   let byte_archives = Mode.Dict.get archives Byte in
   let native_archives = Mode.Dict.get archives Native in
   let all_archives = byte_archives @ native_archives in
-  
+
+  (* Special case for stdlib which has no archives - construct the expected path *)
+  let all_archives =
+    if List.is_empty all_archives && Lib_name.equal lib_name (Lib_name.of_string "stdlib") then
+      (* stdlib archive should be at lib/ocaml/stdlib.cma relative to opam prefix *)
+      let src_dir = Lib_info.src_dir lib_info in
+      [ Path.relative src_dir "stdlib.cma" ]
+    else
+      all_archives
+  in
+
   (* Look up each archive file in the opam changes map to see which package installed it *)
   List.find_map all_archives ~f:(fun archive_path ->
     Path.Map.find file_to_package_map archive_path)
@@ -112,11 +123,12 @@ let build_mappings_from_changes_data ~file_to_package_map libs =
   List.fold_left libs ~init:empty ~f:(fun acc lib ->
     let lib_name = Lib.name lib in
     let pkg_name_opt = find_package_for_library ~file_to_package_map lib in
+
     match pkg_name_opt with
     | None -> acc  (* No package found for this library, skip it *)
     | Some pkg_name ->
       { package_of_lib = Lib_name.Map.set acc.package_of_lib lib_name pkg_name;
-        libs_of_package = 
+        libs_of_package =
           Package.Name.Map.update acc.libs_of_package pkg_name ~f:(function
             | None -> Some [lib]
             | Some libs -> Some (lib :: libs));
@@ -130,14 +142,14 @@ let build_file_to_package_map packages_with_files ~opam_prefix =
         Path.Map.set acc file_path pkg_name))
 
 let get_opam_prefix ~context =
-  match Context.kind context with
-  | Opam { root = _; switch = _ } ->
-    (* Use the standard opam prefix detection from environment *)
+  let kind = Context.kind context in
+  match kind with
+  | Opam { root = _; switch = _ } | Default | Lock _ ->
+    (* Get opam prefix from environment variable for all context types *)
     let* env = Context.installed_env context in
     (match Env.get env Opam_switch.opam_switch_prefix_var_name with
     | Some prefix -> Memo.return (Some (Path.of_string prefix))
     | None -> Memo.return None)
-  | _ -> Memo.return None
 
 let discover_package_ownership ~context =
   let* opam_prefix = get_opam_prefix ~context in
@@ -151,9 +163,13 @@ let discover_package_ownership ~context =
 
 let create ~context =
   let* file_to_package = discover_package_ownership ~context in
-  (* Note: Currently returns empty mappings since we don't have library enumeration.
-     The real functionality is in For_tests module for testing. *)
-  let lib_mappings = build_mappings_from_changes_data ~file_to_package_map:file_to_package [] in
+  (* Get all installed libraries to map them to packages *)
+  let* installed_libs = Lib.DB.installed context in
+  let* all_libs_set = Lib.DB.all installed_libs in
+  let all_libs = Lib.Set.to_list all_libs_set in
+
+  let lib_mappings = build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs in
+
   Memo.return lib_mappings
 
 let package_of_library t lib =
