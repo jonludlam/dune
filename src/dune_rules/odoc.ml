@@ -1251,6 +1251,40 @@ let gen_rules sctx ~dir rest =
                        pkg_name (Lib_name.to_string lib_name)
                        (String.concat ~sep:", " module_names) ];
 
+          (* Get library dependencies to add .odoc-all alias dependencies *)
+          (* We need to compute the package for each installed dependency in Memo context first *)
+          let* pkg_discovery = Package_discovery.create ~context:ctx in
+          let lib_deps =
+            let open Action_builder.O in
+            let* requires = Resolve.Memo.read (Lib.requires lib) in
+            (* For each required library, add a dependency on its .odoc-all alias *)
+            let dep_set =
+              List.fold_left requires ~init:Dune_engine.Dep.Set.empty ~f:(fun acc dep_lib ->
+                let dep_lib_name = Lib.name dep_lib in
+                (* Determine the directory for the dependency's .odoc-all alias *)
+                match Lib.Local.of_lib dep_lib with
+                | Some local_dep ->
+                  (* Local library - use Lib target *)
+                  let dep_dir = Paths.odocs ctx (Lib local_dep) in
+                  let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
+                  Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
+                | None ->
+                  (* Installed library - need to find its package and use Pkg/Lib structure *)
+                  let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
+                  (match dep_pkg_opt with
+                  | Some dep_pkg ->
+                    let dep_pkg_name = Package.Name.to_string dep_pkg in
+                    let dep_lib_name_str = Lib_name.to_string dep_lib_name in
+                    let dep_dir = Paths.root ctx ++ "_odoc" ++ dep_pkg_name ++ dep_lib_name_str in
+                    let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
+                    Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
+                  | None ->
+                    (* Can't find package for this library, skip it *)
+                    acc))
+            in
+            Action_builder.deps dep_set
+          in
+
           (* Generate compile-deps and odoc compile rules for each module *)
           let parent_id = parent_id_of_module pkg lib_name in
 
@@ -1313,7 +1347,8 @@ let gen_rules sctx ~dir rest =
             (* Generate odoc compile rule with dependencies *)
             let run_odoc =
               let open Action_builder.With_targets.O in
-              Action_builder.with_no_targets module_deps
+              Action_builder.with_no_targets lib_deps
+              >>> Action_builder.with_no_targets module_deps
               >>> Action_builder.With_targets.add ~file_targets:[odoc_file]
                     (run_odoc
                        sctx
