@@ -1170,21 +1170,13 @@ let gen_rules sctx ~dir rest =
       let pkg = Package.name pkg in
       let* (), rules = setup_package_odoc_rules sctx ~pkg in
       Rules.produce rules)
-  | [ "_odoc"; pkg_name ] ->
-    (* v3 package directory or old v2 pkg dir *)
-    if String.equal pkg_name "pkg" then
-      (* Old v2 path - no rules needed, subdirs will handle it *)
-      Memo.return
-        (Build_config.Gen_rules.make
-           ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-           (Memo.return Rules.empty))
-    else
-      (* v3 package directory: _doc/_odoc/{package} - allow subdirs for libraries *)
-      Memo.return
-        (Build_config.Gen_rules.make
-           ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+  | [ "_odoc"; name ] when not (String.equal name "pkg") && not (String.contains name '@') ->
+    (* v3 package directory: _doc/_odoc/{package} - allow subdirs for libraries *)
+    (* Note: libraries without packages (with @) are handled by existing v2 mechanism *)
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
            (Memo.return Rules.empty))
   | [ "_odoc"; pkg_name; lib_name ] ->
     (* v3 library directory: _doc/_odoc/{package}/{library} *)
@@ -1412,6 +1404,143 @@ let gen_rules sctx ~dir rest =
           (* Set up the .odoc-all alias for this library *)
           let odoc_path_set = odoc_paths |> List.map ~f:Path.build |> Path.Set.of_list in
           Dep.setup_deps ctx (Lib local_lib) odoc_path_set)
+  | [ "_odocls" ] ->
+    (* Root odocls directory - allow subdirs *)
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+         (Memo.return Rules.empty))
+  | [ "_odocls"; name ] when not (String.equal name "pkg") && not (String.contains name '@') ->
+    (* v3 package directory: _doc/_odocls/{package} - allow subdirs for libraries *)
+    (* Note: libraries without packages (with @) are handled by the existing v2 handler further down *)
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+           (Memo.return Rules.empty))
+  | [ "_odocls"; pkg_name; lib_name ] ->
+    (* v3 library directory: _doc/_odocls/{package}/{library} *)
+    (* Generate linking rules for installed libraries *)
+    Log.info [ Pp.textf "odoc v3: Handling odocls dir for pkg=%s lib=%s" pkg_name lib_name ];
+    has_rules (
+      let pkg = Package.Name.of_string pkg_name in
+      let lib_name = Lib_name.of_string lib_name in
+      let ctx = Super_context.context sctx in
+
+      let* lib_opt = find_lib_for_package sctx ~pkg ~lib_name in
+
+      match lib_opt with
+      | None -> Memo.return ()
+      | Some lib ->
+        match Lib.Local.of_lib lib with
+        | Some local_lib ->
+          (* Local library - generate link rules using existing mechanism *)
+          let* odocs = odoc_artefacts sctx (Lib local_lib) in
+          let pkg_opt = Lib_info.package (Lib.Local.info local_lib) in
+          let* requires = Lib.closure [ Lib.Local.to_lib local_lib ] ~linking:false in
+          Memo.parallel_iter odocs ~f:(fun odoc ->
+            link_odoc_rules sctx odoc ~pkg:pkg_opt ~requires)
+        | None ->
+          (* Installed library - generate link rules *)
+          (* Need to get the module list from the classify file *)
+          let info = Lib.info lib in
+          let archives = Lib_info.archives info in
+          let archive_names =
+            let byte_archives = Mode.Dict.get archives Mode.Byte in
+            match byte_archives with
+            | [] ->
+              if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+              then [ "stdlib" ]
+              else []
+            | archives ->
+              List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
+          in
+          let classify_file =
+            Paths.root ctx ++ "classify" ++ pkg_name ++ Lib_name.to_string lib_name ++ "odoc.classify"
+          in
+
+          let* classify_content = Build_system.read_file (Path.build classify_file) in
+          let classify_lines = String.split_lines classify_content in
+
+          let module_names =
+            List.concat_map classify_lines ~f:(fun line ->
+              match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
+              | [] -> []
+              | archive :: modules ->
+                if List.mem archive_names archive ~equal:String.equal
+                then modules
+                else []
+            )
+          in
+
+          (* Get library dependencies *)
+          let* pkg_discovery = Package_discovery.create ~context:ctx in
+          let* stdlib_opt =
+            if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+            then Memo.return None
+            else
+              let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+              Lib.DB.find public_libs (Lib_name.of_string "stdlib")
+          in
+          let lib_deps =
+            let open Action_builder.O in
+            let* requires = Resolve.Memo.read (Lib.requires lib) in
+            let requires =
+              match stdlib_opt with
+              | Some stdlib_lib -> stdlib_lib :: requires
+              | None -> requires
+            in
+            let dep_set =
+              List.fold_left requires ~init:Dune_engine.Dep.Set.empty ~f:(fun acc dep_lib ->
+                let dep_lib_name = Lib.name dep_lib in
+                match Lib.Local.of_lib dep_lib with
+                | Some local_dep ->
+                  let dep_dir = Paths.odocs ctx (Lib local_dep) in
+                  let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
+                  Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
+                | None ->
+                  let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
+                  (match dep_pkg_opt with
+                  | Some dep_pkg ->
+                    let dep_pkg_name = Package.Name.to_string dep_pkg in
+                    let dep_lib_name_str = Lib_name.to_string dep_lib_name in
+                    let dep_dir = Paths.root ctx ++ "_odoc" ++ dep_pkg_name ++ dep_lib_name_str in
+                    let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
+                    Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
+                  | None -> acc))
+            in
+            Action_builder.deps dep_set
+          in
+
+          (* Generate link rules for each module *)
+          Memo.parallel_iter module_names ~f:(fun module_name ->
+            let module_name_lower = String.uncapitalize_ascii module_name in
+            let odoc_file =
+              Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name ++ (module_name_lower ^ ".odoc")
+            in
+            let odocl_file =
+              Paths.root ctx ++ "_odocls" ++ pkg_name ++ Lib_name.to_string lib_name ++ (module_name_lower ^ ".odocl")
+            in
+
+            let run_odoc_link =
+              let open Action_builder.With_targets.O in
+              Action_builder.with_no_targets lib_deps
+              >>> Action_builder.With_targets.add ~file_targets:[odocl_file]
+                    (run_odoc
+                       sctx
+                       ~dir:(Path.build dir)
+                       "link"
+                       ~quiet:false
+                       ~flags_for:(Some odoc_file)
+                       [ A "-I"
+                       ; Path (Path.build (Paths.odocs ctx (Pkg pkg)))
+                       ; A "-o"
+                       ; Target odocl_file
+                       ; Dep (Path.build odoc_file)
+                       ])
+            in
+            add_rule sctx run_odoc_link))
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
     has_rules
       ((* TODO we can be a better with the error handling in the case where
