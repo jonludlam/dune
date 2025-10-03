@@ -1278,23 +1278,57 @@ let gen_rules sctx ~dir rest =
               add_rule sctx run_compile_deps
             in
 
-            (* Generate odoc compile rule *)
+            (* Parse deps file to find dependencies *)
+            let module_deps =
+              let open Action_builder.O in
+              let* lines = Action_builder.lines_of (Path.build deps_file) in
+              (* Parse deps file format: <module_name> <hash> *)
+              let dep_modules =
+                List.filter_map lines ~f:(fun line ->
+                  match String.split ~on:' ' line with
+                  | [ m; _hash ] -> Some (Module_name.of_string m)
+                  | _ -> None)
+              in
+              (* Find the corresponding .odoc files for the dependencies *)
+              let dep_odoc_files =
+                List.filter_map dep_modules ~f:(fun dep_module ->
+                  let dep_module_str = Module_name.to_string dep_module in
+                  (* Skip self-dependencies *)
+                  if String.equal dep_module_str module_name then
+                    None
+                  (* Check if this module is in the same library *)
+                  else if List.mem module_names dep_module_str ~equal:String.equal then
+                    let dep_module_lower = String.uncapitalize_ascii dep_module_str in
+                    let dep_odoc =
+                      Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name ++ (dep_module_lower ^ ".odoc")
+                    in
+                    Some (Path.build dep_odoc)
+                  else
+                    (* TODO: Handle dependencies from other libraries *)
+                    None)
+              in
+              Dune_engine.Dep.Set.of_files dep_odoc_files |> Action_builder.deps
+            in
+
+            (* Generate odoc compile rule with dependencies *)
             let run_odoc =
-              Action_builder.With_targets.add ~file_targets:[odoc_file]
-                (run_odoc
-                  sctx
-                  ~dir:(Path.build (Paths.odocs ctx (Pkg pkg)))
-                  "compile"
-                  ~quiet:false
-                  ~flags_for:(Some odoc_file)
-                  [ A "-I"
-                  ; Path (Path.build (Paths.odocs ctx (Pkg pkg)))
-                  ; A "--output-dir"
-                  ; Path (Path.build (odoc_root_v3 ctx))
-                  ; A "--parent-id"
-                  ; A parent_id
-                  ; Dep cmti_file
-                  ])
+              let open Action_builder.With_targets.O in
+              Action_builder.with_no_targets module_deps
+              >>> Action_builder.With_targets.add ~file_targets:[odoc_file]
+                    (run_odoc
+                       sctx
+                       ~dir:(Path.build (Paths.odocs ctx (Pkg pkg)))
+                       "compile"
+                       ~quiet:false
+                       ~flags_for:(Some odoc_file)
+                       [ A "-I"
+                       ; Path (Path.build (Paths.odocs ctx (Pkg pkg)))
+                       ; A "--output-dir"
+                       ; Path (Path.build (odoc_root_v3 ctx))
+                       ; A "--parent-id"
+                       ; A parent_id
+                       ; Dep cmti_file
+                       ])
             in
             add_rule sctx run_odoc)
         | Some local_lib ->
