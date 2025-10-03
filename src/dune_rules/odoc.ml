@@ -1254,9 +1254,23 @@ let gen_rules sctx ~dir rest =
           (* Get library dependencies to add .odoc-all alias dependencies *)
           (* We need to compute the package for each installed dependency in Memo context first *)
           let* pkg_discovery = Package_discovery.create ~context:ctx in
+          (* Add stdlib as a dependency unless we ARE stdlib *)
+          let* stdlib_opt =
+            if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+            then Memo.return None
+            else
+              let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+              Lib.DB.find public_libs (Lib_name.of_string "stdlib")
+          in
           let lib_deps =
             let open Action_builder.O in
             let* requires = Resolve.Memo.read (Lib.requires lib) in
+            (* Add stdlib to the requires list *)
+            let requires =
+              match stdlib_opt with
+              | Some stdlib_lib -> stdlib_lib :: requires
+              | None -> requires
+            in
             (* For each required library, add a dependency on its .odoc-all alias *)
             let dep_set =
               List.fold_left requires ~init:Dune_engine.Dep.Set.empty ~f:(fun acc dep_lib ->
