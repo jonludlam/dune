@@ -1254,7 +1254,7 @@ let gen_rules sctx ~dir rest =
           (* Generate compile-deps and odoc compile rules for each module *)
           let parent_id = parent_id_of_module pkg lib_name in
 
-          Memo.parallel_iter module_names ~f:(fun module_name ->
+          let* () = Memo.parallel_iter module_names ~f:(fun module_name ->
             let module_name_lower = String.uncapitalize_ascii module_name in
             let cmti_file = Path.relative src_dir (module_name_lower ^ ".cmti") in
             let deps_file =
@@ -1331,6 +1331,23 @@ let gen_rules sctx ~dir rest =
                        ])
             in
             add_rule sctx run_odoc)
+          in
+
+          (* Set up the .odoc-all alias for this installed library *)
+          Log.info [ Pp.textf "odoc v3: Setting up .odoc-all alias for installed library %s in package %s"
+                       (Lib_name.to_string lib_name) pkg_name ];
+          (* We can't use Dep.setup_deps with (Lib lib) because lib is not a Local.t,
+             so we need to manually create the alias at the library directory *)
+          let odoc_files =
+            List.map module_names ~f:(fun module_name ->
+              let module_name_lower = String.uncapitalize_ascii module_name in
+              let lib_odoc_dir = Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name in
+              Path.build (lib_odoc_dir ++ (module_name_lower ^ ".odoc"))
+            )
+          in
+          let odoc_path_set = Path.Set.of_list odoc_files in
+          let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir in
+          Rules.Produce.Alias.add_deps alias (Action_builder.path_set odoc_path_set)
         | Some local_lib ->
           let* modules = entry_modules_by_lib sctx local_lib in
           let obj_dir = Lib.Local.obj_dir local_lib in
