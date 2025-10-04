@@ -1699,7 +1699,7 @@ let gen_rules sctx ~dir rest =
       | None -> Memo.return []
       | Some lib ->
         match Lib.Local.of_lib lib with
-        | Some local_lib ->
+        | Some _ ->
           (* Local library - already handled by setup_pkg_html_rules at package level *)
           Memo.return []
         | None ->
