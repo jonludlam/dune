@@ -1679,30 +1679,33 @@ let gen_rules sctx ~dir rest =
       ) in
       Memo.return (Build_config.Gen_rules.make rules)
     else
-      (* Installed package - generate HTML rules for all installed libraries in this package *)
+      (* Installed package - just allow subdirectories for libraries *)
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+           (Memo.return Rules.empty))
+  | [ "_html"; pkg_name; lib_name ] when not (String.contains pkg_name '@') ->
+    (* v3 library directory: _doc/_html/{package}/{library} *)
+    let* dirs, rules = Rules.collect (fun () ->
+      let pkg = Package.Name.of_string pkg_name in
+      let lib_name_lname = Lib_name.of_string lib_name in
       let ctx = Super_context.context sctx in
-      let rules = Rules.collect_unit (fun () ->
-        let* pkg_discovery = Package_discovery.create ~context:ctx in
-        let* all_libs_set =
-          let* installed_db = Lib.DB.installed ctx in
-          Lib.DB.all installed_db
-        in
-        let all_libs = Lib.Set.to_list all_libs_set in
-        let pkg_libs =
-          List.filter all_libs ~f:(fun lib ->
-            match Package_discovery.package_of_library pkg_discovery lib with
-            | Some lib_pkg -> Package.Name.equal lib_pkg pkg
-            | None -> false)
-        in
-        (* For each library, generate HTML for all modules *)
-        Memo.parallel_iter pkg_libs ~f:(fun lib ->
-          let lib_name = Lib.name lib in
-          let pkg_name = Package.Name.to_string pkg in
-          let lib_name_str = Lib_name.to_string lib_name in
 
-          (* Read classify file to get module list *)
+      (* Check if this library exists and belongs to this package *)
+      let* lib_opt = find_lib_for_package sctx ~pkg ~lib_name:lib_name_lname in
+
+      match lib_opt with
+      | None -> Memo.return []
+      | Some lib ->
+        match Lib.Local.of_lib lib with
+        | Some local_lib ->
+          (* Local library - already handled by setup_pkg_html_rules at package level *)
+          Memo.return []
+        | None ->
+          (* Installed library - generate HTML for all modules from classify file *)
           let* classify_content =
-            let classify_path = Paths.root ctx ++ "classify" ++ pkg_name ++ lib_name_str ++ "odoc.classify" in
+            let classify_path = Paths.root ctx ++ "classify" ++ pkg_name ++ lib_name ++ "odoc.classify" in
             Build_system.read_file (Path.build classify_path)
           in
           let classify_lines = String.split_lines classify_content in
@@ -1711,13 +1714,13 @@ let gen_rules sctx ~dir rest =
             let byte_archives = Mode.Dict.get archives Mode.Byte in
             match byte_archives with
             | [] ->
-              if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+              if Lib_name.equal lib_name_lname (Lib_name.of_string "stdlib")
               then [ "stdlib" ]
               else []
             | archives ->
               List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
           in
-          let modules =
+          let module_names =
             List.concat_map classify_lines ~f:(fun line ->
               match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
               | [] -> []
@@ -1728,16 +1731,14 @@ let gen_rules sctx ~dir rest =
             )
           in
 
-          (* Generate HTML for each module using simple search args *)
-          Memo.parallel_iter modules ~f:(fun module_name ->
+          (* Generate HTML for each module's odocl file and collect directory targets *)
+          Memo.List.map module_names ~f:(fun module_name ->
             let module_name_lower = String.uncapitalize_ascii module_name in
             let odocl_file =
-              Paths.root ctx ++ "_odocls" ++ pkg_name ++ lib_name_str ++ (module_name_lower ^ ".odocl")
+              Paths.root ctx ++ "_odocls" ++ pkg_name ++ lib_name ++ (module_name_lower ^ ".odocl")
             in
-            let html_file =
-              let html_base = Paths.html ctx (Pkg pkg) in
-              let html_dir = html_base ++ lib_name_str ++ module_name in
-              html_dir ++ "index.html"
+            let html_dir =
+              Paths.html ctx (Pkg pkg) ++ lib_name ++ module_name
             in
 
             let odoc_support_path = Paths.odoc_support ctx in
@@ -1748,26 +1749,25 @@ let gen_rules sctx ~dir rest =
                 "html-generate"
                 ~quiet:false
                 ~flags_for:None
-                [ A "--search-uris"
+                [ A "--search-uri"
                 ; A "_odoc-theme"
                 ; A "-o"
-                ; Path (Path.build (Paths.html ctx (Pkg pkg)))
+                ; Path (Path.build (Paths.html_root ctx))
                 ; A "--support-uri"
                 ; Path (Path.build odoc_support_path)
                 ; A "--theme-uri"
                 ; Path (Path.build odoc_support_path)
                 ; Dep (Path.build odocl_file)
-                ; Hidden_targets [ html_file ]
                 ]
             in
-            add_rule sctx run_odoc))
-      ) in
-      Memo.return (Build_config.Gen_rules.make rules)
-  | [ "_html"; pkg_name; lib_name ] when not (String.contains pkg_name '@') ->
-    (* v3 library directory: _doc/_html/{package}/{library} *)
-    (* HTML rules are generated at package level, so just allow subdirectories *)
-    Log.info [ Pp.textf "odoc v3: MATCHED 3-element pattern for pkg=%s lib=%s" pkg_name lib_name ];
-    Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
+            let rule = Action_builder.With_targets.add_directories ~directory_targets:[html_dir] run_odoc in
+            let+ () = add_rule sctx rule in
+            html_dir)
+    ) in
+    let directory_targets =
+      Path.Build.Map.of_list_map_exn dirs ~f:(fun dir -> dir, Loc.none)
+    in
+    Memo.return (Gen_rules.make ~directory_targets (Memo.return rules))
   | [ "_html"; pkg_name; lib_name; module_name ] when not (String.contains pkg_name '@') ->
     (* v3 module directory: _doc/_html/{package}/{library}/{module} *)
     (* HTML rules are generated at package level, so just redirect to parent *)
