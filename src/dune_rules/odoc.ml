@@ -401,6 +401,7 @@ let compile_module
       ~obj_dir
       ~pkg
       ~lib_name
+      ?(lib_deps = Action_builder.return ())
       (m : Module.t)
   =
   let parent_id = parent_id_of_module pkg lib_name in
@@ -408,7 +409,9 @@ let compile_module
   let cmti_file = Obj_dir.Module.cmti_file obj_dir m ~cm_kind:(Ocaml Cmi) in
 
   let run_odoc =
-    Action_builder.With_targets.add ~file_targets:[odoc_v3_path]
+    let open Action_builder.With_targets.O in
+    Action_builder.with_no_targets lib_deps
+    >>> Action_builder.With_targets.add ~file_targets:[odoc_v3_path]
       (run_odoc
         sctx
         ~dir:(Path.build (Paths.odocs ctx (Pkg pkg)))
@@ -1403,11 +1406,59 @@ let gen_rules sctx ~dir rest =
           let* modules = entry_modules_by_lib sctx local_lib in
           let obj_dir = Lib.Local.obj_dir local_lib in
           let lib_name = Lib.name lib in
+          let lib = Lib.Local.to_lib local_lib in
+
+          (* Set up library dependencies - each module compilation depends on
+             .odoc-all aliases of required libraries (both local and installed) *)
+          let* pkg_discovery = Package_discovery.create ~context:ctx in
+          let* stdlib_opt =
+            if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+            then Memo.return None
+            else
+              let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+              Lib.DB.find public_libs (Lib_name.of_string "stdlib")
+          in
+          let lib_deps =
+            let open Action_builder.O in
+            let* requires = Resolve.Memo.read (Lib.requires lib) in
+            (* Add stdlib to the requires list if not already there *)
+            let requires =
+              match stdlib_opt with
+              | Some stdlib_lib -> stdlib_lib :: requires
+              | None -> requires
+            in
+            (* For each required library, add a dependency on its .odoc-all alias *)
+            let dep_set =
+              List.fold_left requires ~init:Dune_engine.Dep.Set.empty ~f:(fun acc dep_lib ->
+                let dep_lib_name = Lib.name dep_lib in
+                (* Determine the directory for the dependency's .odoc-all alias *)
+                match Lib.Local.of_lib dep_lib with
+                | Some local_dep ->
+                  (* Local library - use Lib target *)
+                  let dep_dir = Paths.odocs ctx (Lib local_dep) in
+                  let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
+                  Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
+                | None ->
+                  (* Installed library - need to find its package and use v3 structure *)
+                  let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
+                  (match dep_pkg_opt with
+                  | Some dep_pkg ->
+                    let dep_pkg_name = Package.Name.to_string dep_pkg in
+                    let dep_lib_name_str = Lib_name.to_string dep_lib_name in
+                    let dep_dir = Paths.root ctx ++ "_odoc" ++ dep_pkg_name ++ dep_lib_name_str in
+                    let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
+                    Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
+                  | None ->
+                    (* Can't find package for this library, skip it *)
+                    acc))
+            in
+            Action_builder.deps dep_set
+          in
 
           (* Compile each module to _doc/_odoc/{package}/{library}/ structure *)
           let* odoc_paths =
             Memo.parallel_map modules ~f:(fun module_ ->
-              compile_module sctx ~ctx ~obj_dir ~pkg ~lib_name module_
+              compile_module sctx ~ctx ~obj_dir ~pkg ~lib_name ~lib_deps module_
             )
           in
 
