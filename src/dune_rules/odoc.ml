@@ -506,11 +506,6 @@ let setup_generate sctx ~search_db odoc_file out =
   let html_dir_opt =
     let html_dir = Path.Build.parent_exn html_file in
     let html_root = Paths.html_root ctx in
-    Log.info [ Pp.textf "odoc: html_file=%s html_dir=%s html_root=%s equal=%b"
-                 (Path.Build.to_string html_file)
-                 (Path.Build.to_string html_dir)
-                 (Path.Build.to_string html_root)
-                 (Path.Build.equal html_dir html_root) ];
     if Path.Build.equal html_dir html_root then None else Some html_dir
   in
   let run_odoc =
@@ -1676,7 +1671,6 @@ let gen_rules sctx ~dir rest =
     (* Check if this is a local package or an installed package *)
     let* packages = Dune_load.packages () in
     let is_local_pkg = Package.Name.Map.mem packages pkg in
-    let* () = Memo.return (Log.info [ Pp.textf "odoc v3: Package %s is_local=%b" (Package.Name.to_string pkg) is_local_pkg ]) in
 
     if is_local_pkg then
       (* Local package - use existing setup_pkg_html_rules *)
@@ -1687,9 +1681,7 @@ let gen_rules sctx ~dir rest =
     else
       (* Installed package - generate HTML rules for all installed libraries in this package *)
       let ctx = Super_context.context sctx in
-      let* () = Memo.return (Log.info [ Pp.textf "odoc v3: Setting up HTML rules for installed package %s" (Package.Name.to_string pkg) ]) in
       let rules = Rules.collect_unit (fun () ->
-        Log.info [ Pp.textf "odoc v3: Inside Rules.collect_unit for package %s" (Package.Name.to_string pkg) ];
         let* pkg_discovery = Package_discovery.create ~context:ctx in
         let* all_libs_set =
           let* installed_db = Lib.DB.installed ctx in
@@ -1736,12 +1728,9 @@ let gen_rules sctx ~dir rest =
             )
           in
 
-          Log.info [ Pp.textf "odoc v3: Generating HTML for %d modules in %s/%s"
-                       (List.length modules) pkg_name lib_name_str ];
           (* Generate HTML for each module using simple search args *)
           Memo.parallel_iter modules ~f:(fun module_name ->
             let module_name_lower = String.uncapitalize_ascii module_name in
-            Log.info [ Pp.textf "odoc v3: Creating HTML rule for module %s" module_name ];
             let odocl_file =
               Paths.root ctx ++ "_odocls" ++ pkg_name ++ lib_name_str ++ (module_name_lower ^ ".odocl")
             in
