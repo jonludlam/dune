@@ -1299,31 +1299,17 @@ let gen_rules sctx ~dir rest =
            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
          (Memo.return Rules.empty))
   | [ "_html" ] ->
-    (* Root HTML directory - set up sherlodoc and allow subdirs for packages *)
-    (* We need to allow subdirectories but exclude the file targets created by the rules *)
+    (* Root HTML directory - allow package subdirectories and set up sherlodoc and index files *)
     let ctx = Super_context.context sctx in
     let directory_targets = Path.Build.Map.singleton (Paths.odoc_support ctx) Loc.none in
-    let rules = Rules.collect_unit (fun () ->
-      Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx)
-      >>> setup_css_rule sctx
-      >>> setup_toplevel_index_rules sctx
-    ) in
-    (* Get list of all packages to use as subdirectories *)
-    let* packages = Dune_load.packages () in
-    let package_names =
-      Package.Name.Map.keys packages
-      |> List.map ~f:Package.Name.to_string
-    in
-    Log.info [ Pp.textf "odoc v3: _html root allowing %d package subdirs: %s"
-                (List.length package_names)
-                (String.concat ~sep:", " package_names) ];
-    let subdirs = Subdir_set.of_list package_names in
     Memo.return
       (Build_config.Gen_rules.make
          ~directory_targets
          ~build_dir_only_sub_dirs:
-           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir subdirs)
-         rules)
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+         (Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx)
+          >>> setup_css_rule sctx
+          >>> setup_toplevel_index_rules sctx))
   | [ "_mlds"; pkg ] ->
     with_package pkg ~f:(fun pkg ->
       let pkg = Package.name pkg in
@@ -1818,119 +1804,15 @@ let gen_rules sctx ~dir rest =
        ())
   | [ "_html"; pkg_name ] when not (String.contains pkg_name '@') ->
     (* v3 package directory: _doc/_html/{package} *)
+    (* Generate HTML rules for all libraries in this package at this level *)
+    (* Use Subdir_set.all to allow library and module subdirectories without needing separate handlers *)
     Log.info [ Pp.textf "odoc v3: Handling HTML package dir for pkg=%s" pkg_name ];
     let pkg = Package.Name.of_string pkg_name in
-    let rules = Rules.collect_unit (fun () ->
-      let* () = setup_pkg_html_rules sctx ~pkg in
-      Memo.return ()
-    ) in
-    Memo.return (Build_config.Gen_rules.make rules)
-  | [ "_html"; pkg_name; lib_name ] when not (String.contains pkg_name '@') ->
-    (* v3 library directory: _doc/_html/{package}/{library} *)
-    Log.info [ Pp.textf "odoc v3: HTML library handler starting for pkg=%s lib=%s" pkg_name lib_name ];
-    let pkg = Package.Name.of_string pkg_name in
-    Log.info [ Pp.textf "odoc v3: Parsed package name" ];
-    let lib_name_lname = Lib_name.of_string lib_name in
-    Log.info [ Pp.textf "odoc v3: Parsed lib name" ];
-    let ctx = Super_context.context sctx in
-    Log.info [ Pp.textf "odoc v3: Got context" ];
-
-    (* Check if this library exists and belongs to this package *)
-    Log.info [ Pp.textf "odoc v3: (_html handler) About to call find_lib_for_package for pkg=%s lib=%s" pkg_name lib_name ];
-    let* lib_opt = find_lib_for_package sctx ~pkg ~lib_name:lib_name_lname in
-    Log.info [ Pp.textf "odoc v3: find_lib_for_package returned for pkg=%s lib=%s" pkg_name lib_name ];
-
-    (match lib_opt with
-    | None -> Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-    | Some lib ->
-      Log.info [ Pp.textf "odoc v3: Checking if %s is local" (Lib_name.to_string (Lib.name lib)) ];
-      match Lib.Local.of_lib lib with
-      | Some local_lib ->
-        (* Local library - generate HTML rules *)
-        Log.info [ Pp.textf "odoc v3: %s is local, about to call has_rules" (Lib_name.to_string (Lib.name lib)) ];
-        let result = has_rules (fun () ->
-          Log.info [ Pp.textf "odoc v3: Inside has_rules block for %s" (Lib_name.to_string (Lib.name lib)) ];
-          let* search_db = search_db_for_lib sctx local_lib in
-          setup_lib_html_rules sctx ~search_db local_lib
-        ) in
-        Log.info [ Pp.textf "odoc v3: has_rules returned for %s" (Lib_name.to_string (Lib.name lib)) ];
-        result
-      | None ->
-        Log.info [ Pp.textf "odoc v3: %s is not local (installed)" (Lib_name.to_string (Lib.name lib)) ];
-        (* Installed library - generate HTML for all modules from classify file *)
-        let* dirs, rules = Rules.collect (fun () ->
-          (* Installed library - generate HTML for all modules from classify file *)
-          let* classify_content =
-            let classify_path = Paths.root ctx ++ "classify" ++ pkg_name ++ lib_name ++ "odoc.classify" in
-            Build_system.read_file (Path.build classify_path)
-          in
-          let classify_lines = String.split_lines classify_content in
-          let archives = Lib_info.archives (Lib.info lib) in
-          let archive_names =
-            let byte_archives = Mode.Dict.get archives Mode.Byte in
-            match byte_archives with
-            | [] ->
-              if Lib_name.equal lib_name_lname (Lib_name.of_string "stdlib")
-              then [ "stdlib" ]
-              else []
-            | archives ->
-              List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
-          in
-          let module_names =
-            List.concat_map classify_lines ~f:(fun line ->
-              match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
-              | [] -> []
-              | archive :: mods ->
-                if List.mem archive_names archive ~equal:String.equal
-                then mods
-                else []
-            )
-          in
-
-          (* Generate HTML for each module's odocl file and collect directory targets *)
-          Memo.List.map module_names ~f:(fun module_name ->
-            let module_name_lower = String.uncapitalize_ascii module_name in
-            let odocl_file =
-              Paths.root ctx ++ "_odocls" ++ pkg_name ++ lib_name ++ (module_name_lower ^ ".odocl")
-            in
-            let html_dir =
-              Paths.html ctx (Pkg pkg) ++ lib_name ++ module_name
-            in
-
-            let odoc_support_path = Paths.odoc_support ctx in
-            let run_odoc =
-              run_odoc
-                sctx
-                ~dir:(Path.build (Paths.html_root ctx))
-                "html-generate"
-                ~quiet:false
-                ~flags_for:None
-                [ A "--search-uri"
-                ; A "_odoc-theme"
-                ; A "-o"
-                ; Path (Path.build (Paths.html_root ctx))
-                ; A "--support-uri"
-                ; Path (Path.build odoc_support_path)
-                ; A "--theme-uri"
-                ; Path (Path.build odoc_support_path)
-                ; Dep (Path.build odocl_file)
-                ]
-            in
-            let rule = Action_builder.With_targets.add_directories ~directory_targets:[html_dir] run_odoc in
-            let+ () = add_rule sctx rule in
-            html_dir)
-        ) in
-        let directory_targets =
-          Path.Build.Map.of_list_map_exn dirs ~f:(fun dir -> dir, Loc.none)
-        in
-        Memo.return (Gen_rules.make ~directory_targets (Memo.return rules))
-    )
-  | [ "_html"; pkg_name; lib_name; module_name ] when not (String.contains pkg_name '@') ->
-    (* v3 module directory: _doc/_html/{package}/{library}/{module} *)
-    (* HTML rules are generated at package level, so just redirect to parent *)
-    Log.info [ Pp.textf "odoc v3: MATCHED 4-element pattern for pkg=%s lib=%s module=%s"
-                 pkg_name lib_name module_name ];
-    Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+         (setup_pkg_html_rules sctx ~pkg))
   | [ "_html"; lib_unique_name_or_pkg ] ->
     has_rules (fun () ->
       (* TODO we can be a better with the error handling in the case where
