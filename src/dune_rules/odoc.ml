@@ -1302,14 +1302,17 @@ let gen_rules sctx ~dir rest =
     (* Root HTML directory - allow package subdirectories and set up sherlodoc and index files *)
     let ctx = Super_context.context sctx in
     let directory_targets = Path.Build.Map.singleton (Paths.odoc_support ctx) Loc.none in
+    let rules = Rules.collect_unit (fun () ->
+      Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx)
+      >>> setup_css_rule sctx
+      >>> setup_toplevel_index_rules sctx
+    ) in
     Memo.return
       (Build_config.Gen_rules.make
          ~directory_targets
          ~build_dir_only_sub_dirs:
            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-         (Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx)
-          >>> setup_css_rule sctx
-          >>> setup_toplevel_index_rules sctx))
+         rules)
   | [ "_mlds"; pkg ] ->
     with_package pkg ~f:(fun pkg ->
       let pkg = Package.name pkg in
@@ -1808,11 +1811,12 @@ let gen_rules sctx ~dir rest =
     (* Use Subdir_set.all to allow library and module subdirectories without needing separate handlers *)
     Log.info [ Pp.textf "odoc v3: Handling HTML package dir for pkg=%s" pkg_name ];
     let pkg = Package.Name.of_string pkg_name in
+    let rules = Rules.collect_unit (fun () -> setup_pkg_html_rules sctx ~pkg) in
     Memo.return
       (Build_config.Gen_rules.make
          ~build_dir_only_sub_dirs:
            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-         (setup_pkg_html_rules sctx ~pkg))
+         rules)
   | [ "_html"; lib_unique_name_or_pkg ] ->
     has_rules (fun () ->
       (* TODO we can be a better with the error handling in the case where
