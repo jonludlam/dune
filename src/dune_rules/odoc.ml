@@ -1805,50 +1805,55 @@ let gen_rules sctx ~dir rest =
            setup_pkg_odocl_rules sctx ~pkg:name
        in
        ())
-  | [ "_html"; pkg_name ] when not (String.contains pkg_name '@') ->
-    (* v3 package directory: _doc/_html/{package} *)
-    (* Generate HTML rules for all libraries in this package at this level *)
-    (* Use Subdir_set.all to allow library and module subdirectories without needing separate handlers *)
-    Log.info [ Pp.textf "odoc v3: Handling HTML package dir for pkg=%s" pkg_name ];
-    let pkg = Package.Name.of_string pkg_name in
-    let rules = Rules.collect_unit (fun () -> setup_pkg_html_rules sctx ~pkg) in
-    Memo.return
-      (Build_config.Gen_rules.make
-         ~build_dir_only_sub_dirs:
-           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-         rules)
   | [ "_html"; lib_unique_name_or_pkg ] ->
-    has_rules (fun () ->
-      (* TODO we can be a better with the error handling in the case where
-          lib_unique_name_or_pkg is neither a valid pkg or lnu *)
-       let ctx = Super_context.context sctx in
-       let* lib, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name_or_pkg in
-       (* jeremiedimino: why isn't [None] some kind of error here? *)
-       let* lib =
-         let+ lib = Lib.DB.find lib_db lib in
-         Option.bind ~f:Lib.Local.of_lib lib
-       in
-       let+ () =
-         match lib with
-         | None -> Memo.return ()
-         | Some lib ->
-           (match Lib_info.package (Lib.Local.info lib) with
-            | None ->
-              (* lib with no package above it *)
-              let* search_db = search_db_for_lib sctx lib in
-              setup_lib_html_rules sctx ~search_db lib
-            | Some pkg -> setup_pkg_html_rules sctx ~pkg)
-       and+ () =
-         let* packages = Dune_load.packages () in
-         match
-           Package.Name.Map.find packages (Package.Name.of_string lib_unique_name_or_pkg)
-         with
-         | None -> Memo.return ()
-         | Some pkg ->
-           let name = Package.name pkg in
-           setup_pkg_html_rules sctx ~pkg:name
-       in
-       ())
+    (* Handle both v2 library unique names (containing @) and v3 package names *)
+    let is_v3_package = not (String.contains lib_unique_name_or_pkg '@') in
+    if is_v3_package then (
+      (* v3 package directory: _doc/_html/{package} *)
+      (* Generate HTML rules for all libraries in this package at this level *)
+      (* Use Subdir_set.all to allow library and module subdirectories without needing separate handlers *)
+      Log.info [ Pp.textf "odoc v3: Handling HTML package dir for pkg=%s" lib_unique_name_or_pkg ];
+      let pkg = Package.Name.of_string lib_unique_name_or_pkg in
+      let rules = Rules.collect_unit (fun () -> setup_pkg_html_rules sctx ~pkg) in
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+           rules)
+    ) else (
+      (* v2 library unique name (contains @) *)
+      has_rules (fun () ->
+        (* TODO we can be a better with the error handling in the case where
+            lib_unique_name_or_pkg is neither a valid pkg or lnu *)
+         let ctx = Super_context.context sctx in
+         let* lib, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name_or_pkg in
+         (* jeremiedimino: why isn't [None] some kind of error here? *)
+         let* lib =
+           let+ lib = Lib.DB.find lib_db lib in
+           Option.bind ~f:Lib.Local.of_lib lib
+         in
+         let+ () =
+           match lib with
+           | None -> Memo.return ()
+           | Some lib ->
+             (match Lib_info.package (Lib.Local.info lib) with
+              | None ->
+                (* lib with no package above it *)
+                let* search_db = search_db_for_lib sctx lib in
+                setup_lib_html_rules sctx ~search_db lib
+              | Some pkg -> setup_pkg_html_rules sctx ~pkg)
+         and+ () =
+           let* packages = Dune_load.packages () in
+           match
+             Package.Name.Map.find packages (Package.Name.of_string lib_unique_name_or_pkg)
+           with
+           | None -> Memo.return ()
+           | Some pkg ->
+             let name = Package.name pkg in
+             setup_pkg_html_rules sctx ~pkg:name
+         in
+         ())
+    )
   | [ "classify"; pkg_name; lib_name ] ->
     (* classify library directory: _doc/classify/{package}/{library} *)
     Log.info [ Pp.textf "odoc v3: Handling classify dir for pkg=%s lib=%s" pkg_name lib_name ];
