@@ -73,12 +73,49 @@ type target =
   | Lib of Lib.Local.t
   | Pkg of Package.Name.t
 
-type odoc_artefact =
-  { odoc_file : Path.Build.t
-  ; odocl_file : Path.Build.t
-  ; html_file : Path.Build.t
-  ; json_file : Path.Build.t
-  }
+(* Artifact types - tracking documentation units through the pipeline *)
+
+[@@@warning "-37-69-32"]  (* Suppress unused warnings during refactoring *)
+
+type artifact_kind =
+  | Module of { visible : bool; module_name : Module_name.t }
+  | Page of { name : string }  (* mld files *)
+
+type artifact_source =
+  | Local_source of Path.Build.t  (* cmti, cmt, mld from local build *)
+  | Installed_source of {
+      src_path : Path.t;  (* From Lib_info.src_dir *)
+      module_name : string;
+      archive : string;  (* Which archive it belongs to *)
+    }
+
+type artifact = {
+  kind : artifact_kind;
+  source : artifact_source;
+
+  (* Output paths *)
+  odoc_file : Path.Build.t;
+  odocl_file : Path.Build.t;
+  html_file : Path.Build.t;
+  json_file : Path.Build.t;
+
+  (* Context for compilation/linking *)
+  parent_id : string;  (* e.g., "dyn" or "lwt.unix" *)
+  pkg : Package.Name.t option;
+
+  (* Target context - needed for looking up dependencies *)
+  target : target;
+}
+
+(* Legacy type alias for backwards compatibility during refactoring *)
+type odoc_artefact = artifact
+
+(* Artifact accessor functions *)
+let artifact_kind art = art.kind
+let artifact_source art = art.source
+let artifact_target art = art.target
+let artifact_parent_id art = art.parent_id
+let artifact_pkg art = art.pkg
 
 let add_rule sctx =
   let dir = Super_context.context sctx |> Context.build_dir in
@@ -770,25 +807,47 @@ let entry_modules sctx ~pkg =
   Lib.Local.Map.of_list_exn l
 ;;
 
-let create_odoc ctx ~target odoc_file =
+(* Create an artifact for a local module or page *)
+let create_artifact_local ctx ~target ~source ~kind =
   let html_base = Paths.html ctx target in
   let odocl_base = Paths.odocl ctx target in
+  let odoc_file = source in  (* For local sources, the source path is the odoc file path *)
   let basename = Path.Build.basename odoc_file |> Filename.remove_extension in
   let odocl_file = odocl_base ++ (basename ^ ".odocl") in
-  match target with
-  | Lib _ ->
+
+  let (html_file, json_file, parent_id) = match target with
+  | Lib lib ->
     let html_dir = html_base ++ Stdune.String.capitalize basename in
     let file output =
       html_dir ++ "index"
       |> Path.Build.extend_basename ~suffix:(Output_format.extension output)
     in
-    { odoc_file; odocl_file; html_file = file Html; json_file = file Json }
-  | Pkg _ ->
+    let parent_id = Lib.name (Lib.Local.to_lib lib) |> Lib_name.to_string in
+    (file Html, file Json, parent_id)
+  | Pkg pkg ->
     let file output =
       html_base ++ (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
       |> Path.Build.extend_basename ~suffix:(Output_format.extension output)
     in
-    { odoc_file; odocl_file; html_file = file Html; json_file = file Json }
+    let parent_id = Package.Name.to_string pkg in
+    (file Html, file Json, parent_id)
+  in
+
+  let pkg = match target with
+    | Lib lib -> Lib.Local.info lib |> Lib_info.package
+    | Pkg pkg -> Some pkg
+  in
+
+  { kind
+  ; source = Local_source source
+  ; odoc_file
+  ; odocl_file
+  ; html_file
+  ; json_file
+  ; parent_id
+  ; pkg
+  ; target
+  }
 ;;
 
 let check_mlds_no_dupes ~pkg ~mlds =
@@ -820,25 +879,33 @@ let odoc_artefacts sctx target =
         | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
         | Some _ as s -> s)
     in
-    Filename.Map.to_list_map mlds ~f:(fun _ mld ->
-      Mld.create mld |> Mld.odoc_file ~doc_dir:dir |> create_odoc ctx ~target)
+    Filename.Map.to_list_map mlds ~f:(fun name mld ->
+      let odoc_file = Mld.create mld |> Mld.odoc_file ~doc_dir:dir in
+      let kind = Page { name } in
+      create_artifact_local ctx ~target ~source:odoc_file ~kind)
   | Lib lib ->
     let info = Lib.Local.info lib in
     let+ modules = entry_modules_by_lib sctx lib in
     (* Determine the package this library belongs to *)
     let pkg = Lib_info.package info in
+
     List.map modules ~f:(fun m ->
+      let visible = Module.visibility m = Visibility.Public in
+      let module_name = Module.name m in
+      let kind = Module { visible; module_name } in
+
       match pkg with
       | Some pkg ->
         (* Use v3 paths for libraries with packages *)
-        let lib_name = Lib.name (Lib.Local.to_lib lib) in
+        let lib_t = Lib.Local.to_lib lib in
+        let lib_name = Lib.name lib_t in
         let odoc_file = odoc_file_v3 ctx pkg lib_name m in
-        create_odoc ctx ~target odoc_file
+        create_artifact_local ctx ~target ~source:odoc_file ~kind
       | None ->
         (* Fallback to v2 paths for libraries without packages *)
         let obj_dir = Lib_info.obj_dir info in
         let odoc_file = Obj_dir.Module.odoc obj_dir m in
-        create_odoc ctx ~target odoc_file)
+        create_artifact_local ctx ~target ~source:odoc_file ~kind)
 ;;
 
 let setup_lib_odocl_rules_def =
