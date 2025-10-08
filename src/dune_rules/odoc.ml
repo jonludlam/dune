@@ -397,13 +397,19 @@ let parent_id_of_library pkg =
 
 let parent_id_root = ""
 
+(* Get the stdlib library, if available *)
+let stdlib_lib ctx =
+  let* public_libs = Scope.DB.public_libs ctx in
+  Lib.DB.find public_libs (Lib_name.of_string "stdlib")
+;;
+
 (* Helper to determine package ownership of a library *)
 let determine_package_for_library_memo sctx lib_name =
   let ctx = Super_context.context sctx in
   let package_discovery = Package_discovery.create ~context:ctx in
   let* _package_discovery = package_discovery in
   match Lib_name.to_string lib_name with
-  | lib_str when String.is_prefix lib_str ~prefix:"dune" -> 
+  | lib_str when String.is_prefix lib_str ~prefix:"dune" ->
       (* Fallback: libraries starting with "dune" likely belong to dune package *)
       Memo.return (Package.Name.of_string "dune")
   | _ ->
@@ -488,7 +494,7 @@ let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
   odoc_file
 ;;
 
-let odoc_include_flags ctx pkg requires pkg_discovery =
+let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
   (* Debug: inspect what's in requires at the start *)
   let () =
     match Resolve.peek requires with
@@ -503,6 +509,11 @@ let odoc_include_flags ctx pkg requires pkg_discovery =
   Resolve.args
     (let open Resolve.O in
      let+ libs = requires in
+     (* Add stdlib to the list of libraries if provided *)
+     let libs = match stdlib_opt with
+       | Some stdlib -> stdlib :: libs
+       | None -> libs
+     in
      let paths =
        List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
          match Lib.Local.of_lib lib with
@@ -545,6 +556,7 @@ let odoc_include_flags ctx pkg requires pkg_discovery =
 let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
   let ctx = Super_context.context sctx in
   let deps = Dep.deps ctx pkg requires in
+  let* stdlib_opt = stdlib_lib (Context.name ctx) in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   let run_odoc =
     run_odoc
@@ -553,7 +565,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
       "link"
       ~quiet:false
       ~flags_for:(Some odoc_file.odoc_file)
-      [ odoc_include_flags ctx pkg requires pkg_discovery
+      [ odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery
       ; A "-o"
       ; Target odoc_file.odocl_file
       ; Dep (Path.build odoc_file.odoc_file)
@@ -1001,31 +1013,32 @@ let setup_lib_html_rules sctx ~search_db lib =
   (* Also add dependencies on the HTML aliases of all required libraries *)
   let lib_t = Lib.Local.to_lib lib in
   let* deps_result = Lib.requires lib_t in
+  let* pkg_discovery = Package_discovery.create ~context:ctx in
   match Resolve.peek deps_result with
   | Error _ -> Memo.return ()
   | Ok deps ->
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    Log.info [ Pp.textf "odoc v3: Processing %d dependencies for HTML aliases for lib=%s"
+                 (List.length deps) lib_name ];
     Output_format.iter ~f:(fun output ->
       let dep_aliases =
         List.filter_map deps ~f:(fun dep_lib ->
+          let dep_lib_name = Lib.name dep_lib |> Lib_name.to_string in
           match Lib.Local.of_lib dep_lib with
           | Some local_dep ->
             (* Local library - use local HTML alias *)
+            Log.info [ Pp.textf "odoc v3: Adding HTML alias dependency for LOCAL library %s" dep_lib_name ];
             Some (Dep.format_alias output ctx (Lib local_dep))
           | None ->
-            (* Installed library - use v3 HTML alias at _html/{package}/{library} *)
-            let lib_name = Lib.name dep_lib in
-            let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
-            (match lib_pkg_opt with
-             | Some lib_pkg ->
-               let html_dir =
-                 Paths.root ctx
-                 ++ "_html"
-                 ++ Package.Name.to_string lib_pkg
-                 ++ Lib_name.to_string lib_name
-               in
-               Some (Output_format.alias output ~dir:html_dir)
-             | None -> None))
+            (* Installed library - use package-level HTML alias *)
+            let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
+            (match dep_pkg_opt with
+             | Some dep_pkg ->
+               Log.info [ Pp.textf "odoc v3: Adding HTML alias dependency for INSTALLED library %s (pkg=%s)"
+                            dep_lib_name (Package.Name.to_string dep_pkg) ];
+               Some (Dep.format_alias output ctx (Pkg dep_pkg))
+             | None ->
+               Log.info [ Pp.textf "odoc v3: Skipping HTML alias dependency for library %s (no package found)" dep_lib_name ];
+               None))
       in
       let dep_set =
         Dune_engine.Dep.Set.of_list_map dep_aliases ~f:(fun alias ->
@@ -1133,40 +1146,140 @@ let setup_installed_lib_html sctx lib =
 ;;
 *)
 
-let setup_pkg_html_rules_def =
-  let f (sctx, pkg) =
-    let ctx = Super_context.context sctx in
-    Log.info [ Pp.textf "odoc v3: setup_pkg_html_rules for pkg=%s" (Package.Name.to_string pkg) ];
-    let* libs = Context.name ctx |> libs_of_pkg ~pkg in
-    Log.info [ Pp.textf "odoc v3: found %d libs" (List.length libs) ];
-    let dir = Paths.html ctx (Pkg pkg) in
-    let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-    let* lib_odocs =
-      Memo.List.concat_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
-    in
-    let all_odocs = pkg_odocs @ lib_odocs in
-    Log.info [ Pp.textf "odoc v3: setting up sherlodoc rule with %d odocs" (List.length all_odocs) ];
-    let* search_db =
-      let odocls = List.map all_odocs ~f:(fun artefact -> artefact.odocl_file) in
-      Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
-    in
-    Log.info [ Pp.textf "odoc v3: calling setup_lib_html_rules for %d libs" (List.length libs) ];
-    let* () = Memo.parallel_iter libs ~f:(fun lib ->
-      let lib_name = Lib.name (Lib.Local.to_lib lib) |> Lib_name.to_string in
-      Log.info [ Pp.textf "odoc v3: calling setup_lib_html_rules for lib=%s" lib_name ];
-      setup_lib_html_rules sctx ~search_db lib) in
-    let* _pkg_dirs = Memo.List.concat_map pkg_odocs ~f:(setup_generate_all ~search_db sctx) in
-    Output_format.iter ~f:(fun output ->
-      let paths = out_files ctx output all_odocs in
-      Rules.Produce.Alias.add_deps
-        (Dep.format_alias output ctx (Pkg pkg))
-        (Action_builder.paths paths))
+(* Generate HTML for installed libraries in a package by discovering their odocl files *)
+let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
+  let ctx = Super_context.context sctx in
+  let pkg_name_str = Package.Name.to_string pkg in
+  Log.info [ Pp.textf "odoc v3: setup_installed_pkg_html_rules for pkg=%s" pkg_name_str ];
+
+  (* Find all installed libraries for this package *)
+  let* pkg_discovery = Package_discovery.create ~context:ctx in
+  let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+
+  Log.info [ Pp.textf "odoc v3: found %d installed libraries for pkg=%s"
+               (List.length installed_libs) pkg_name_str ];
+
+  (* Filter out local libraries - only process truly external installed libraries *)
+  let truly_installed_libs =
+    List.filter installed_libs ~f:(fun lib ->
+      match Lib.Local.of_lib lib with
+      | Some _ -> false  (* Local library, skip *)
+      | None -> true     (* Installed library, process *)
+    )
   in
-  setup_pkg_rules_def "setup-package-html-rules" f
+
+  Log.info [ Pp.textf "odoc v3: found %d truly installed (non-local) libraries for pkg=%s"
+               (List.length truly_installed_libs) pkg_name_str ];
+
+  Memo.parallel_iter truly_installed_libs ~f:(fun lib ->
+    let lib_name = Lib.name lib in
+    let lib_name_str = Lib_name.to_string lib_name in
+    Log.info [ Pp.textf "odoc v3: Generating HTML for installed library %s/%s" pkg_name_str lib_name_str ];
+
+    (* Check if the library has archives to determine module names *)
+    let info = Lib.info lib in
+    let archives = Lib_info.archives info in
+    let archive_names =
+      let byte_archives = Mode.Dict.get archives Mode.Byte in
+      match byte_archives with
+      | [] ->
+        if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+        then [ "stdlib" ]
+        else []
+      | archives ->
+        List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
+    in
+
+    if List.is_empty archive_names then (
+      Log.info [ Pp.textf "odoc v3: Library %s/%s has no archives, skipping HTML" pkg_name_str lib_name_str ];
+      Memo.return ()
+    ) else (
+      (* Get the classify file path *)
+      let classify_file =
+        Paths.root ctx ++ "classify" ++ pkg_name_str ++ lib_name_str ++ "odoc.classify"
+      in
+
+      (* Read the classify file to get module names *)
+      let* classify_content = Build_system.read_file (Path.build classify_file) in
+        let classify_lines = String.split_lines classify_content in
+
+        let module_names =
+          List.concat_map classify_lines ~f:(fun line ->
+            match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
+            | [] -> []
+            | archive :: modules ->
+              if List.mem archive_names archive ~equal:String.equal
+              then modules
+              else []
+          )
+        in
+
+        Log.info [ Pp.textf "odoc v3: Library %s/%s has %d modules for HTML generation"
+                     pkg_name_str lib_name_str (List.length module_names) ];
+
+        (* Generate HTML for each module *)
+        Memo.parallel_iter module_names ~f:(fun module_name ->
+          let module_name_lower = String.uncapitalize_ascii module_name in
+          let odocl_file =
+            Paths.root ctx ++ "_odocls" ++ pkg_name_str ++ lib_name_str ++ (module_name_lower ^ ".odocl")
+          in
+          let html_file =
+            Paths.html_root ctx ++ pkg_name_str ++ lib_name_str ++ module_name ++ "index.html"
+          in
+
+          let odoc_support_path = Paths.odoc_support ctx in
+          let run_odoc =
+            run_odoc
+              sctx
+              ~dir:(Path.build (Paths.html_root ctx))
+              "html-generate"
+              ~quiet:false
+              ~flags_for:None
+              [ A "--search-uri"
+              ; A "_odoc-theme"
+              ; A "-o"
+              ; Path (Path.build (Paths.html_root ctx))
+              ; A "--support-uri"
+              ; Path (Path.build odoc_support_path)
+              ; A "--theme-uri"
+              ; Path (Path.build odoc_support_path)
+              ; Dep (Path.build odocl_file)
+              ]
+          in
+          let rule = Action_builder.With_targets.add ~file_targets:[html_file] run_odoc in
+          add_rule sctx rule
+        )
+      )
+    )
 ;;
 
 let setup_pkg_html_rules sctx ~pkg : unit Memo.t =
-  Memo.With_implicit_output.exec setup_pkg_html_rules_def (sctx, pkg)
+  let ctx = Super_context.context sctx in
+  Log.info [ Pp.textf "odoc v3: setup_pkg_html_rules for pkg=%s" (Package.Name.to_string pkg) ];
+  let* libs = Context.name ctx |> libs_of_pkg ~pkg in
+  Log.info [ Pp.textf "odoc v3: found %d libs" (List.length libs) ];
+  let dir = Paths.html ctx (Pkg pkg) in
+  let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
+  let* lib_odocs =
+    Memo.List.concat_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
+  in
+  let all_odocs = pkg_odocs @ lib_odocs in
+  Log.info [ Pp.textf "odoc v3: setting up sherlodoc rule with %d odocs" (List.length all_odocs) ];
+  let* search_db =
+    let odocls = List.map all_odocs ~f:(fun artefact -> artefact.odocl_file) in
+    Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
+  in
+  Log.info [ Pp.textf "odoc v3: calling setup_lib_html_rules for %d libs" (List.length libs) ];
+  let* () = Memo.parallel_iter libs ~f:(fun lib ->
+    let lib_name = Lib.name (Lib.Local.to_lib lib) |> Lib_name.to_string in
+    Log.info [ Pp.textf "odoc v3: calling setup_lib_html_rules for lib=%s" lib_name ];
+    setup_lib_html_rules sctx ~search_db lib) in
+  let* _pkg_dirs = Memo.List.concat_map pkg_odocs ~f:(setup_generate_all ~search_db sctx) in
+  Output_format.iter ~f:(fun output ->
+    let paths = out_files ctx output all_odocs in
+    Rules.Produce.Alias.add_deps
+      (Dep.format_alias output ctx (Pkg pkg))
+      (Action_builder.paths paths))
 ;;
 
 let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.t) =
@@ -1347,19 +1460,21 @@ let with_package pkg ~f =
 let find_lib_for_package sctx ~pkg ~lib_name =
   let ctx = Super_context.context sctx in
 
-  (* Look up the library - try public libs first (simpler), then search all scopes for private libs *)
+  (* Look up the library - try package's local libs first to avoid finding installed versions of the same library *)
   let* lib_opt =
-    let* public_libs = Scope.DB.public_libs (Context.name ctx) in
-    let* pub_lib_opt = Lib.DB.find public_libs lib_name in
-    match pub_lib_opt with
+    (* First search package libraries including private ones *)
+    let* pkg_libs = libs_of_pkg (Context.name ctx) ~pkg in
+    let* local_lib_opt = Memo.List.find_map pkg_libs ~f:(fun lib ->
+      if Lib_name.equal (Lib.name (lib :> Lib.t)) lib_name
+      then Memo.return (Some (lib :> Lib.t))
+      else Memo.return None)
+    in
+    match local_lib_opt with
     | Some lib -> Memo.return (Some lib)
     | None ->
-      (* Not in public libs - search package libraries including private ones *)
-      let* pkg_libs = libs_of_pkg (Context.name ctx) ~pkg in
-      Memo.List.find_map pkg_libs ~f:(fun lib ->
-        if Lib_name.equal (Lib.name (lib :> Lib.t)) lib_name
-        then Memo.return (Some (lib :> Lib.t))
-        else Memo.return None)
+      (* Not in package's local libs - try public libs (for installed libraries) *)
+      let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+      Lib.DB.find public_libs lib_name
   in
 
   match lib_opt with
@@ -1415,6 +1530,10 @@ let gen_rules sctx ~dir rest =
       (Path.Build.to_string dir)
       rest_str
       rest_len ];
+  (match rest with
+  | [ "_html"; a; b ] ->
+    Log.info [ Pp.textf "odoc v3: PRE-MATCH: 3-element _html pattern [_html; %s; %s]" a b ];
+  | _ -> ());
   let result = (match rest with
   | [] ->
     Log.info [ Pp.textf "odoc v3: Matched rest=[]" ];
@@ -1445,7 +1564,12 @@ let gen_rules sctx ~dir rest =
               (Subdir_set.of_list pkg_subdirs))
          rules)
   | [ "_html"; pkg_name; lib_name ] ->
+    (* Library directory: _doc/_html/{package}/{library} *)
+    (* Redirect to parent - the package level handler will generate HTML for all libraries *)
     Log.info [ Pp.textf "odoc v3: Library directory handler for pkg=%s lib=%s - redirecting to parent" pkg_name lib_name ];
+    Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
+  | [ "_html"; pkg_name; lib_name; module_name ] ->
+    Log.info [ Pp.textf "odoc v3: Module directory handler for pkg=%s lib=%s module=%s - redirecting to parent" pkg_name lib_name module_name ];
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
   | [ "_mlds"; pkg ] ->
     with_package pkg ~f:(fun pkg ->
@@ -1983,9 +2107,13 @@ let gen_rules sctx ~dir rest =
     if is_v3_package then (
       (* v3 package directory: _doc/_html/{package} *)
       (* Generate HTML rules for all libraries in this package at this level *)
+      (* This can be either a local package or an installed package *)
       Log.info [ Pp.textf "odoc v3: Handling HTML package dir for pkg=%s" lib_unique_name_or_pkg ];
       let pkg = Package.Name.of_string lib_unique_name_or_pkg in
-      has_rules (fun () -> setup_pkg_html_rules sctx ~pkg)
+      has_rules (fun () ->
+        (* Try to generate HTML for local package first, then for installed package *)
+        let* () = setup_pkg_html_rules sctx ~pkg in
+        setup_installed_pkg_html_rules sctx ~pkg)
     ) else (
       (* v2 library unique name (contains @) *)
       has_rules (fun () ->
