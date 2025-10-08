@@ -1148,6 +1148,15 @@ let setup_installed_lib_html sctx lib =
 
 (* Generate HTML for installed libraries in a package by discovering their odocl files *)
 let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
+  let _ctx = Super_context.context sctx in
+  let pkg_name_str = Package.Name.to_string pkg in
+  Log.info [ Pp.textf "odoc v3: setup_installed_pkg_html_rules for pkg=%s - DISABLED for now" pkg_name_str ];
+  (* TODO: Re-enable once classify file dependency issues are resolved *)
+  Memo.return ()
+;;
+
+(*
+let setup_installed_pkg_html_rules_DISABLED sctx ~pkg : unit Memo.t =
   let ctx = Super_context.context sctx in
   let pkg_name_str = Package.Name.to_string pkg in
   Log.info [ Pp.textf "odoc v3: setup_installed_pkg_html_rules for pkg=%s" pkg_name_str ];
@@ -1252,6 +1261,7 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
       )
     )
 ;;
+*)
 
 let setup_pkg_html_rules sctx ~pkg : unit Memo.t =
   let ctx = Super_context.context sctx in
