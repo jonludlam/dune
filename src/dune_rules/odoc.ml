@@ -850,6 +850,107 @@ let create_artifact_local ctx ~target ~source ~kind =
   }
 ;;
 
+(* Create an artifact for an installed library module *)
+let create_artifact_installed ctx ~pkg ~lib_name ~module_name ~archive ~visible =
+  let pkg_name_str = Package.Name.to_string pkg in
+  let lib_name_str = Lib_name.to_string lib_name in
+  let module_name_lower = String.uncapitalize_ascii module_name in
+
+  (* Paths for installed libraries follow the v3 structure *)
+  let odoc_file =
+    Paths.root ctx ++ "_odoc" ++ pkg_name_str ++ lib_name_str ++ (module_name_lower ^ ".odoc")
+  in
+  let odocl_file =
+    Paths.root ctx ++ "_odocls" ++ pkg_name_str ++ lib_name_str ++ (module_name_lower ^ ".odocl")
+  in
+
+  let html_base = Paths.html_root ctx ++ pkg_name_str ++ lib_name_str in
+  let html_dir = html_base ++ module_name in
+  let html_file = html_dir ++ "index.html" in
+  let json_file = html_dir ++ "index.html.json" in
+
+  let parent_id = lib_name_str in
+  let kind = Module { visible; module_name = Module_name.of_string module_name } in
+
+  (* For installed libraries, we create a dummy target - we don't have Lib.Local.t *)
+  (* The target will be used to look up dependencies when needed *)
+  let target = Pkg pkg in  (* Use package as target for installed libs *)
+
+  { kind
+  ; source = Installed_source { src_path = Path.external_ (Path.External.of_string "/dev/null"); module_name; archive }
+  ; odoc_file
+  ; odocl_file
+  ; html_file
+  ; json_file
+  ; parent_id
+  ; pkg = Some pkg
+  ; target
+  }
+;;
+
+(* Discover modules for an installed library and create artifacts *)
+let discover_installed_lib_artifacts ctx ~pkg ~lib_name ~lib : artifact list Memo.t =
+  let pkg_name_str = Package.Name.to_string pkg in
+  let lib_name_str = Lib_name.to_string lib_name in
+
+  (* Get archive information *)
+  let info = Lib.info lib in
+  let archives = Lib_info.archives info in
+  let archive_names =
+    let byte_archives = Mode.Dict.get archives Mode.Byte in
+    match byte_archives with
+    | [] ->
+      if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+      then [ "stdlib" ]
+      else []
+    | archives ->
+      List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
+  in
+
+  if List.is_empty archive_names then (
+    Log.info [ Pp.textf "odoc v3: Installed library %s/%s has no archives, no artifacts"
+                 pkg_name_str lib_name_str ];
+    Memo.return []
+  ) else (
+    (* Read classify file *)
+    let classify_file =
+      Paths.root ctx ++ "classify" ++ pkg_name_str ++ lib_name_str ++ "odoc.classify"
+    in
+
+    let* classify_content = Build_system.read_file (Path.build classify_file) in
+    let classify_lines = String.split_lines classify_content in
+
+    (* Parse classify file to get modules *)
+    let module_names =
+      List.concat_map classify_lines ~f:(fun line ->
+        match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
+        | [] -> []
+        | archive :: modules ->
+          if List.mem archive_names archive ~equal:String.equal
+          then modules
+          else []
+      )
+    in
+
+    Log.info [ Pp.textf "odoc v3: Found %d modules for installed library %s/%s"
+                 (List.length module_names) pkg_name_str lib_name_str ];
+
+    (* Create artifacts for each module - assume all are visible for now *)
+    (* TODO: We could potentially parse odoc files to check visibility *)
+    let default_archive = match archive_names with
+      | [] -> "unknown"
+      | archive :: _ -> archive
+    in
+    let artifacts = List.map module_names ~f:(fun module_name ->
+      create_artifact_installed ctx ~pkg ~lib_name ~module_name
+        ~archive:default_archive
+        ~visible:true
+    ) in
+
+    Memo.return artifacts
+  )
+;;
+
 let check_mlds_no_dupes ~pkg ~mlds =
   match
     List.rev_map mlds ~f:(fun mld ->
@@ -1213,13 +1314,82 @@ let setup_installed_lib_html sctx lib =
 ;;
 *)
 
-(* Generate HTML for installed libraries in a package by discovering their odocl files *)
+(* Generate HTML for installed libraries in a package using artifacts *)
 let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
-  let _ctx = Super_context.context sctx in
+  let ctx = Super_context.context sctx in
   let pkg_name_str = Package.Name.to_string pkg in
-  Log.info [ Pp.textf "odoc v3: setup_installed_pkg_html_rules for pkg=%s - DISABLED for now" pkg_name_str ];
-  (* TODO: Re-enable once classify file dependency issues are resolved *)
-  Memo.return ()
+  Log.info [ Pp.textf "odoc v3: setup_installed_pkg_html_rules for pkg=%s" pkg_name_str ];
+
+  (* Check if this is a local project package - if so, skip installed lib processing *)
+  let* packages = Dune_load.packages () in
+  let is_local_pkg = Package.Name.Map.mem packages pkg in
+
+  if is_local_pkg then (
+    Log.info [ Pp.textf "odoc v3: Package %s is local, skipping installed library HTML" pkg_name_str ];
+    Memo.return ()
+  ) else (
+    Log.info [ Pp.textf "odoc v3: Package %s is external, processing installed libraries" pkg_name_str ];
+
+    (* Find all installed libraries for this package *)
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+
+    (* Filter out local libraries - only process truly external installed libraries *)
+    let truly_installed_libs =
+      List.filter installed_libs ~f:(fun lib ->
+        match Lib.Local.of_lib lib with
+        | Some _ -> false  (* Local library, skip *)
+        | None -> true     (* Installed library, process *)
+      )
+    in
+
+    Log.info [ Pp.textf "odoc v3: found %d truly installed libraries for pkg=%s"
+                 (List.length truly_installed_libs) pkg_name_str ];
+
+    (* Early return if no truly installed libraries *)
+    if List.is_empty truly_installed_libs then
+      Memo.return ()
+    else
+    (* For each installed library, discover its modules and generate HTML *)
+    Memo.parallel_iter truly_installed_libs ~f:(fun lib ->
+    let lib_name = Lib.name lib in
+    Log.info [ Pp.textf "odoc v3: Processing installed library %s/%s"
+                 pkg_name_str (Lib_name.to_string lib_name) ];
+
+    (* Discover artifacts for this library *)
+    let* artifacts = discover_installed_lib_artifacts ctx ~pkg ~lib_name ~lib in
+
+    Log.info [ Pp.textf "odoc v3: Found %d artifacts for %s/%s"
+                 (List.length artifacts) pkg_name_str (Lib_name.to_string lib_name) ];
+
+    (* Generate HTML for each artifact *)
+    (* For now, we just set up the HTML generation - we'll need search_db eventually *)
+    Memo.parallel_iter artifacts ~f:(fun artifact ->
+      (* Generate HTML from odocl file *)
+      let odoc_support_path = Paths.odoc_support ctx in
+      let run_odoc =
+        run_odoc
+          sctx
+          ~dir:(Path.build (Paths.html_root ctx))
+          "html-generate"
+          ~quiet:false
+          ~flags_for:None
+          [ A "--search-uri"
+          ; A "_odoc-theme"
+          ; A "-o"
+          ; Path (Path.build (Paths.html_root ctx))
+          ; A "--support-uri"
+          ; Path (Path.build odoc_support_path)
+          ; A "--theme-uri"
+          ; Path (Path.build odoc_support_path)
+          ; Dep (Path.build artifact.odocl_file)
+          ]
+      in
+      let rule = Action_builder.With_targets.add ~file_targets:[artifact.html_file] run_odoc in
+      add_rule sctx rule
+    )
+  )
+  )
 ;;
 
 (*
