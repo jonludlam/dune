@@ -1314,6 +1314,19 @@ let setup_installed_lib_html sctx lib =
 ;;
 *)
 
+(* Generate a default index for an installed package *)
+let default_index_installed ~pkg lib_names =
+  let b = Buffer.create 512 in
+  Printf.bprintf b "{0 %s index}\n" (Package.Name.to_string pkg);
+  Printf.bprintf b "\nThis package provides the following libraries:\n\n";
+  lib_names
+  |> List.sort ~compare:Lib_name.compare
+  |> List.iter ~f:(fun lib_name ->
+    Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string lib_name);
+    Printf.bprintf b "\nDocumentation for library {!%s}.\n\n" (Lib_name.to_string lib_name));
+  Buffer.contents b
+;;
+
 (* Generate HTML for installed libraries in a package using artifacts *)
 let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
   let ctx = Super_context.context sctx in
@@ -1350,8 +1363,9 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
     if List.is_empty truly_installed_libs then
       Memo.return ()
     else
-    (* For each installed library, discover its modules and generate HTML *)
-    Memo.parallel_iter truly_installed_libs ~f:(fun lib ->
+      (* For each installed library, discover its modules and generate HTML *)
+      (* TODO: Generate package index page (page-index.odocl) in separate handler *)
+      Memo.parallel_iter truly_installed_libs ~f:(fun lib ->
     let lib_name = Lib.name lib in
     Log.info [ Pp.textf "odoc v3: Processing installed library %s/%s"
                  pkg_name_str (Lib_name.to_string lib_name) ];
@@ -1362,11 +1376,48 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
     Log.info [ Pp.textf "odoc v3: Found %d artifacts for %s/%s"
                  (List.length artifacts) pkg_name_str (Lib_name.to_string lib_name) ];
 
+    (* Get library dependencies to add HTML alias dependencies *)
+    let* deps_result = Lib.requires lib in
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+
     (* Generate HTML for each artifact *)
-    (* For now, we just set up the HTML generation - we'll need search_db eventually *)
-    Memo.parallel_iter artifacts ~f:(fun artifact ->
+    let* () = Memo.parallel_iter artifacts ~f:(fun artifact ->
       (* Generate HTML from odocl file *)
       let odoc_support_path = Paths.odoc_support ctx in
+
+      (* Build HTML alias dependencies - this ensures dependent library HTML is built first *)
+      let html_deps =
+        match Resolve.peek deps_result with
+        | Error _ -> Action_builder.return ()
+        | Ok deps ->
+          let dep_aliases =
+            List.filter_map deps ~f:(fun dep_lib ->
+              let dep_lib_name = Lib.name dep_lib |> Lib_name.to_string in
+              match Lib.Local.of_lib dep_lib with
+              | Some local_dep ->
+                Log.info [ Pp.textf "odoc v3: HTML dep for %s/%s: LOCAL library %s"
+                             pkg_name_str (Lib_name.to_string lib_name) dep_lib_name ];
+                Some (Dep.format_alias Html ctx (Lib local_dep))
+              | None ->
+                let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
+                (match dep_pkg_opt with
+                 | Some dep_pkg ->
+                   Log.info [ Pp.textf "odoc v3: HTML dep for %s/%s: INSTALLED library %s (pkg=%s)"
+                                pkg_name_str (Lib_name.to_string lib_name) dep_lib_name
+                                (Package.Name.to_string dep_pkg) ];
+                   Some (Dep.format_alias Html ctx (Pkg dep_pkg))
+                 | None ->
+                   Log.info [ Pp.textf "odoc v3: HTML dep for %s/%s: library %s (no package found)"
+                                pkg_name_str (Lib_name.to_string lib_name) dep_lib_name ];
+                   None))
+          in
+          let dep_set =
+            Dune_engine.Dep.Set.of_list_map dep_aliases ~f:(fun alias ->
+              Dune_engine.Dep.alias alias)
+          in
+          Action_builder.deps dep_set
+      in
+
       let run_odoc =
         run_odoc
           sctx
@@ -1385,9 +1436,42 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
           ; Dep (Path.build artifact.odocl_file)
           ]
       in
-      let rule = Action_builder.With_targets.add ~file_targets:[artifact.html_file] run_odoc in
+      let rule =
+        let open Action_builder.With_targets.O in
+        Action_builder.with_no_targets html_deps >>>
+        Action_builder.With_targets.add ~file_targets:[artifact.html_file] run_odoc
+      in
       add_rule sctx rule
-    )
+    ) in
+
+    (* Add HTML files to the package HTML alias so they get built when the alias is requested *)
+    let html_files = List.map artifacts ~f:(fun artifact -> Path.build artifact.html_file) in
+    let* () =
+      Rules.Produce.Alias.add_deps
+        (Dep.format_alias Html ctx (Pkg pkg))
+        (Action_builder.paths html_files)
+    in
+
+    (* Add dependencies on required libraries' HTML aliases to the package HTML alias *)
+    match Resolve.peek deps_result with
+    | Error _ -> Memo.return ()
+    | Ok deps ->
+      let dep_aliases =
+        List.filter_map deps ~f:(fun dep_lib ->
+          match Lib.Local.of_lib dep_lib with
+          | Some local_dep -> Some (Dep.format_alias Html ctx (Lib local_dep))
+          | None ->
+            let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
+            Option.bind dep_pkg_opt ~f:(fun dep_pkg ->
+              Some (Dep.format_alias Html ctx (Pkg dep_pkg))))
+      in
+      let dep_set =
+        Dune_engine.Dep.Set.of_list_map dep_aliases ~f:(fun alias ->
+          Dune_engine.Dep.alias alias)
+      in
+      Rules.Produce.Alias.add_deps
+        (Dep.format_alias Html ctx (Pkg pkg))
+        (Action_builder.deps dep_set)
   )
   )
 ;;
@@ -1818,11 +1902,43 @@ let gen_rules sctx ~dir rest =
   | [ "_html"; pkg_name; lib_name; module_name ] ->
     Log.info [ Pp.textf "odoc v3: Module directory handler for pkg=%s lib=%s module=%s - redirecting to parent" pkg_name lib_name module_name ];
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-  | [ "_mlds"; pkg ] ->
-    with_package pkg ~f:(fun pkg ->
-      let pkg = Package.name pkg in
-      let* _mlds, rules = package_mlds sctx ~pkg in
-      Rules.produce rules)
+  | [ "_mlds"; pkg_name ] ->
+    (* First try local package *)
+    let pkg = Package.Name.of_string pkg_name in
+    let* packages = Dune_load.packages () in
+    (match Package.Name.Map.find packages pkg with
+    | Some local_pkg ->
+      (* Local package *)
+      let pkg = Package.name local_pkg in
+      has_rules (fun () ->
+        let* _mlds, rules = package_mlds sctx ~pkg in
+        Rules.produce rules)
+    | None ->
+      (* Not a local package - check if it's an installed package *)
+      let ctx = Super_context.context sctx in
+      Log.info [ Pp.textf "odoc v3: Generating mld for installed package %s" pkg_name ];
+      has_rules (fun () ->
+        let* pkg_discovery = Package_discovery.create ~context:ctx in
+        let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+        let truly_installed_libs =
+          List.filter installed_libs ~f:(fun lib ->
+            match Lib.Local.of_lib lib with
+            | Some _ -> false
+            | None -> true
+          )
+        in
+        if List.is_empty truly_installed_libs then
+          Memo.return ()
+        else (
+          (* Generate pkg-index.mld for installed package *)
+          (* Note: Using "pkg-index" instead of "index" to avoid Dune directory conflicts *)
+          let lib_names = List.map truly_installed_libs ~f:Lib.name in
+          let index_content = default_index_installed ~pkg lib_names in
+          let index_mld = Paths.gen_mld_dir ctx pkg ++ "pkg-index.mld" in
+          add_rule sctx (Action_builder.write_file index_mld index_content)
+        )
+      )
+    )
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg ->
       let pkg = Package.name pkg in
@@ -1831,11 +1947,30 @@ let gen_rules sctx ~dir rest =
   | [ "_odoc"; name ] when not (String.equal name "pkg") && not (String.contains name '@') ->
     (* v3 package directory: _doc/_odoc/{package} - allow subdirs for libraries *)
     (* Note: libraries without packages (with @) are handled by existing v2 mechanism *)
-    Memo.return
-      (Build_config.Gen_rules.make
-         ~build_dir_only_sub_dirs:
-           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+    let pkg_name = name in
+    let pkg = Package.Name.of_string pkg_name in
+    (* Check if this is an installed package *)
+    let* is_project_pkg =
+      let* packages = Dune_load.packages () in
+      Memo.return (Package.Name.Map.mem packages pkg)
+    in
+    if is_project_pkg then
+      (* Local package - no rules needed here, handled by "_odoc/pkg/{pkg}" *)
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
            (Memo.return Rules.empty))
+    else (
+      (* Installed package - just allow library subdirectories for now *)
+      (* TODO: Add package index page generation - need to figure out where to put the odoc file *)
+      Log.info [ Pp.textf "odoc v3: Installed package %s - allowing library subdirs" pkg_name ];
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+           (Memo.return Rules.empty))
+    )
   | [ "_odoc"; pkg_name; lib_name ] ->
     (* v3 library directory: _doc/_odoc/{package}/{library} *)
     Log.info [ Pp.textf "odoc v3: Handling library dir for pkg=%s lib=%s" pkg_name lib_name ];
@@ -2173,13 +2308,35 @@ let gen_rules sctx ~dir rest =
                 (Subdir_set.of_list lib_subdirs))
            rules)
     ) else (
-      (* Installed package - allow any library subdirectory since we can't enumerate them statically *)
-      Log.info [ Pp.textf "odoc v3: Package %s is installed (not in project), allowing all subdirs" pkg_name ];
-      Memo.return
-        (Build_config.Gen_rules.make
-           ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-           (Memo.return Rules.empty))
+      (* Installed package - generate package index page *)
+      Log.info [ Pp.textf "odoc v3: Package %s is installed (not in project), generating index page" pkg_name ];
+      (* First, discover library subdirectories *)
+      let* pkg_discovery = Package_discovery.create ~context:ctx in
+      let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+      let truly_installed_libs =
+        List.filter installed_libs ~f:(fun lib ->
+          match Lib.Local.of_lib lib with
+          | Some _ -> false
+          | None -> true
+        )
+      in
+      if List.is_empty truly_installed_libs then
+        Memo.return
+          (Build_config.Gen_rules.make
+             ~build_dir_only_sub_dirs:
+               (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+             (Memo.return Rules.empty))
+      else
+        (* TODO: Generate and link package index page *)
+        let lib_subdirs = List.map truly_installed_libs ~f:(fun lib ->
+          Lib.name lib |> Lib_name.to_string
+        ) in
+        Memo.return
+          (Build_config.Gen_rules.make
+             ~build_dir_only_sub_dirs:
+               (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
+                  (Subdir_set.of_list lib_subdirs))
+             (Memo.return Rules.empty))
     )
   | [ "_odocls"; pkg_name; lib_name ] ->
     (* v3 library directory: _doc/_odocls/{package}/{library} *)
