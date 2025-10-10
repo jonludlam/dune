@@ -1991,9 +1991,98 @@ let handle_html_dir sctx ~lib_unique_name_or_pkg =
   )
 ;;
 
-let handle_odoc_lib_dir sctx ~pkg_name ~lib_name =
+let handle_odoc_lib_dir _sctx ~pkg_name:_ ~lib_name:_ =
   (* v3 library directory: _doc/_odoc/{package}/{library} *)
-  Log.info [ Pp.textf "odoc v3: Handling library dir for pkg=%s lib=%s" pkg_name lib_name ];
+  (* TODO: Extract the body of this handler from gen_rules *)
+  Memo.return ()
+;;
+
+let gen_rules sctx ~dir rest =
+  let rest_str = String.concat ~sep:"/" rest in
+  let rest_len = List.length rest in
+  Log.info [ Pp.textf "odoc v3: gen_rules ENTRY for dir %s with rest '%s' (length=%d)"
+      (Path.Build.to_string dir)
+      rest_str
+      rest_len ];
+  (match rest with
+  | [ "_html"; a; b ] ->
+    Log.info [ Pp.textf "odoc v3: PRE-MATCH: 3-element _html pattern [_html; %s; %s]" a b ];
+  | _ -> ());
+  let result = (match rest with
+  | [] ->
+    Log.info [ Pp.textf "odoc v3: Matched rest=[]" ];
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+         (Memo.return Rules.empty))
+  | [ "_html" ] ->
+    (* Root HTML directory - allow package subdirectories and set up sherlodoc and index files *)
+    let ctx = Super_context.context sctx in
+    let* packages = Dune_load.packages () in
+    let pkg_subdirs =
+      Package.Name.Map.keys packages
+      |> List.map ~f:Package.Name.to_string
+    in
+    let directory_targets = Path.Build.Map.singleton (Paths.odoc_support ctx) Loc.none in
+    let rules = Rules.collect_unit (fun () ->
+      Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx)
+      >>> setup_css_rule sctx
+      >>> setup_toplevel_index_rules sctx
+    ) in
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~directory_targets
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
+              (Subdir_set.of_list pkg_subdirs))
+         rules)
+  | [ "_html"; pkg_name; lib_name ] ->
+    (* Library directory: _doc/_html/{package}/{library} *)
+    (* Redirect to parent - the package level handler will generate HTML for all libraries *)
+    Log.info [ Pp.textf "odoc v3: Library directory handler for pkg=%s lib=%s - redirecting to parent" pkg_name lib_name ];
+    Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
+  | [ "_html"; pkg_name; lib_name; module_name ] ->
+    Log.info [ Pp.textf "odoc v3: Module directory handler for pkg=%s lib=%s module=%s - redirecting to parent" pkg_name lib_name module_name ];
+    Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
+  | [ "_mlds"; pkg_name ] ->
+    has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
+  | [ "_odoc"; "pkg"; pkg ] ->
+    with_package pkg ~f:(fun pkg ->
+      let pkg = Package.name pkg in
+      let* (), rules = setup_package_odoc_rules sctx ~pkg in
+      Rules.produce rules)
+  | [ "_odoc"; name ] when not (String.equal name "pkg") && not (String.contains name '@') ->
+    (* v3 package directory: _doc/_odoc/{package} - allow subdirs for libraries *)
+    (* Note: libraries without packages (with @) are handled by existing v2 mechanism *)
+    let pkg_name = name in
+    let pkg = Package.Name.of_string pkg_name in
+    (* Check if this is an installed package *)
+    let* is_project_pkg =
+      let* packages = Dune_load.packages () in
+      Memo.return (Package.Name.Map.mem packages pkg)
+    in
+    if is_project_pkg then
+      (* Local package - no rules needed here, handled by "_odoc/pkg/{pkg}" *)
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+           (Memo.return Rules.empty))
+    else (
+      (* Installed package - just allow library subdirectories for now *)
+      (* TODO: Add package index page generation - need to figure out where to put the odoc file *)
+      Log.info [ Pp.textf "odoc v3: Installed package %s - allowing library subdirs" pkg_name ];
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+           (Memo.return Rules.empty))
+    )
+  | [ "_odoc"; pkg_name; lib_name ] ->
+    (* v3 library directory: _doc/_odoc/{package}/{library} *)
+    Log.info [ Pp.textf "odoc v3: Handling library dir for pkg=%s lib=%s" pkg_name lib_name ];
+    has_rules (fun () ->
       let pkg = Package.Name.of_string pkg_name in
       let lib_name = Lib_name.of_string lib_name in
       let ctx = Super_context.context sctx in
@@ -2203,15 +2292,15 @@ let handle_odoc_lib_dir sctx ~pkg_name ~lib_name =
                        (Lib_name.to_string lib_name) pkg_name ];
           (* We can't use Dep.setup_deps with (Lib lib) because lib is not a Local.t,
              so we need to manually create the alias at the library directory *)
-          let lib_odoc_dir = Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name in
           let odoc_files =
             List.map module_names ~f:(fun module_name ->
               let module_name_lower = String.uncapitalize_ascii module_name in
+              let lib_odoc_dir = Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name in
               Path.build (lib_odoc_dir ++ (module_name_lower ^ ".odoc"))
             )
           in
           let odoc_path_set = Path.Set.of_list odoc_files in
-          let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
+          let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir in
           Rules.Produce.Alias.add_deps alias (Action_builder.path_set odoc_path_set)
         | Some local_lib ->
           let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
@@ -2280,94 +2369,7 @@ let handle_odoc_lib_dir sctx ~pkg_name ~lib_name =
 
           (* Set up the .odoc-all alias for this library *)
           let odoc_path_set = odoc_paths |> List.map ~f:Path.build |> Path.Set.of_list in
-          Dep.setup_deps ctx (Lib local_lib) odoc_path_set
-;;
-
-
-let gen_rules sctx ~dir rest =
-  let rest_str = String.concat ~sep:"/" rest in
-  let rest_len = List.length rest in
-  Log.info [ Pp.textf "odoc v3: gen_rules ENTRY for dir %s with rest '%s' (length=%d)"
-      (Path.Build.to_string dir)
-      rest_str
-      rest_len ];
-  (match rest with
-  | [ "_html"; a; b ] ->
-    Log.info [ Pp.textf "odoc v3: PRE-MATCH: 3-element _html pattern [_html; %s; %s]" a b ];
-  | _ -> ());
-  let result = (match rest with
-  | [] ->
-    Log.info [ Pp.textf "odoc v3: Matched rest=[]" ];
-    Memo.return
-      (Build_config.Gen_rules.make
-         ~build_dir_only_sub_dirs:
-           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-         (Memo.return Rules.empty))
-  | [ "_html" ] ->
-    (* Root HTML directory - allow package subdirectories and set up sherlodoc and index files *)
-    let ctx = Super_context.context sctx in
-    let* packages = Dune_load.packages () in
-    let pkg_subdirs =
-      Package.Name.Map.keys packages
-      |> List.map ~f:Package.Name.to_string
-    in
-    let directory_targets = Path.Build.Map.singleton (Paths.odoc_support ctx) Loc.none in
-    let rules = Rules.collect_unit (fun () ->
-      Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx)
-      >>> setup_css_rule sctx
-      >>> setup_toplevel_index_rules sctx
-    ) in
-    Memo.return
-      (Build_config.Gen_rules.make
-         ~directory_targets
-         ~build_dir_only_sub_dirs:
-           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
-              (Subdir_set.of_list pkg_subdirs))
-         rules)
-  | [ "_html"; pkg_name; lib_name ] ->
-    (* Library directory: _doc/_html/{package}/{library} *)
-    (* Redirect to parent - the package level handler will generate HTML for all libraries *)
-    Log.info [ Pp.textf "odoc v3: Library directory handler for pkg=%s lib=%s - redirecting to parent" pkg_name lib_name ];
-    Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-  | [ "_html"; pkg_name; lib_name; module_name ] ->
-    Log.info [ Pp.textf "odoc v3: Module directory handler for pkg=%s lib=%s module=%s - redirecting to parent" pkg_name lib_name module_name ];
-    Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-  | [ "_mlds"; pkg_name ] ->
-    has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
-  | [ "_odoc"; "pkg"; pkg ] ->
-    with_package pkg ~f:(fun pkg ->
-      let pkg = Package.name pkg in
-      let* (), rules = setup_package_odoc_rules sctx ~pkg in
-      Rules.produce rules)
-  | [ "_odoc"; name ] when not (String.equal name "pkg") && not (String.contains name '@') ->
-    (* v3 package directory: _doc/_odoc/{package} - allow subdirs for libraries *)
-    (* Note: libraries without packages (with @) are handled by existing v2 mechanism *)
-    let pkg_name = name in
-    let pkg = Package.Name.of_string pkg_name in
-    (* Check if this is an installed package *)
-    let* is_project_pkg =
-      let* packages = Dune_load.packages () in
-      Memo.return (Package.Name.Map.mem packages pkg)
-    in
-    if is_project_pkg then
-      (* Local package - no rules needed here, handled by "_odoc/pkg/{pkg}" *)
-      Memo.return
-        (Build_config.Gen_rules.make
-           ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-           (Memo.return Rules.empty))
-    else (
-      (* Installed package - just allow library subdirectories for now *)
-      (* TODO: Add package index page generation - need to figure out where to put the odoc file *)
-      Log.info [ Pp.textf "odoc v3: Installed package %s - allowing library subdirs" pkg_name ];
-      Memo.return
-        (Build_config.Gen_rules.make
-           ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-           (Memo.return Rules.empty))
-    )
-  | [ "_odoc"; pkg_name; lib_name ] ->
-    has_rules (fun () -> handle_odoc_lib_dir sctx ~pkg_name ~lib_name)
+          Dep.setup_deps ctx (Lib local_lib) odoc_path_set)
   | [ "_odocls" ] ->
     (* Root odocls directory - allow subdirs *)
     Memo.return
