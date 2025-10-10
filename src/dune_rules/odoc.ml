@@ -1376,47 +1376,15 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
     Log.info [ Pp.textf "odoc v3: Found %d artifacts for %s/%s"
                  (List.length artifacts) pkg_name_str (Lib_name.to_string lib_name) ];
 
-    (* Get library dependencies to add HTML alias dependencies *)
-    let* deps_result = Lib.requires lib in
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-
     (* Generate HTML for each artifact *)
     let* () = Memo.parallel_iter artifacts ~f:(fun artifact ->
       (* Generate HTML from odocl file *)
       let odoc_support_path = Paths.odoc_support ctx in
 
-      (* Build HTML alias dependencies - this ensures dependent library HTML is built first *)
-      let html_deps =
-        match Resolve.peek deps_result with
-        | Error _ -> Action_builder.return ()
-        | Ok deps ->
-          let dep_aliases =
-            List.filter_map deps ~f:(fun dep_lib ->
-              let dep_lib_name = Lib.name dep_lib |> Lib_name.to_string in
-              match Lib.Local.of_lib dep_lib with
-              | Some local_dep ->
-                Log.info [ Pp.textf "odoc v3: HTML dep for %s/%s: LOCAL library %s"
-                             pkg_name_str (Lib_name.to_string lib_name) dep_lib_name ];
-                Some (Dep.format_alias Html ctx (Lib local_dep))
-              | None ->
-                let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
-                (match dep_pkg_opt with
-                 | Some dep_pkg ->
-                   Log.info [ Pp.textf "odoc v3: HTML dep for %s/%s: INSTALLED library %s (pkg=%s)"
-                                pkg_name_str (Lib_name.to_string lib_name) dep_lib_name
-                                (Package.Name.to_string dep_pkg) ];
-                   Some (Dep.format_alias Html ctx (Pkg dep_pkg))
-                 | None ->
-                   Log.info [ Pp.textf "odoc v3: HTML dep for %s/%s: library %s (no package found)"
-                                pkg_name_str (Lib_name.to_string lib_name) dep_lib_name ];
-                   None))
-          in
-          let dep_set =
-            Dune_engine.Dep.Set.of_list_map dep_aliases ~f:(fun alias ->
-              Dune_engine.Dep.alias alias)
-          in
-          Action_builder.deps dep_set
-      in
+      (* Note: We don't add explicit HTML alias dependencies here to avoid cycles.
+         The odocl files already contain all necessary linking information from
+         the odoc link phase, so HTML generation can proceed independently.
+         Dependencies are handled at the package level through the alias system. *)
 
       let run_odoc =
         run_odoc
@@ -1436,42 +1404,51 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
           ; Dep (Path.build artifact.odocl_file)
           ]
       in
-      let rule =
-        let open Action_builder.With_targets.O in
-        Action_builder.with_no_targets html_deps >>>
-        Action_builder.With_targets.add ~file_targets:[artifact.html_file] run_odoc
-      in
+      let rule = Action_builder.With_targets.add ~file_targets:[artifact.html_file] run_odoc in
       add_rule sctx rule
     ) in
 
     (* Add HTML files to the package HTML alias so they get built when the alias is requested *)
     let html_files = List.map artifacts ~f:(fun artifact -> Path.build artifact.html_file) in
+
+    (* Add package-level HTML alias dependencies on required packages, filtering out intra-package deps *)
+    let* deps_result = Lib.requires lib in
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
     let* () =
-      Rules.Produce.Alias.add_deps
-        (Dep.format_alias Html ctx (Pkg pkg))
-        (Action_builder.paths html_files)
+      match Resolve.peek deps_result with
+      | Error _ -> Memo.return ()
+      | Ok deps ->
+        (* Collect unique package dependencies, excluding self-references *)
+        let dep_pkgs =
+          List.filter_map deps ~f:(fun dep_lib ->
+            let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
+            match dep_pkg_opt with
+            | Some dep_pkg ->
+              (* Skip dependencies within the same package to avoid cycles *)
+              if Package.Name.equal dep_pkg pkg then
+                None
+              else
+                Some dep_pkg
+            | None -> None
+          )
+          |> List.sort_uniq ~compare:Package.Name.compare
+        in
+        if List.is_empty dep_pkgs then
+          Memo.return ()
+        else (
+          let dep_set =
+            Dune_engine.Dep.Set.of_list_map dep_pkgs ~f:(fun dep_pkg ->
+              Dune_engine.Dep.alias (Dep.format_alias Html ctx (Pkg dep_pkg)))
+          in
+          Rules.Produce.Alias.add_deps
+            (Dep.format_alias Html ctx (Pkg pkg))
+            (Action_builder.deps dep_set)
+        )
     in
 
-    (* Add dependencies on required libraries' HTML aliases to the package HTML alias *)
-    match Resolve.peek deps_result with
-    | Error _ -> Memo.return ()
-    | Ok deps ->
-      let dep_aliases =
-        List.filter_map deps ~f:(fun dep_lib ->
-          match Lib.Local.of_lib dep_lib with
-          | Some local_dep -> Some (Dep.format_alias Html ctx (Lib local_dep))
-          | None ->
-            let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
-            Option.bind dep_pkg_opt ~f:(fun dep_pkg ->
-              Some (Dep.format_alias Html ctx (Pkg dep_pkg))))
-      in
-      let dep_set =
-        Dune_engine.Dep.Set.of_list_map dep_aliases ~f:(fun alias ->
-          Dune_engine.Dep.alias alias)
-      in
-      Rules.Produce.Alias.add_deps
-        (Dep.format_alias Html ctx (Pkg pkg))
-        (Action_builder.deps dep_set)
+    Rules.Produce.Alias.add_deps
+      (Dep.format_alias Html ctx (Pkg pkg))
+      (Action_builder.paths html_files)
   )
   )
 ;;
@@ -2403,16 +2380,20 @@ let gen_rules sctx ~dir rest =
               let* public_libs = Scope.DB.public_libs (Context.name ctx) in
               Lib.DB.find public_libs (Lib_name.of_string "stdlib")
           in
+
+          (* Get requires as a Resolve.t for odoc_include_flags *)
+          let* requires = Lib.requires lib in
+
           let lib_deps =
             let open Action_builder.O in
-            let* requires = Resolve.Memo.read (Lib.requires lib) in
-            let requires =
+            let* requires_list = Resolve.read requires in
+            let requires_list =
               match stdlib_opt with
-              | Some stdlib_lib -> stdlib_lib :: requires
-              | None -> requires
+              | Some stdlib_lib -> stdlib_lib :: requires_list
+              | None -> requires_list
             in
             let dep_set =
-              List.fold_left requires ~init:Dune_engine.Dep.Set.empty ~f:(fun acc dep_lib ->
+              List.fold_left requires_list ~init:Dune_engine.Dep.Set.empty ~f:(fun acc dep_lib ->
                 let dep_lib_name = Lib.name dep_lib in
                 match Lib.Local.of_lib dep_lib with
                 | Some local_dep ->
@@ -2446,9 +2427,14 @@ let gen_rules sctx ~dir rest =
 
               let run_odoc_link =
                 let open Action_builder.With_targets.O in
-                (* Include path should point to the library directory where all module odoc files are *)
+                (* Use odoc_include_flags to get all necessary -I paths *)
                 let include_path = Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name in
+                (* Add dependency on all .odoc files for this library (needed for modules like stdlib__array.odoc) *)
+                let lib_odoc_dir = Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name in
+                let lib_odoc_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
+                let lib_odoc_deps = Action_builder.dep (Dune_engine.Dep.alias lib_odoc_alias) in
                 Action_builder.with_no_targets lib_deps
+                >>> Action_builder.with_no_targets lib_odoc_deps
                 >>> Action_builder.With_targets.add ~file_targets:[odocl_file]
                       (run_odoc
                          sctx
@@ -2456,7 +2442,8 @@ let gen_rules sctx ~dir rest =
                          "link"
                          ~quiet:false
                          ~flags_for:(Some odoc_file)
-                         [ A "-I"
+                         [ odoc_include_flags ctx (Some pkg) ~stdlib_opt requires pkg_discovery
+                         ; A "-I"
                          ; Path (Path.build include_path)
                          ; A "-o"
                          ; Target odocl_file
@@ -2515,9 +2502,23 @@ let gen_rules sctx ~dir rest =
       Log.info [ Pp.textf "odoc v3: Handling HTML package dir for pkg=%s" lib_unique_name_or_pkg ];
       let pkg = Package.Name.of_string lib_unique_name_or_pkg in
       has_rules (fun () ->
-        (* Try to generate HTML for local package first, then for installed package *)
-        let* () = setup_pkg_html_rules sctx ~pkg in
-        setup_installed_pkg_html_rules sctx ~pkg)
+        (* Check if this is a local or installed package *)
+        let* packages = Dune_load.packages () in
+        let is_local = Package.Name.Map.mem packages pkg in
+        Log.info [ Pp.textf "odoc v3: Package %s is %s"
+                     lib_unique_name_or_pkg
+                     (if is_local then "LOCAL" else "INSTALLED") ];
+        if is_local then (
+          (* Local package - use standard HTML generation *)
+          Log.info [ Pp.textf "odoc v3: Calling setup_pkg_html_rules for LOCAL package %s"
+                       lib_unique_name_or_pkg ];
+          setup_pkg_html_rules sctx ~pkg
+        ) else (
+          (* Installed package - use installed library HTML generation *)
+          Log.info [ Pp.textf "odoc v3: Calling setup_installed_pkg_html_rules for INSTALLED package %s"
+                       lib_unique_name_or_pkg ];
+          setup_installed_pkg_html_rules sctx ~pkg
+        ))
     ) else (
       (* v2 library unique name (contains @) *)
       has_rules (fun () ->
