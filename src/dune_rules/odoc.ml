@@ -650,7 +650,12 @@ let setup_generate sctx ~search_db odoc_file out =
          | Some _ -> Command.Args.empty)
       ]
   in
-  let rule = Action_builder.With_targets.add ~file_targets:[html_file] run_odoc in
+  (* Add explicit dependency on CSS/support files *)
+  let rule =
+    let open Action_builder.With_targets.O in
+    Action_builder.with_no_targets (Action_builder.path (Path.build odoc_support_path))
+    >>> Action_builder.With_targets.add ~file_targets:[html_file] run_odoc
+  in
   Log.info [ Pp.textf "odoc v3: calling add_rule for html_file=%s" (Path.Build.to_string html_file) ];
   let+ () = add_rule sctx rule in
   Log.info [ Pp.textf "odoc v3: add_rule completed for html_file=%s" (Path.Build.to_string html_file) ];
@@ -1404,8 +1409,12 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
       (* Generate HTML from odocl file *)
       let odoc_support_path = Paths.odoc_support ctx in
 
-      (* Build HTML dependencies - ensure dependent package HTML is built first *)
+      (* Build HTML dependencies - ensure dependent package HTML and CSS are built first *)
       let html_deps =
+        let open Action_builder.O in
+        (* Always depend on CSS/support files *)
+        let* () = Action_builder.path (Path.build odoc_support_path) in
+        (* Also depend on required packages' HTML *)
         if List.is_empty dep_pkgs then
           Action_builder.return ()
         else
