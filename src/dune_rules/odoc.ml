@@ -1895,6 +1895,41 @@ let handle_classify_dir sctx ~pkg_name ~lib_name =
       add_rule sctx run_classify
 ;;
 
+let handle_mlds_dir sctx ~pkg_name =
+  (* _mlds/{pkg} - Generate mld files for package *)
+  let pkg = Package.Name.of_string pkg_name in
+  let* packages = Dune_load.packages () in
+  match Package.Name.Map.find packages pkg with
+  | Some local_pkg ->
+    (* Local package *)
+    let pkg = Package.name local_pkg in
+    let* _mlds, rules = package_mlds sctx ~pkg in
+    Rules.produce rules
+  | None ->
+    (* Not a local package - check if it's an installed package *)
+    let ctx = Super_context.context sctx in
+    Log.info [ Pp.textf "odoc v3: Generating mld for installed package %s" pkg_name ];
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+    let truly_installed_libs =
+      List.filter installed_libs ~f:(fun lib ->
+        match Lib.Local.of_lib lib with
+        | Some _ -> false
+        | None -> true
+      )
+    in
+    if List.is_empty truly_installed_libs then
+      Memo.return ()
+    else (
+      (* Generate pkg-index.mld for installed package *)
+      (* Note: Using "pkg-index" instead of "index" to avoid Dune directory conflicts *)
+      let lib_names = List.map truly_installed_libs ~f:Lib.name in
+      let index_content = default_index_installed ~pkg lib_names in
+      let index_mld = Paths.gen_mld_dir ctx pkg ++ "pkg-index.mld" in
+      add_rule sctx (Action_builder.write_file index_mld index_content)
+    )
+;;
+
 let handle_odoc_lib_dir _sctx ~pkg_name:_ ~lib_name:_ =
   (* v3 library directory: _doc/_odoc/{package}/{library} *)
   (* TODO: Extract the body of this handler from gen_rules *)
@@ -1950,42 +1985,7 @@ let gen_rules sctx ~dir rest =
     Log.info [ Pp.textf "odoc v3: Module directory handler for pkg=%s lib=%s module=%s - redirecting to parent" pkg_name lib_name module_name ];
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
   | [ "_mlds"; pkg_name ] ->
-    (* First try local package *)
-    let pkg = Package.Name.of_string pkg_name in
-    let* packages = Dune_load.packages () in
-    (match Package.Name.Map.find packages pkg with
-    | Some local_pkg ->
-      (* Local package *)
-      let pkg = Package.name local_pkg in
-      has_rules (fun () ->
-        let* _mlds, rules = package_mlds sctx ~pkg in
-        Rules.produce rules)
-    | None ->
-      (* Not a local package - check if it's an installed package *)
-      let ctx = Super_context.context sctx in
-      Log.info [ Pp.textf "odoc v3: Generating mld for installed package %s" pkg_name ];
-      has_rules (fun () ->
-        let* pkg_discovery = Package_discovery.create ~context:ctx in
-        let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
-        let truly_installed_libs =
-          List.filter installed_libs ~f:(fun lib ->
-            match Lib.Local.of_lib lib with
-            | Some _ -> false
-            | None -> true
-          )
-        in
-        if List.is_empty truly_installed_libs then
-          Memo.return ()
-        else (
-          (* Generate pkg-index.mld for installed package *)
-          (* Note: Using "pkg-index" instead of "index" to avoid Dune directory conflicts *)
-          let lib_names = List.map truly_installed_libs ~f:Lib.name in
-          let index_content = default_index_installed ~pkg lib_names in
-          let index_mld = Paths.gen_mld_dir ctx pkg ++ "pkg-index.mld" in
-          add_rule sctx (Action_builder.write_file index_mld index_content)
-        )
-      )
-    )
+    has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
   | [ "_odoc"; "pkg"; pkg ] ->
     with_package pkg ~f:(fun pkg ->
       let pkg = Package.name pkg in
