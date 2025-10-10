@@ -1376,15 +1376,45 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
     Log.info [ Pp.textf "odoc v3: Found %d artifacts for %s/%s"
                  (List.length artifacts) pkg_name_str (Lib_name.to_string lib_name) ];
 
+    (* Get library dependencies to build HTML alias deps *)
+    let* deps_result = Lib.requires lib in
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+
+    (* Collect unique package dependencies, excluding self-references *)
+    let dep_pkgs =
+      match Resolve.peek deps_result with
+      | Error _ -> []
+      | Ok deps ->
+        List.filter_map deps ~f:(fun dep_lib ->
+          let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
+          match dep_pkg_opt with
+          | Some dep_pkg ->
+            (* Skip dependencies within the same package to avoid cycles *)
+            if Package.Name.equal dep_pkg pkg then
+              None
+            else
+              Some dep_pkg
+          | None -> None
+        )
+        |> List.sort_uniq ~compare:Package.Name.compare
+    in
+
     (* Generate HTML for each artifact *)
     let* () = Memo.parallel_iter artifacts ~f:(fun artifact ->
       (* Generate HTML from odocl file *)
       let odoc_support_path = Paths.odoc_support ctx in
 
-      (* Note: We don't add explicit HTML alias dependencies here to avoid cycles.
-         The odocl files already contain all necessary linking information from
-         the odoc link phase, so HTML generation can proceed independently.
-         Dependencies are handled at the package level through the alias system. *)
+      (* Build HTML dependencies - ensure dependent package HTML is built first *)
+      let html_deps =
+        if List.is_empty dep_pkgs then
+          Action_builder.return ()
+        else
+          let dep_set =
+            Dune_engine.Dep.Set.of_list_map dep_pkgs ~f:(fun dep_pkg ->
+              Dune_engine.Dep.alias (Dep.format_alias Html ctx (Pkg dep_pkg)))
+          in
+          Action_builder.deps dep_set
+      in
 
       let run_odoc =
         run_odoc
@@ -1404,46 +1434,29 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
           ; Dep (Path.build artifact.odocl_file)
           ]
       in
-      let rule = Action_builder.With_targets.add ~file_targets:[artifact.html_file] run_odoc in
+      let rule =
+        let open Action_builder.With_targets.O in
+        Action_builder.with_no_targets html_deps
+        >>> Action_builder.With_targets.add ~file_targets:[artifact.html_file] run_odoc
+      in
       add_rule sctx rule
     ) in
 
     (* Add HTML files to the package HTML alias so they get built when the alias is requested *)
     let html_files = List.map artifacts ~f:(fun artifact -> Path.build artifact.html_file) in
 
-    (* Add package-level HTML alias dependencies on required packages, filtering out intra-package deps *)
-    let* deps_result = Lib.requires lib in
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    (* Also add package-level HTML alias dependencies (for when alias is built directly) *)
     let* () =
-      match Resolve.peek deps_result with
-      | Error _ -> Memo.return ()
-      | Ok deps ->
-        (* Collect unique package dependencies, excluding self-references *)
-        let dep_pkgs =
-          List.filter_map deps ~f:(fun dep_lib ->
-            let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
-            match dep_pkg_opt with
-            | Some dep_pkg ->
-              (* Skip dependencies within the same package to avoid cycles *)
-              if Package.Name.equal dep_pkg pkg then
-                None
-              else
-                Some dep_pkg
-            | None -> None
-          )
-          |> List.sort_uniq ~compare:Package.Name.compare
+      if List.is_empty dep_pkgs then
+        Memo.return ()
+      else
+        let dep_set =
+          Dune_engine.Dep.Set.of_list_map dep_pkgs ~f:(fun dep_pkg ->
+            Dune_engine.Dep.alias (Dep.format_alias Html ctx (Pkg dep_pkg)))
         in
-        if List.is_empty dep_pkgs then
-          Memo.return ()
-        else (
-          let dep_set =
-            Dune_engine.Dep.Set.of_list_map dep_pkgs ~f:(fun dep_pkg ->
-              Dune_engine.Dep.alias (Dep.format_alias Html ctx (Pkg dep_pkg)))
-          in
-          Rules.Produce.Alias.add_deps
-            (Dep.format_alias Html ctx (Pkg pkg))
-            (Action_builder.deps dep_set)
-        )
+        Rules.Produce.Alias.add_deps
+          (Dep.format_alias Html ctx (Pkg pkg))
+          (Action_builder.deps dep_set)
     in
 
     Rules.Produce.Alias.add_deps
