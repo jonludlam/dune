@@ -1853,6 +1853,54 @@ let find_lib_for_package sctx ~pkg ~lib_name =
         Memo.return None))
 ;;
 
+let handle_classify_dir sctx ~pkg_name ~lib_name =
+  (* classify library directory: _doc/classify/{package}/{library} *)
+  Log.info [ Pp.textf "odoc v3: Handling classify dir for pkg=%s lib=%s" pkg_name lib_name ];
+  let pkg = Package.Name.of_string pkg_name in
+  let lib_name = Lib_name.of_string lib_name in
+  let ctx = Super_context.context sctx in
+
+  Log.info [ Pp.textf "odoc v3: (classify handler) calling find_lib_for_package" ];
+  let* lib_opt = find_lib_for_package sctx ~pkg ~lib_name in
+
+  match lib_opt with
+  | None ->
+    Log.info [ Pp.textf "odoc v3: Library %s not found for classify" (Lib_name.to_string lib_name) ];
+    Memo.return ()
+  | Some lib ->
+    (* Only generate classify for installed libraries, not local ones *)
+    match Lib.Local.of_lib lib with
+    | Some _local_lib ->
+      Log.info [ Pp.textf "odoc v3: Library %s is local, skipping classify" (Lib_name.to_string lib_name) ];
+      Memo.return () (* Local library - no classify needed *)
+    | None ->
+      (* Library is installed - generate odoc classify *)
+      Log.info [ Pp.textf "odoc v3: Library %s is installed, generating classify" (Lib_name.to_string lib_name) ];
+      let info = Lib.info lib in
+      let src_dir = Lib_info.src_dir info in
+      let classify_output =
+        Paths.root ctx ++ "classify" ++ pkg_name ++ Lib_name.to_string lib_name ++ "odoc.classify"
+      in
+      let run_classify =
+        let program = odoc_program sctx (Context.build_dir ctx) in
+        let deps = Action_builder.env_var "ODOC_SYNTAX" in
+        let open Action_builder.With_targets.O in
+        Action_builder.with_no_targets deps
+        >>> Command.run_dyn_prog
+              ~dir:(Path.build (Context.build_dir ctx))
+              ~stdout_to:classify_output
+              program
+              [ A "classify"; A (Path.to_string src_dir) ]
+      in
+      add_rule sctx run_classify
+;;
+
+let handle_odoc_lib_dir _sctx ~pkg_name:_ ~lib_name:_ =
+  (* v3 library directory: _doc/_odoc/{package}/{library} *)
+  (* TODO: Extract the body of this handler from gen_rules *)
+  Memo.return ()
+;;
+
 let gen_rules sctx ~dir rest =
   let rest_str = String.concat ~sep:"/" rest in
   let rest_len = List.length rest in
@@ -2576,46 +2624,7 @@ let gen_rules sctx ~dir rest =
          ())
     )
   | [ "classify"; pkg_name; lib_name ] ->
-    (* classify library directory: _doc/classify/{package}/{library} *)
-    Log.info [ Pp.textf "odoc v3: Handling classify dir for pkg=%s lib=%s" pkg_name lib_name ];
-    has_rules (fun () ->
-      let pkg = Package.Name.of_string pkg_name in
-      let lib_name = Lib_name.of_string lib_name in
-      let ctx = Super_context.context sctx in
-
-      Log.info [ Pp.textf "odoc v3: (classify handler) calling find_lib_for_package" ];
-      let* lib_opt = find_lib_for_package sctx ~pkg ~lib_name in
-
-      match lib_opt with
-      | None ->
-        Log.info [ Pp.textf "odoc v3: Library %s not found for classify" (Lib_name.to_string lib_name) ];
-        Memo.return ()
-      | Some lib ->
-        (* Only generate classify for installed libraries, not local ones *)
-        match Lib.Local.of_lib lib with
-        | Some _local_lib ->
-          Log.info [ Pp.textf "odoc v3: Library %s is local, skipping classify" (Lib_name.to_string lib_name) ];
-          Memo.return () (* Local library - no classify needed *)
-        | None ->
-          (* Library is installed - generate odoc classify *)
-          Log.info [ Pp.textf "odoc v3: Library %s is installed, generating classify" (Lib_name.to_string lib_name) ];
-          let info = Lib.info lib in
-          let src_dir = Lib_info.src_dir info in
-          let classify_output =
-            Paths.root ctx ++ "classify" ++ pkg_name ++ Lib_name.to_string lib_name ++ "odoc.classify"
-          in
-          let run_classify =
-            let program = odoc_program sctx (Context.build_dir ctx) in
-            let deps = Action_builder.env_var "ODOC_SYNTAX" in
-            let open Action_builder.With_targets.O in
-            Action_builder.with_no_targets deps
-            >>> Command.run_dyn_prog
-                  ~dir:(Path.build (Context.build_dir ctx))
-                  ~stdout_to:classify_output
-                  program
-                  [ A "classify"; A (Path.to_string src_dir) ]
-          in
-          add_rule sctx run_classify)
+    has_rules (fun () -> handle_classify_dir sctx ~pkg_name ~lib_name)
   | other ->
     Log.info [ Pp.textf "odoc v3: No handler matched for rest=%s (pattern=%s)"
                  (String.concat ~sep:"/" rest)
