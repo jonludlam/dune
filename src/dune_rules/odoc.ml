@@ -137,8 +137,8 @@ module Paths = struct
          root ctx ++ "_odoc" ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
        | None ->
          (* Fallback to v2 paths for libraries without packages *)
-         let obj_dir = Lib.Local.obj_dir lib in
-         Obj_dir.odoc_dir obj_dir)
+         (* Use _doc/_odoc/{lib_unique_name} instead of .objs directory *)
+         root ctx ++ "_odoc" ++ pkg_or_lnu (Lib.Local.to_lib lib))
     | Pkg pkg -> root ctx ++ sprintf "_odoc/pkg/%s" (Package.Name.to_string pkg)
   ;;
 
@@ -1009,8 +1009,12 @@ let odoc_artefacts sctx target =
         create_artifact_local ctx ~target ~source:odoc_file ~kind
       | None ->
         (* Fallback to v2 paths for libraries without packages *)
-        let obj_dir = Lib_info.obj_dir info in
-        let odoc_file = Obj_dir.Module.odoc obj_dir m in
+        (* Use v2 path pattern: _doc/_odoc/{lib_unique_name} *)
+        let lib_t = Lib.Local.to_lib lib in
+        let lib_unique = lib_unique_name lib_t in
+        let odoc_dir = Paths.root ctx ++ "_odoc" ++ lib_unique in
+        let basename = Module.obj_name m |> Module_name.Unique.artifact_filename ~ext:".odoc" in
+        let odoc_file = Path.Build.relative odoc_dir basename in
         create_artifact_local ctx ~target ~source:odoc_file ~kind)
 ;;
 
@@ -1991,6 +1995,98 @@ let handle_html_dir sctx ~lib_unique_name_or_pkg =
   )
 ;;
 
+let handle_odoc_v2_lib_dir sctx ~lib_unique_name =
+  (* v2 library directory: _doc/_odoc/{lib_unique_name} for libraries without packages *)
+  Log.info [ Pp.textf "odoc v3: Handling v2 library dir for lib=%s" lib_unique_name ];
+  let ctx = Super_context.context sctx in
+
+  (* Parse the lib_unique_name to find the library *)
+  let* lib, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name in
+  let* lib_opt =
+    let+ lib = Lib.DB.find lib_db lib in
+    Option.bind ~f:Lib.Local.of_lib lib
+  in
+
+  match lib_opt with
+  | None ->
+    Log.info [ Pp.textf "odoc v3: Library %s not found or not local" lib_unique_name ];
+    Memo.return ()
+  | Some local_lib ->
+    let lib_t = Lib.Local.to_lib local_lib in
+    let info = Lib.Local.info local_lib in
+    let obj_dir = Lib.Local.obj_dir local_lib in
+
+    (* Verify this library has no package *)
+    (match Lib_info.package info with
+     | Some _ ->
+       Log.info [ Pp.textf "odoc v3: Warning: Library %s has a package but using v2 path" lib_unique_name ];
+       Memo.return ()
+     | None ->
+       (* Get modules for this library *)
+       let* modules = entry_modules_by_lib sctx local_lib in
+       Log.info [ Pp.textf "odoc v3: Found %d modules for library %s" (List.length modules) lib_unique_name ];
+
+       (* Get library dependencies for include paths *)
+       let* requires = Lib.requires lib_t in
+
+       (* Generate odoc compile rules for each module *)
+       let* () = Memo.parallel_iter modules ~f:(fun m ->
+         (* Input: .cmti/.cmt/.cmi file from obj_dir *)
+         let cmt_file = Obj_dir.Module.cmti_file ~cm_kind:(Ocaml Cmi) obj_dir m in
+
+         (* Output: .odoc file in _doc/_odoc/{lib_unique_name}/ *)
+         let odoc_dir = Paths.root ctx ++ "_odoc" ++ lib_unique_name in
+         let odoc_basename = Module.obj_name m |> Module_name.Unique.artifact_filename ~ext:".odoc" in
+         let odoc_file = Path.Build.relative odoc_dir odoc_basename in
+
+         (* Build include flags for dependencies *)
+         let include_flags =
+           Resolve.args (
+             let open Resolve.O in
+             let+ dep_libs = requires in
+             Command.Args.S (List.filter_map dep_libs ~f:(fun dep_lib ->
+               match Lib.Local.of_lib dep_lib with
+               | Some local_dep ->
+                 (* Local library - use its odoc directory *)
+                 let dep_dir = Path.build (Paths.odocs ctx (Lib local_dep)) in
+                 Some (Command.Args.S [ A "-I"; Path dep_dir ])
+               | None ->
+                 (* Installed library - skip for now, would need Package_discovery *)
+                 None
+             ))
+           )
+         in
+
+         (* Generate the odoc compile rule *)
+         let run_odoc =
+           run_odoc
+             sctx
+             ~dir:(Path.build odoc_dir)
+             "compile"
+             ~quiet:false
+             ~flags_for:(Some odoc_file)
+             [ A "-I"
+             ; Path (Path.build odoc_dir)
+             ; include_flags
+             ; As [ "--pkg"; lib_unique_name ]
+             ; A "-o"
+             ; Target odoc_file
+             ; Dep (Path.build cmt_file)
+             ]
+         in
+         add_rule sctx run_odoc
+       ) in
+
+       (* Set up .odoc-all alias for this library *)
+       let odoc_dir = Paths.root ctx ++ "_odoc" ++ lib_unique_name in
+       let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odoc_dir in
+       let odoc_files = List.map modules ~f:(fun m ->
+         let odoc_basename = Module.obj_name m |> Module_name.Unique.artifact_filename ~ext:".odoc" in
+         Path.build (Path.Build.relative odoc_dir odoc_basename)
+       ) in
+       Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odoc_files))
+;;
+
 let handle_odoc_lib_dir sctx ~pkg_name ~lib_name =
   (* v3 library directory: _doc/_odoc/{package}/{library} *)
   Log.info [ Pp.textf "odoc v3: Handling library dir for pkg=%s lib=%s" pkg_name lib_name ];
@@ -2624,6 +2720,9 @@ let gen_rules sctx ~dir rest =
            setup_pkg_odocl_rules sctx ~pkg:name
        in
        ())
+  | [ "_odoc"; lib_unique_name ] when String.contains lib_unique_name '@' ->
+    (* v2 library directory: _doc/_odoc/{lib_unique_name} for libraries without packages *)
+    has_rules (fun () -> handle_odoc_v2_lib_dir sctx ~lib_unique_name)
   | [ "_html"; lib_unique_name_or_pkg ] ->
     has_rules (fun () -> handle_html_dir sctx ~lib_unique_name_or_pkg)
   | [ "classify"; pkg_name; lib_name ] ->
