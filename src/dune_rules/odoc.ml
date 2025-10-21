@@ -1392,13 +1392,13 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
     Log.info [ Pp.textf "odoc v3: found %d truly installed libraries for pkg=%s"
                  (List.length truly_installed_libs) pkg_name_str ];
 
-    (* Early return if no truly installed libraries *)
-    if List.is_empty truly_installed_libs then
-      Memo.return ()
-    else
-      (* For each installed library, discover its modules and generate HTML *)
-      (* TODO: Generate package index page (page-index.odocl) in separate handler *)
-      Memo.parallel_iter truly_installed_libs ~f:(fun lib ->
+    (* Process installed libraries and mld files *)
+    let* () =
+      if List.is_empty truly_installed_libs then
+        Memo.return ()
+      else
+        (* For each installed library, discover its modules and generate HTML *)
+        Memo.parallel_iter truly_installed_libs ~f:(fun lib ->
     let lib_name = Lib.name lib in
     Log.info [ Pp.textf "odoc v3: Processing installed library %s/%s"
                  pkg_name_str (Lib_name.to_string lib_name) ];
@@ -1500,6 +1500,54 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
       (Dep.format_alias Html ctx (Pkg pkg))
       (Action_builder.paths html_files)
   )
+    in
+
+    (* Generate HTML for package-level mld files *)
+    let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
+
+    Memo.parallel_iter mld_files ~f:(fun mld_path ->
+      let pkg_html_dir = Path.Build.relative (Paths.html_root ctx) pkg_name_str in
+      let mld_basename = Path.basename mld_path in
+      let page_name =
+        match String.drop_suffix mld_basename ~suffix:".mld" with
+        | Some n -> n
+        | None -> mld_basename
+      in
+      let odocl_file = Path.Build.relative (Path.Build.relative (odocl_root_v3 ctx) pkg_name_str) ("page-" ^ page_name ^ ".odocl") in
+      let html_file = Path.Build.relative pkg_html_dir (page_name ^ ".html") in
+
+      (* Generate HTML directly without Sherlodoc, similar to installed libraries *)
+      let odoc_support_path = Paths.odoc_support ctx in
+      let html_deps =
+        Action_builder.path (Path.build odoc_support_path)
+      in
+
+      let run_odoc =
+        run_odoc
+          sctx
+          ~dir:(Path.build (Paths.html_root ctx))
+          "html-generate"
+          ~quiet:false
+          ~flags_for:None
+          [ A "-o"
+          ; Path (Path.build (Paths.html_root ctx))
+          ; A "--support-uri"
+          ; A "_odoc-theme"
+          ; A "--theme-uri"
+          ; A "_odoc-theme"
+          ; Dep (Path.build odocl_file)
+          ; Hidden_targets [ html_file ]
+          ]
+      in
+
+      let rule =
+        let open Action_builder.With_targets.O in
+        Action_builder.with_no_targets html_deps
+        >>> Action_builder.With_targets.add ~file_targets:[html_file] run_odoc
+      in
+
+      add_rule sctx rule
+    )
   )
 ;;
 
