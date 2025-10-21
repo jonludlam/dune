@@ -2783,8 +2783,43 @@ let gen_rules sctx ~dir rest =
 
       let rules = Rules.collect_unit (fun () ->
         if not (List.is_empty mld_files) && not (List.is_empty truly_installed_libs) then (
-          (* Mld files link against only the libraries in the package, not transitive deps *)
-          let requires = Resolve.return truly_installed_libs in
+          (* Get config for this package to find additional libraries to link *)
+          let config = Package_discovery.config_of_package pkg_discovery pkg in
+
+          (* Resolve additional libraries from config *)
+          let* additional_libs =
+            if List.is_empty config.Odoc_config.deps.libraries then
+              Memo.return []
+            else (
+              let* db = Lib.DB.installed ctx in
+              Memo.parallel_map config.Odoc_config.deps.libraries ~f:(fun lib_name ->
+                let* resolve = Lib.DB.resolve db (Loc.none, lib_name) in
+                match Resolve.peek resolve with
+                | Ok lib -> Memo.return (Some lib)
+                | Error () ->
+                  Log.info [ Pp.textf "Could not resolve library %s from odoc-config" (Lib_name.to_string lib_name) ];
+                  Memo.return None)
+              >>| List.filter_map ~f:Fun.id
+            )
+          in
+
+          (* Resolve additional packages from config *)
+          let* additional_pkg_libs =
+            if List.is_empty config.Odoc_config.deps.packages then
+              Memo.return []
+            else (
+              Memo.parallel_map config.Odoc_config.deps.packages ~f:(fun pkg_name ->
+                let libs = Package_discovery.libraries_of_package pkg_discovery pkg_name in
+                Memo.return libs)
+              >>| List.concat
+            )
+          in
+
+          (* Combine package libs + config libs + config package libs *)
+          let all_libs = truly_installed_libs @ additional_libs @ additional_pkg_libs in
+
+          (* Mld files link against only the libraries in the package + config deps, not transitive deps *)
+          let requires = Resolve.return all_libs in
 
           Memo.parallel_iter mld_files ~f:(fun mld_path ->
             (* Convert mld path to .odoc and .odocl paths *)

@@ -21,6 +21,9 @@ val libraries_of_package : t -> Package.Name.t -> Lib.t list
 (** Get all mld files belonging to a specific package *)
 val mlds_of_package : t -> Package.Name.t -> Path.t list
 
+(** Get the odoc configuration for a specific package *)
+val config_of_package : t -> Package.Name.t -> Odoc_config.t
+
 (** Check if a package is available for documentation *)
 val is_package_available : t -> Package.Name.t -> bool
 

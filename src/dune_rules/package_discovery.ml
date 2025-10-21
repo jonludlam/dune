@@ -9,12 +9,14 @@ type t = {
   package_of_lib : Package.Name.t Lib_name.Map.t;
   libs_of_package : Lib.t list Package.Name.Map.t;
   mlds_of_package : Path.t list Package.Name.Map.t;
+  config_of_package : Odoc_config.t Package.Name.Map.t;
 }
 
 let empty = {
   package_of_lib = Lib_name.Map.empty;
   libs_of_package = Package.Name.Map.empty;
   mlds_of_package = Package.Name.Map.empty;
+  config_of_package = Package.Name.Map.empty;
 }
 
 (* Parse an opam changes file using the opam-format library *)
@@ -135,6 +137,7 @@ let build_mappings_from_changes_data ~file_to_package_map libs =
             | None -> Some [lib]
             | Some libs -> Some (lib :: libs));
         mlds_of_package = acc.mlds_of_package;
+        config_of_package = acc.config_of_package;
       })
 
 let build_file_to_package_map packages_with_files ~opam_prefix =
@@ -166,6 +169,26 @@ let build_mlds_map packages_with_files ~opam_prefix =
       else
         Package.Name.Map.set acc pkg_name mld_files)
 
+let build_config_map packages_with_files ~opam_prefix =
+  (* Extract config files from the changes data
+     Pattern: doc/{package}/odoc-config.sexp *)
+  List.fold_left packages_with_files ~init:Package.Name.Map.empty
+    ~f:(fun acc (pkg_name, files) ->
+      let config_file_opt =
+        List.find_opt files ~f:(fun file_str ->
+          let parts = String.split file_str ~on:'/' in
+          match parts with
+          | ["doc"; pkg; "odoc-config.sexp"] when String.equal pkg (Package.Name.to_string pkg_name) ->
+            true
+          | _ -> false)
+      in
+      match config_file_opt with
+      | None -> acc
+      | Some config_file_str ->
+        let config_path = Path.relative opam_prefix config_file_str in
+        let config = Odoc_config.load config_path in
+        Package.Name.Map.set acc pkg_name config)
+
 let get_opam_prefix ~context =
   let kind = Context.kind context in
   match kind with
@@ -194,12 +217,21 @@ let create ~context =
     let* packages_with_files = discover_opam_packages ~opam_prefix:prefix in
     let file_to_package = build_file_to_package_map packages_with_files ~opam_prefix:prefix in
     let mlds_map = build_mlds_map packages_with_files ~opam_prefix:prefix in
+    let config_map = build_config_map packages_with_files ~opam_prefix:prefix in
 
     (* Debug: Log discovered mld files *)
     Package.Name.Map.iteri mlds_map ~f:(fun pkg mlds ->
       if not (List.is_empty mlds) then
         Log.info [ Pp.textf "Package_discovery: Package %s has %d mld files"
           (Package.Name.to_string pkg) (List.length mlds) ]);
+
+    (* Debug: Log discovered config files *)
+    Package.Name.Map.iteri config_map ~f:(fun pkg config ->
+      if not (Odoc_config.(config.deps.libraries = [] && config.deps.packages = [])) then
+        Log.info [ Pp.textf "Package_discovery: Package %s has odoc-config with %d libs, %d pkgs"
+          (Package.Name.to_string pkg)
+          (List.length config.Odoc_config.deps.libraries)
+          (List.length config.Odoc_config.deps.packages) ]);
 
     (* Get all installed libraries to map them to packages *)
     let* installed_libs = Lib.DB.installed context in
@@ -208,7 +240,7 @@ let create ~context =
 
     let lib_mappings = build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs in
 
-    Memo.return { lib_mappings with mlds_of_package = mlds_map }
+    Memo.return { lib_mappings with mlds_of_package = mlds_map; config_of_package = config_map }
 
 let package_of_library t lib =
   let lib_name = Lib.name lib in
@@ -219,6 +251,9 @@ let libraries_of_package t pkg =
 
 let mlds_of_package t pkg =
   Package.Name.Map.find t.mlds_of_package pkg |> Option.value ~default:[]
+
+let config_of_package t pkg =
+  Package.Name.Map.find t.config_of_package pkg |> Option.value ~default:Odoc_config.empty
 
 (* Removed doc_dir_of_package - was using unused package_info fields *)
 
