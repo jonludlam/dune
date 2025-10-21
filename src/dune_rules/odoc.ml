@@ -2022,8 +2022,9 @@ let handle_odoc_v2_lib_dir sctx ~lib_unique_name =
        Log.info [ Pp.textf "odoc v3: Warning: Library %s has a package but using v2 path" lib_unique_name ];
        Memo.return ()
      | None ->
-       (* Get modules for this library *)
-       let* modules = entry_modules_by_lib sctx local_lib in
+       (* Get ALL modules for this library (not just entry modules) *)
+       let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
+       let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
        Log.info [ Pp.textf "odoc v3: Found %d modules for library %s" (List.length modules) lib_unique_name ];
 
        (* Get library dependencies for include paths *)
