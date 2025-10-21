@@ -531,6 +531,28 @@ let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
   odoc_file
 ;;
 
+(* Compile an mld file using v3 --parent-id and --output-dir
+   Note: odoc creates output in {output_dir}/{parent_id}/page-{name}.odoc
+   so output_file should account for this structure *)
+let compile_mld_v3 sctx ~mld_path ~output_file ~output_dir ~parent_id =
+  let run_odoc =
+    Action_builder.With_targets.add ~file_targets:[output_file]
+      (run_odoc
+        sctx
+        ~dir:(Path.build output_dir)
+        "compile"
+        ~quiet:false
+        ~flags_for:(Some output_file)
+        [ Dep mld_path
+        ; A "--output-dir"
+        ; Path (Path.build output_dir)
+        ; A "--parent-id"
+        ; A parent_id
+        ])
+  in
+  add_rule sctx run_odoc
+;;
+
 let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
   (* Debug: inspect what's in requires at the start *)
   let () =
@@ -2601,14 +2623,53 @@ let gen_rules sctx ~dir rest =
              (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
            (Memo.return Rules.empty))
     else (
-      (* Installed package - just allow library subdirectories for now *)
-      (* TODO: Add package index page generation - need to figure out where to put the odoc file *)
-      Log.info [ Pp.textf "odoc v3: Installed package %s - allowing library subdirs" pkg_name ];
+      (* Installed package - generate compilation rules for mld files and discover library subdirectories *)
+      Log.info [ Pp.textf "odoc v3: Installed package %s - generating mld compilation rules" pkg_name ];
+      let ctx = Super_context.context sctx in
+      let* pkg_discovery = Package_discovery.create ~context:ctx in
+      let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
+      let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+
+      (* Get library subdirectory names for build_dir_only_sub_dirs *)
+      let lib_subdirs =
+        List.filter_map installed_libs ~f:(fun lib ->
+          match Lib.Local.of_lib lib with
+          | Some _ -> None  (* Skip local libs *)
+          | None ->
+            let lib_name = Lib.name lib in
+            Some (Lib_name.to_string lib_name))
+      in
+
+      let rules = Rules.collect_unit (fun () ->
+        (* Generate odoc compile rules for each mld file *)
+        Memo.parallel_iter mld_files ~f:(fun mld_path ->
+          (* Convert mld path to page-{name}.odoc *)
+          let mld_basename = Path.basename mld_path in
+          let name =
+            match String.drop_suffix mld_basename ~suffix:".mld" with
+            | Some n -> n
+            | None -> mld_basename
+          in
+          let odoc_name = "page-" ^ name ^ ".odoc" in
+          (* odoc will create output in {odoc_root}/{parent_id}/page-{name}.odoc *)
+          let odoc_root = odoc_root_v3 ctx in
+          let odoc_file = Path.Build.relative (Path.Build.relative odoc_root pkg_name) odoc_name in
+
+          (* Use the compile_mld_v3 helper *)
+          compile_mld_v3 sctx
+            ~mld_path
+            ~output_file:odoc_file
+            ~output_dir:odoc_root
+            ~parent_id:pkg_name
+        )
+      ) in
+
       Memo.return
         (Build_config.Gen_rules.make
            ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-           (Memo.return Rules.empty))
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
+               (Subdir_set.of_list lib_subdirs))
+           rules)
     )
   | [ "_odoc"; pkg_name; lib_name ] ->
     has_rules (fun () -> handle_odoc_lib_dir sctx ~pkg_name ~lib_name)
