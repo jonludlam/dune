@@ -8,11 +8,13 @@ open Memo.O
 type t = {
   package_of_lib : Package.Name.t Lib_name.Map.t;
   libs_of_package : Lib.t list Package.Name.Map.t;
+  mlds_of_package : Path.t list Package.Name.Map.t;
 }
 
 let empty = {
   package_of_lib = Lib_name.Map.empty;
   libs_of_package = Package.Name.Map.empty;
+  mlds_of_package = Package.Name.Map.empty;
 }
 
 (* Parse an opam changes file using the opam-format library *)
@@ -132,14 +134,37 @@ let build_mappings_from_changes_data ~file_to_package_map libs =
           Package.Name.Map.update acc.libs_of_package pkg_name ~f:(function
             | None -> Some [lib]
             | Some libs -> Some (lib :: libs));
+        mlds_of_package = acc.mlds_of_package;
       })
 
 let build_file_to_package_map packages_with_files ~opam_prefix =
-  List.fold_left packages_with_files ~init:Path.Map.empty 
+  List.fold_left packages_with_files ~init:Path.Map.empty
     ~f:(fun acc (pkg_name, files) ->
       List.fold_left files ~init:acc ~f:(fun acc file_str ->
         let file_path = Path.relative opam_prefix file_str in
         Path.Map.set acc file_path pkg_name))
+
+let build_mlds_map packages_with_files ~opam_prefix =
+  (* Extract mld files from the changes data
+     Pattern: doc/{package}/odoc-pages/**/*.mld *)
+  List.fold_left packages_with_files ~init:Package.Name.Map.empty
+    ~f:(fun acc (pkg_name, files) ->
+      let mld_files =
+        List.filter_map files ~f:(fun file_str ->
+          (* Check if this is an mld file in the doc/{pkg}/odoc-pages/ directory *)
+          let parts = String.split file_str ~on:'/' in
+          match parts with
+          | "doc" :: pkg :: "odoc-pages" :: _ when String.equal pkg (Package.Name.to_string pkg_name) ->
+            if String.is_suffix file_str ~suffix:".mld" then
+              Some (Path.relative opam_prefix file_str)
+            else
+              None
+          | _ -> None)
+      in
+      if List.is_empty mld_files then
+        acc
+      else
+        Package.Name.Map.set acc pkg_name mld_files)
 
 let get_opam_prefix ~context =
   let kind = Context.kind context in
@@ -162,15 +187,28 @@ let discover_package_ownership ~context =
 (* Removed unused function - was always returning empty list *)
 
 let create ~context =
-  let* file_to_package = discover_package_ownership ~context in
-  (* Get all installed libraries to map them to packages *)
-  let* installed_libs = Lib.DB.installed context in
-  let* all_libs_set = Lib.DB.all installed_libs in
-  let all_libs = Lib.Set.to_list all_libs_set in
+  let* opam_prefix = get_opam_prefix ~context in
+  match opam_prefix with
+  | None -> Memo.return empty
+  | Some prefix ->
+    let* packages_with_files = discover_opam_packages ~opam_prefix:prefix in
+    let file_to_package = build_file_to_package_map packages_with_files ~opam_prefix:prefix in
+    let mlds_map = build_mlds_map packages_with_files ~opam_prefix:prefix in
 
-  let lib_mappings = build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs in
+    (* Debug: Log discovered mld files *)
+    Package.Name.Map.iteri mlds_map ~f:(fun pkg mlds ->
+      if not (List.is_empty mlds) then
+        Log.info [ Pp.textf "Package_discovery: Package %s has %d mld files"
+          (Package.Name.to_string pkg) (List.length mlds) ]);
 
-  Memo.return lib_mappings
+    (* Get all installed libraries to map them to packages *)
+    let* installed_libs = Lib.DB.installed context in
+    let* all_libs_set = Lib.DB.all installed_libs in
+    let all_libs = Lib.Set.to_list all_libs_set in
+
+    let lib_mappings = build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs in
+
+    Memo.return { lib_mappings with mlds_of_package = mlds_map }
 
 let package_of_library t lib =
   let lib_name = Lib.name lib in
@@ -178,6 +216,9 @@ let package_of_library t lib =
 
 let libraries_of_package t pkg =
   Package.Name.Map.find t.libs_of_package pkg |> Option.value ~default:[]
+
+let mlds_of_package t pkg =
+  Package.Name.Map.find t.mlds_of_package pkg |> Option.value ~default:[]
 
 (* Removed doc_dir_of_package - was using unused package_info fields *)
 

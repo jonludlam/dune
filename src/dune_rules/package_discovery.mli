@@ -18,6 +18,9 @@ val package_of_library : t -> Lib.t -> Package.Name.t option
 (** Get all libraries belonging to a specific package *)
 val libraries_of_package : t -> Package.Name.t -> Lib.t list
 
+(** Get all mld files belonging to a specific package *)
+val mlds_of_package : t -> Package.Name.t -> Path.t list
+
 (** Check if a package is available for documentation *)
 val is_package_available : t -> Package.Name.t -> bool
 
