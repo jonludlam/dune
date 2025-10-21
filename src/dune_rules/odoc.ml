@@ -409,6 +409,8 @@ let doc_root_v3 ctx = Path.Build.relative (Context.build_dir ctx) "_doc"
 
 let odoc_root_v3 ctx = Path.Build.relative (doc_root_v3 ctx) "_odoc"
 
+let odocl_root_v3 ctx = Path.Build.relative (doc_root_v3 ctx) "_odocls"
+
 let package_dir_v3 ctx pkg =
   Path.Build.relative (odoc_root_v3 ctx) (Package.Name.to_string pkg)
 
@@ -2705,10 +2707,8 @@ let gen_rules sctx ~dir rest =
         (* Only set up rules for package-level mld files, not library modules *)
         let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
         let* libs = Context.name ctx |> libs_of_pkg ~pkg in
-        let* requires =
-          let libs = (libs :> Lib.t list) in
-          Lib.closure libs ~linking:false
-        in
+        (* Mld files link against only the libraries in the package, not transitive deps *)
+        let requires = Resolve.return (libs :> Lib.t list) in
         Memo.parallel_iter pkg_odocs ~f:(fun odoc ->
           link_odoc_rules sctx ~pkg:(Some pkg) ~requires odoc)
       ) in
@@ -2719,11 +2719,12 @@ let gen_rules sctx ~dir rest =
                 (Subdir_set.of_list lib_subdirs))
            rules)
     ) else (
-      (* Installed package - generate package index page *)
-      Log.info [ Pp.textf "odoc v3: Package %s is installed (not in project), generating index page" pkg_name ];
-      (* First, discover library subdirectories *)
+      (* Installed package - link mld files *)
+      Log.info [ Pp.textf "odoc v3: Package %s is installed (not in project), linking mld files" pkg_name ];
       let* pkg_discovery = Package_discovery.create ~context:ctx in
       let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+      let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
+
       let truly_installed_libs =
         List.filter installed_libs ~f:(fun lib ->
           match Lib.Local.of_lib lib with
@@ -2731,23 +2732,59 @@ let gen_rules sctx ~dir rest =
           | None -> true
         )
       in
-      if List.is_empty truly_installed_libs then
-        Memo.return
-          (Build_config.Gen_rules.make
-             ~build_dir_only_sub_dirs:
-               (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-             (Memo.return Rules.empty))
-      else
-        (* TODO: Generate and link package index page *)
-        let lib_subdirs = List.map truly_installed_libs ~f:(fun lib ->
-          Lib.name lib |> Lib_name.to_string
-        ) in
-        Memo.return
-          (Build_config.Gen_rules.make
-             ~build_dir_only_sub_dirs:
-               (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
-                  (Subdir_set.of_list lib_subdirs))
-             (Memo.return Rules.empty))
+
+      let rules = Rules.collect_unit (fun () ->
+        if not (List.is_empty mld_files) && not (List.is_empty truly_installed_libs) then (
+          (* Mld files link against only the libraries in the package, not transitive deps *)
+          let requires = Resolve.return truly_installed_libs in
+
+          Memo.parallel_iter mld_files ~f:(fun mld_path ->
+            (* Convert mld path to .odoc and .odocl paths *)
+            let mld_basename = Path.basename mld_path in
+            let page_name =
+              match String.drop_suffix mld_basename ~suffix:".mld" with
+              | Some n -> n
+              | None -> mld_basename
+            in
+            let odoc_name = "page-" ^ page_name ^ ".odoc" in
+            let odocl_name = "page-" ^ page_name ^ ".odocl" in
+            let odoc_root = odoc_root_v3 ctx in
+            let odocl_root = odocl_root_v3 ctx in
+            let html_root = Paths.html_root ctx in
+            let odoc_file = Path.Build.relative (Path.Build.relative odoc_root pkg_name) odoc_name in
+            let odocl_file = Path.Build.relative (Path.Build.relative odocl_root pkg_name) odocl_name in
+            let html_file = Path.Build.relative (Path.Build.relative html_root pkg_name) (page_name ^ ".html") in
+            let json_file = Path.Build.relative (Path.Build.relative html_root pkg_name) (page_name ^ ".json") in
+
+            let artefact : artifact = {
+              kind = Page { name = page_name };
+              source = Installed_source { src_path = mld_path; module_name = page_name; archive = pkg_name };
+              odoc_file;
+              odocl_file;
+              html_file;
+              json_file;
+              parent_id = pkg_name;
+              pkg = Some pkg;
+              target = Pkg pkg;
+            } in
+
+            (* Pass pkg:None to avoid circular dependency on package's .odoc-all alias *)
+            link_odoc_rules sctx ~pkg:None ~requires artefact
+          )
+        ) else
+          Memo.return ()
+      ) in
+
+      let lib_subdirs = List.map truly_installed_libs ~f:(fun lib ->
+        Lib.name lib |> Lib_name.to_string
+      ) in
+
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
+                (Subdir_set.of_list lib_subdirs))
+           rules)
     )
   | [ "_odocls"; pkg_name; lib_name ] ->
     has_rules (fun () -> handle_odocls_lib_dir sctx ~pkg_name ~lib_name)
