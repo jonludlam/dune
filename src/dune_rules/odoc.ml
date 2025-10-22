@@ -2706,17 +2706,23 @@ let gen_rules sctx ~dir rest =
             | Some n -> n
             | None -> mld_basename
           in
-          let odoc_name = "page-" ^ name ^ ".odoc" in
+
+          (* Skip index.mld - it will be handled by the default package index generation *)
+          if String.equal name "index" then
+            Memo.return ()
+          else (
+            let odoc_name = "page-" ^ name ^ ".odoc" in
           (* odoc will create output in {odoc_root}/{parent_id}/page-{name}.odoc *)
           let odoc_root = odoc_root_v3 ctx in
           let odoc_file = Path.Build.relative (Path.Build.relative odoc_root pkg_name) odoc_name in
 
-          (* Use the compile_mld_v3 helper *)
-          compile_mld_v3 sctx
-            ~mld_path
-            ~output_file:odoc_file
-            ~output_dir:odoc_root
-            ~parent_id:pkg_name
+            (* Use the compile_mld_v3 helper *)
+            compile_mld_v3 sctx
+              ~mld_path
+              ~output_file:odoc_file
+              ~output_dir:odoc_root
+              ~parent_id:pkg_name
+          )
         )
       ) in
 
