@@ -629,6 +629,7 @@ let compile_installed_module_artifact sctx ~artifact ~src_dir ~lib_deps ~module_
   in
 
   (* Generate odoc compile rule *)
+  let odoc_output_dir = Paths.root ctx ++ "_odoc" ++ pkg_name ++ lib_name in
   let run_odoc =
     let open Action_builder.With_targets.O in
     Action_builder.with_no_targets lib_deps
@@ -636,17 +637,17 @@ let compile_installed_module_artifact sctx ~artifact ~src_dir ~lib_deps ~module_
     >>> Action_builder.With_targets.add ~file_targets:[artifact.odoc_file]
           (run_odoc
              sctx
-             ~dir:(Path.build (Context.build_dir ctx))
+             ~dir:(Path.build odoc_output_dir)
              "compile"
              ~quiet:false
              ~flags_for:(Some artifact.odoc_file)
              [ Dep cmt_file
              ; A "-I"
-             ; Path (Path.build (Paths.root ctx ++ "_odoc" ++ pkg_name ++ lib_name))
+             ; Path (Path.build odoc_output_dir)
+             ; A "--output-dir"
+             ; Path (Path.build odoc_output_dir)
              ; A "--parent-id"
              ; A artifact.parent_id
-             ; A "-o"
-             ; Target artifact.odoc_file
              ])
   in
   add_rule sctx run_odoc
