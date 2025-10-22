@@ -1513,40 +1513,46 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
         | Some n -> n
         | None -> mld_basename
       in
-      let odocl_file = Path.Build.relative (Path.Build.relative (odocl_root_v3 ctx) pkg_name_str) ("page-" ^ page_name ^ ".odocl") in
-      let html_file = Path.Build.relative pkg_html_dir (page_name ^ ".html") in
 
-      (* Generate HTML directly without Sherlodoc, similar to installed libraries *)
-      let odoc_support_path = Paths.odoc_support ctx in
-      let html_deps =
-        Action_builder.path (Path.build odoc_support_path)
-      in
+      (* Skip index.mld - it will be handled by the default package index generation *)
+      if String.equal page_name "index" then
+        Memo.return ()
+      else (
+        let odocl_file = Path.Build.relative (Path.Build.relative (odocl_root_v3 ctx) pkg_name_str) ("page-" ^ page_name ^ ".odocl") in
+        let html_file = Path.Build.relative pkg_html_dir (page_name ^ ".html") in
 
-      let run_odoc =
-        run_odoc
-          sctx
-          ~dir:(Path.build (Paths.html_root ctx))
-          "html-generate"
-          ~quiet:false
-          ~flags_for:None
-          [ A "-o"
-          ; Path (Path.build (Paths.html_root ctx))
-          ; A "--support-uri"
-          ; A "_odoc-theme"
-          ; A "--theme-uri"
-          ; A "_odoc-theme"
-          ; Dep (Path.build odocl_file)
-          ; Hidden_targets [ html_file ]
-          ]
-      in
+        (* Generate HTML directly without Sherlodoc, similar to installed libraries *)
+        let odoc_support_path = Paths.odoc_support ctx in
+        let html_deps =
+          Action_builder.path (Path.build odoc_support_path)
+        in
 
-      let rule =
-        let open Action_builder.With_targets.O in
-        Action_builder.with_no_targets html_deps
-        >>> Action_builder.With_targets.add ~file_targets:[html_file] run_odoc
-      in
+        let run_odoc =
+          run_odoc
+            sctx
+            ~dir:(Path.build (Paths.html_root ctx))
+            "html-generate"
+            ~quiet:false
+            ~flags_for:None
+            [ A "-o"
+            ; Path (Path.build (Paths.html_root ctx))
+            ; A "--support-uri"
+            ; A "_odoc-theme"
+            ; A "--theme-uri"
+            ; A "_odoc-theme"
+            ; Dep (Path.build odocl_file)
+            ; Hidden_targets [ html_file ]
+            ]
+        in
 
-      add_rule sctx rule
+        let rule =
+          let open Action_builder.With_targets.O in
+          Action_builder.with_no_targets html_deps
+          >>> Action_builder.With_targets.add ~file_targets:[html_file] run_odoc
+        in
+
+        add_rule sctx rule
+      )
     )
   )
 ;;
@@ -2829,7 +2835,12 @@ let gen_rules sctx ~dir rest =
               | Some n -> n
               | None -> mld_basename
             in
-            let odoc_name = "page-" ^ page_name ^ ".odoc" in
+
+            (* Skip index.mld - it will be handled by the default package index generation *)
+            if String.equal page_name "index" then
+              Memo.return ()
+            else (
+              let odoc_name = "page-" ^ page_name ^ ".odoc" in
             let odocl_name = "page-" ^ page_name ^ ".odocl" in
             let odoc_root = odoc_root_v3 ctx in
             let odocl_root = odocl_root_v3 ctx in
@@ -2851,8 +2862,9 @@ let gen_rules sctx ~dir rest =
               target = Pkg pkg;
             } in
 
-            (* Pass pkg:None to avoid circular dependency on package's .odoc-all alias *)
-            link_odoc_rules sctx ~pkg:None ~requires artefact
+              (* Pass pkg:None to avoid circular dependency on package's .odoc-all alias *)
+              link_odoc_rules sctx ~pkg:None ~requires artefact
+            )
           )
         ) else
           Memo.return ()
