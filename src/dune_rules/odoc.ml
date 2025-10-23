@@ -2264,11 +2264,10 @@ let handle_mlds_dir sctx ~pkg_name =
     if List.is_empty truly_installed_libs then
       Memo.return ()
     else (
-      (* Generate pkg-index.mld for installed package *)
-      (* Note: Using "pkg-index" instead of "index" to avoid Dune directory conflicts *)
+      (* Generate index.mld for installed package *)
       let lib_names = List.map truly_installed_libs ~f:Lib.name in
       let index_content = default_index_installed ~pkg lib_names in
-      let index_mld = Paths.gen_mld_dir ctx pkg ++ "pkg-index.mld" in
+      let index_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
       add_rule sctx (Action_builder.write_file index_mld index_content)
     )
 ;;
@@ -2719,12 +2718,41 @@ let gen_rules sctx ~dir rest =
     if is_project_pkg then (
       (* Local package - generate compilation rules for mld files, same namespace as installed packages *)
       Log.info [ Pp.textf "odoc v3: Local package %s - generating mld compilation rules" pkg_name ];
+
+      (* Get library subdirectory names for this local package *)
+      let* lib_subdirs =
+        let ctx = Super_context.context sctx in
+        Scope.DB.with_all ctx ~f:(fun find_scope ->
+          let* projects = Dune_load.dune_files (Context.name ctx) in
+          let+ libs =
+            Memo.List.concat_map projects ~f:(fun dune_file ->
+              let* stanzas = Dune_file.stanzas dune_file in
+              Memo.List.filter_map stanzas ~f:(fun stanza ->
+                match Stanza.repr stanza with
+                | Library.T lib ->
+                  let scope = find_scope (Dune_file.project dune_file) in
+                  let lib_db = Scope.libs scope in
+                  let* resolved_lib = Lib.DB.find lib_db (Library.best_name lib) in
+                  (match resolved_lib with
+                  | None -> Memo.return None
+                  | Some resolved_lib ->
+                    let info = Lib.info resolved_lib in
+                    (match Lib_info.package info with
+                    | Some p when Package.Name.equal p pkg ->
+                      Memo.return (Some (Lib_name.to_string (Lib.name resolved_lib)))
+                    | _ -> Memo.return None))
+                | _ -> Memo.return None))
+          in
+          libs)
+      in
+
       let* (), rules = setup_package_odoc_rules sctx ~pkg in
-      Memo.return
-        (Build_config.Gen_rules.make
-           ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-           (Memo.return rules))
+      let+ lib_subdirs = lib_subdirs in
+      Build_config.Gen_rules.make
+        ~build_dir_only_sub_dirs:
+          (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
+            (Subdir_set.of_list lib_subdirs))
+        (Memo.return rules)
     ) else (
       (* Installed package - generate compilation rules for mld files and discover library subdirectories *)
       Log.info [ Pp.textf "odoc v3: Installed package %s - generating mld compilation rules" pkg_name ];
