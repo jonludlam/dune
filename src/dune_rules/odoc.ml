@@ -629,10 +629,10 @@ let compile_installed_module_artifact sctx ~artifact ~src_dir ~lib_deps ~module_
   in
 
   (* Generate odoc compile rule *)
-  (* odoc_output_dir should be the package directory, since odoc will create
-     a subdirectory named after the parent_id *)
-  let odoc_output_dir = Paths.root ctx ++ "_odoc" ++ pkg_name in
-  let lib_dir = odoc_output_dir ++ lib_name in
+  (* odoc_output_dir should be the root _odoc directory, since odoc will create
+     subdirectories based on the parent_id (e.g., pkg/lib) *)
+  let odoc_output_dir = Paths.root ctx ++ "_odoc" in
+  let lib_dir = odoc_output_dir ++ pkg_name ++ lib_name in
   let run_odoc =
     let open Action_builder.With_targets.O in
     Action_builder.with_no_targets lib_deps
@@ -1105,7 +1105,7 @@ let create_artifact_installed ctx ~pkg ~lib_name ~module_name ~archive ~visible 
   let html_file = html_dir ++ "index.html" in
   let json_file = html_dir ++ "index.html.json" in
 
-  let parent_id = lib_name_str in
+  let parent_id = pkg_name_str ^ "/" ^ lib_name_str in
   let kind = Module { visible; module_name = Module_name.of_string module_name } in
 
   (* For installed libraries, we create a dummy target - we don't have Lib.Local.t *)
@@ -1737,7 +1737,8 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
           "html-generate"
           ~quiet:false
           ~flags_for:None
-          [ A "--search-uri"
+          [ Dep (Path.build artifact.odocl_file)
+          ; A "--search-uri"
           ; A "_odoc-theme"
           ; A "-o"
           ; Path (Path.build (Paths.html_root ctx))
@@ -1745,7 +1746,6 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
           ; Path (Path.build odoc_support_path)
           ; A "--theme-uri"
           ; Path (Path.build odoc_support_path)
-          ; Dep (Path.build artifact.odocl_file)
           ]
       in
       let rule =
@@ -1796,14 +1796,13 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
           "html-generate"
           ~quiet:false
           ~flags_for:None
-          [ A "-o"
+          [ Dep (Path.build artifact.odocl_file)
+          ; A "-o"
           ; Path (Path.build (Paths.html_root ctx))
           ; A "--support-uri"
           ; A "_odoc-theme"
           ; A "--theme-uri"
           ; A "_odoc-theme"
-          ; Dep (Path.build artifact.odocl_file)
-          ; Hidden_targets [ artifact.html_file ]
           ]
       in
 
