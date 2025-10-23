@@ -209,7 +209,7 @@ let discover_package_ownership ~context =
 
 (* Removed unused function - was always returning empty list *)
 
-let create ~context =
+let create_impl context =
   let* opam_prefix = get_opam_prefix ~context in
   match opam_prefix with
   | None -> Memo.return empty
@@ -241,6 +241,10 @@ let create ~context =
     let lib_mappings = build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs in
 
     Memo.return { lib_mappings with mlds_of_package = mlds_map; config_of_package = config_map }
+
+let create =
+  let memo = Memo.create "package-discovery" ~input:(module Context) create_impl in
+  fun ~context -> Memo.exec memo context
 
 let package_of_library t lib =
   let lib_name = Lib.name lib in
