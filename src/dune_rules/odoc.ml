@@ -732,36 +732,36 @@ let odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery =
          let lib_name_str = Lib_name.to_string lib_name in
          match Lib.Local.of_lib lib with
          | None ->
-           (* Installed library - use _odocls/{package}/{library} path *)
+           (* Installed library - use _odoc/{package}/{library} path *)
            let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
            (match lib_pkg_opt with
             | Some lib_pkg ->
               let pkg_name_str = Package.Name.to_string lib_pkg in
-              let odocls_path =
+              let odoc_path =
                 Paths.root ctx
-                ++ "_odocls"
+                ++ "_odoc"
                 ++ pkg_name_str
                 ++ lib_name_str
               in
-              let lib_path_arg = lib_name_str ^ ":" ^ Path.Build.to_string odocls_path in
+              let lib_path_arg = lib_name_str ^ ":" ^ Path.Build.to_string odoc_path in
               Log.info [ Pp.textf "odoc_lib_flags: Adding -L %s" lib_path_arg ];
               [ Command.Args.A "-L"; A lib_path_arg ]
             | None ->
               Log.info [ Pp.textf "odoc_lib_flags: Library %s has no package, skipping" lib_name_str ];
               [])
          | Some local_lib ->
-           (* Local library - use library's odocls path *)
+           (* Local library - use library's odoc path *)
            let lib_pkg = Lib_info.package (Lib.Local.info local_lib) in
            (match lib_pkg with
             | Some pkg ->
               let pkg_name_str = Package.Name.to_string pkg in
-              let odocls_path =
+              let odoc_path =
                 Paths.root ctx
-                ++ "_odocls"
+                ++ "_odoc"
                 ++ pkg_name_str
                 ++ lib_name_str
               in
-              let lib_path_arg = lib_name_str ^ ":" ^ Path.Build.to_string odocls_path in
+              let lib_path_arg = lib_name_str ^ ":" ^ Path.Build.to_string odoc_path in
               Log.info [ Pp.textf "odoc_lib_flags: Adding -L %s (local)" lib_path_arg ];
               [ Command.Args.A "-L"; A lib_path_arg ]
             | None ->
@@ -773,7 +773,7 @@ let odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery =
 ;;
 
 (* Generate -P package:path flags for odoc link
-   These tell odoc where to find .odocl files for package dependencies *)
+   These tell odoc where to find .odoc files for package dependencies *)
 let odoc_pkg_flags ctx requires pkg_discovery =
   Resolve.args
     (let open Resolve.O in
@@ -785,8 +785,8 @@ let odoc_pkg_flags ctx requires pkg_discovery =
          match lib_pkg_opt with
          | Some pkg ->
            let pkg_name_str = Package.Name.to_string pkg in
-           let odocls_path = Paths.root ctx ++ "_odocls" ++ pkg_name_str in
-           Package.Name.Map.set acc pkg odocls_path
+           let odoc_path = Paths.root ctx ++ "_odoc" ++ pkg_name_str in
+           Package.Name.Map.set acc pkg odoc_path
          | None -> acc)
      in
      let pkg_args =
