@@ -772,14 +772,23 @@ let odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery =
      Command.Args.S lib_args)
 ;;
 
+(* Get package dependencies from odoc-config.sexp for a given package *)
+let get_config_package_deps pkg_discovery pkg_opt =
+  match pkg_opt with
+  | None -> []
+  | Some pkg ->
+    let config = Package_discovery.config_of_package pkg_discovery pkg in
+    config.Odoc_config.deps.packages
+;;
+
 (* Generate -P package:path flags for odoc link
    These tell odoc where to find .odoc files for package dependencies *)
-let odoc_pkg_flags ctx requires pkg_discovery =
+let odoc_pkg_flags ctx requires pkg_discovery ~current_pkg =
   Resolve.args
     (let open Resolve.O in
      let+ libs = requires in
      (* Collect unique packages from library dependencies *)
-     let pkg_paths =
+     let lib_pkg_paths =
        List.fold_left libs ~init:Package.Name.Map.empty ~f:(fun acc lib ->
          let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
          match lib_pkg_opt with
@@ -789,8 +798,18 @@ let odoc_pkg_flags ctx requires pkg_discovery =
            Package.Name.Map.set acc pkg odoc_path
          | None -> acc)
      in
+
+     (* Also add package dependencies from odoc-config.sexp *)
+     let config_pkg_deps = get_config_package_deps pkg_discovery current_pkg in
+     let all_pkg_paths =
+       List.fold_left config_pkg_deps ~init:lib_pkg_paths ~f:(fun acc pkg ->
+         let pkg_name_str = Package.Name.to_string pkg in
+         let odoc_path = Paths.root ctx ++ "_odoc" ++ pkg_name_str in
+         Package.Name.Map.set acc pkg odoc_path)
+     in
+
      let pkg_args =
-       Package.Name.Map.to_list_map pkg_paths ~f:(fun pkg path ->
+       Package.Name.Map.to_list_map all_pkg_paths ~f:(fun pkg path ->
          let pkg_name_str = Package.Name.to_string pkg in
          let pkg_path_arg = pkg_name_str ^ ":" ^ Path.Build.to_string path in
          Log.info [ Pp.textf "odoc_pkg_flags: Adding -P %s" pkg_path_arg ];
@@ -814,7 +833,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
       ~flags_for:(Some odoc_file.odoc_file)
       [ odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery
       ; odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery
-      ; odoc_pkg_flags ctx requires pkg_discovery
+      ; odoc_pkg_flags ctx requires pkg_discovery ~current_pkg:odoc_file.pkg
       ; A "-o"
       ; Target odoc_file.odocl_file
       ; Dep (Path.build odoc_file.odoc_file)
@@ -1452,17 +1471,24 @@ let setup_lib_html_rules sctx ~search_db lib =
         (Action_builder.paths paths))
   in
 
-  (* Also add dependencies on the HTML aliases of all required libraries *)
+  (* Also add dependencies on the HTML aliases of all required libraries and packages *)
   let lib_t = Lib.Local.to_lib lib in
   let* deps_result = Lib.requires lib_t in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
+
+  (* Get package dependencies from odoc-config.sexp *)
+  let lib_info = Lib.Local.info lib in
+  let lib_pkg_opt = Lib_info.package lib_info in
+  let config_pkg_deps = get_config_package_deps pkg_discovery lib_pkg_opt in
+
   match Resolve.peek deps_result with
   | Error _ -> Memo.return ()
   | Ok deps ->
-    Log.info [ Pp.textf "odoc v3: Processing %d dependencies for HTML aliases for lib=%s"
-                 (List.length deps) lib_name ];
+    Log.info [ Pp.textf "odoc v3: Processing %d library deps + %d config pkg deps for HTML aliases for lib=%s"
+                 (List.length deps) (List.length config_pkg_deps) lib_name ];
     Output_format.iter ~f:(fun output ->
-      let dep_aliases =
+      (* Library dependencies *)
+      let lib_dep_aliases =
         List.filter_map deps ~f:(fun dep_lib ->
           let dep_lib_name = Lib.name dep_lib |> Lib_name.to_string in
           match Lib.Local.of_lib dep_lib with
@@ -1482,8 +1508,18 @@ let setup_lib_html_rules sctx ~search_db lib =
                Log.info [ Pp.textf "odoc v3: Skipping HTML alias dependency for library %s (no package found)" dep_lib_name ];
                None))
       in
+
+      (* Package dependencies from odoc-config.sexp *)
+      let config_pkg_aliases =
+        List.map config_pkg_deps ~f:(fun dep_pkg ->
+          Log.info [ Pp.textf "odoc v3: Adding HTML alias dependency for CONFIG package %s"
+                       (Package.Name.to_string dep_pkg) ];
+          Dep.format_alias output ctx (Pkg dep_pkg))
+      in
+
+      let all_aliases = lib_dep_aliases @ config_pkg_aliases in
       let dep_set =
-        Dune_engine.Dep.Set.of_list_map dep_aliases ~f:(fun alias ->
+        Dune_engine.Dep.Set.of_list_map all_aliases ~f:(fun alias ->
           Dune_engine.Dep.alias alias)
       in
       Rules.Produce.Alias.add_deps
