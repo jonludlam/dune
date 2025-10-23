@@ -1690,8 +1690,8 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
     let* deps_result = Lib.requires lib in
     let* pkg_discovery = Package_discovery.create ~context:ctx in
 
-    (* Collect unique package dependencies, excluding self-references *)
-    let dep_pkgs =
+    (* Collect unique package dependencies from library deps, excluding self-references *)
+    let lib_dep_pkgs =
       match Resolve.peek deps_result with
       | Error _ -> []
       | Ok deps ->
@@ -1706,7 +1706,15 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
               Some dep_pkg
           | None -> None
         )
-        |> List.sort_uniq ~compare:Package.Name.compare
+    in
+
+    (* Also get package dependencies from odoc-config.sexp *)
+    let config_pkg_deps = get_config_package_deps pkg_discovery (Some pkg) in
+
+    (* Combine and deduplicate all package dependencies *)
+    let dep_pkgs =
+      (lib_dep_pkgs @ config_pkg_deps)
+      |> List.sort_uniq ~compare:Package.Name.compare
     in
 
     (* Generate HTML for each artifact *)
@@ -1782,11 +1790,25 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
     (* Generate HTML for package-level mld files using artifacts *)
     let* artifacts = discover_installed_pkg_mld_artifacts ctx ~pkg in
 
+    (* Get package dependencies from odoc-config.sexp for mld HTML generation *)
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    let config_pkg_deps = get_config_package_deps pkg_discovery (Some pkg) in
+
     Memo.parallel_iter artifacts ~f:(fun artifact ->
       (* Generate HTML directly without Sherlodoc, similar to installed libraries *)
       let odoc_support_path = Paths.odoc_support ctx in
       let html_deps =
-        Action_builder.path (Path.build odoc_support_path)
+        let open Action_builder.O in
+        let* () = Action_builder.path (Path.build odoc_support_path) in
+        (* Also depend on config package HTML *)
+        if List.is_empty config_pkg_deps then
+          Action_builder.return ()
+        else
+          let dep_set =
+            Dune_engine.Dep.Set.of_list_map config_pkg_deps ~f:(fun dep_pkg ->
+              Dune_engine.Dep.alias (Dep.format_alias Html ctx (Pkg dep_pkg)))
+          in
+          Action_builder.deps dep_set
       in
 
       let run_odoc =
