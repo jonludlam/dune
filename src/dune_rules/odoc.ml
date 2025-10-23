@@ -1717,26 +1717,13 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
       |> List.sort_uniq ~compare:Package.Name.compare
     in
 
-    (* Generate HTML for each artifact *)
+    (* Generate HTML for each artifact (no cross-package deps at file level) *)
     let* () = Memo.parallel_iter artifacts ~f:(fun artifact ->
       (* Generate HTML from odocl file *)
       let odoc_support_path = Paths.odoc_support ctx in
 
-      (* Build HTML dependencies - ensure dependent package HTML and CSS are built first *)
-      let html_deps =
-        let open Action_builder.O in
-        (* Always depend on CSS/support files *)
-        let* () = Action_builder.path (Path.build odoc_support_path) in
-        (* Also depend on required packages' HTML *)
-        if List.is_empty dep_pkgs then
-          Action_builder.return ()
-        else
-          let dep_set =
-            Dune_engine.Dep.Set.of_list_map dep_pkgs ~f:(fun dep_pkg ->
-              Dune_engine.Dep.alias (Dep.format_alias Html ctx (Pkg dep_pkg)))
-          in
-          Action_builder.deps dep_set
-      in
+      (* Individual HTML files only depend on CSS/support, not other packages *)
+      let html_deps = Action_builder.path (Path.build odoc_support_path) in
 
       let run_odoc =
         run_odoc
@@ -1767,48 +1754,56 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
     (* Add HTML files to the package HTML alias so they get built when the alias is requested *)
     let html_files = List.map artifacts ~f:(fun artifact -> Path.build artifact.html_file) in
 
-    (* Also add package-level HTML alias dependencies (for when alias is built directly) *)
+    (* Create @doc-no-deps alias with just this package's HTML files *)
+    let doc_no_deps_alias = Alias.make (Alias.Name.of_string "doc-no-deps") ~dir:(Paths.html ctx (Pkg pkg)) in
+    let* () = Rules.Produce.Alias.add_deps doc_no_deps_alias (Action_builder.paths html_files) in
+
+    (* Filter dep_pkgs to avoid cycles and missing packages *)
+    let filtered_dep_pkgs =
+      dep_pkgs
+      |> List.filter ~f:(fun dep_pkg ->
+           (* Skip self-references to avoid cycles *)
+           not (Package.Name.equal dep_pkg pkg))
+      |> List.filter ~f:(fun dep_pkg ->
+           (* Skip packages with no libraries - they won't have HTML anyway *)
+           let libs = Package_discovery.libraries_of_package pkg_discovery dep_pkg in
+           not (List.is_empty libs))
+    in
+
+    (* Create @doc alias that depends on @doc-no-deps plus filtered config deps *)
     let* () =
-      if List.is_empty dep_pkgs then
+      Rules.Produce.Alias.add_deps
+        (Dep.format_alias Html ctx (Pkg pkg))
+        (Action_builder.dep (Dune_engine.Dep.alias doc_no_deps_alias))
+    in
+
+    (* Add dependencies on other packages' @doc-no-deps (not @doc to avoid cycles) *)
+    let* () =
+      if List.is_empty filtered_dep_pkgs then
         Memo.return ()
       else
         let dep_set =
-          Dune_engine.Dep.Set.of_list_map dep_pkgs ~f:(fun dep_pkg ->
-            Dune_engine.Dep.alias (Dep.format_alias Html ctx (Pkg dep_pkg)))
+          Dune_engine.Dep.Set.of_list_map filtered_dep_pkgs ~f:(fun dep_pkg ->
+            let dep_no_deps_alias = Alias.make (Alias.Name.of_string "doc-no-deps") ~dir:(Paths.html ctx (Pkg dep_pkg)) in
+            Dune_engine.Dep.alias dep_no_deps_alias)
         in
         Rules.Produce.Alias.add_deps
           (Dep.format_alias Html ctx (Pkg pkg))
           (Action_builder.deps dep_set)
     in
 
-    Rules.Produce.Alias.add_deps
-      (Dep.format_alias Html ctx (Pkg pkg))
-      (Action_builder.paths html_files)
+    Memo.return ()
   )
     in
 
     (* Generate HTML for package-level mld files using artifacts *)
     let* artifacts = discover_installed_pkg_mld_artifacts ctx ~pkg in
 
-    (* Get package dependencies from odoc-config.sexp for mld HTML generation *)
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-    let config_pkg_deps = get_config_package_deps pkg_discovery (Some pkg) in
-
     Memo.parallel_iter artifacts ~f:(fun artifact ->
       (* Generate HTML directly without Sherlodoc, similar to installed libraries *)
       let odoc_support_path = Paths.odoc_support ctx in
       let html_deps =
-        let open Action_builder.O in
-        let* () = Action_builder.path (Path.build odoc_support_path) in
-        (* Also depend on config package HTML *)
-        if List.is_empty config_pkg_deps then
-          Action_builder.return ()
-        else
-          let dep_set =
-            Dune_engine.Dep.Set.of_list_map config_pkg_deps ~f:(fun dep_pkg ->
-              Dune_engine.Dep.alias (Dep.format_alias Html ctx (Pkg dep_pkg)))
-          in
-          Action_builder.deps dep_set
+        Action_builder.path (Path.build odoc_support_path)
       in
 
       let run_odoc =
