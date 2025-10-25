@@ -2579,63 +2579,43 @@ let handle_mlds_dir sctx ~pkg_name =
 ;;
 
 let handle_html_dir sctx ~lib_unique_name_or_pkg =
-  (* Handle both v2 library unique names (containing @) and v3 package names *)
+  (* Unified HTML handler using package identifier detection *)
+  Log.info [ Pp.textf "odoc v3: Handling HTML dir for %s (unified)" lib_unique_name_or_pkg ];
+
+  (* Detect if this is v3 package or v2 library by checking for '@' *)
   let is_v3_package = not (String.contains lib_unique_name_or_pkg '@') in
+
   if is_v3_package then (
-    (* v3 package directory: _doc/_html/{package} *)
-    (* Generate HTML rules for all libraries in this package at this level *)
-    (* This can be either a local package or an installed package *)
-    Log.info [ Pp.textf "odoc v3: Handling HTML package dir for pkg=%s" lib_unique_name_or_pkg ];
+    (* v3 package (local or installed) *)
     let pkg = Package.Name.of_string lib_unique_name_or_pkg in
-    (* Check if this is a local or installed package *)
     let* packages = Dune_load.packages () in
     let is_local = Package.Name.Map.mem packages pkg in
-    Log.info [ Pp.textf "odoc v3: Package %s is %s"
+
+    Log.info [ Pp.textf "odoc v3: Package %s is %s - calling appropriate setup function"
                  lib_unique_name_or_pkg
                  (if is_local then "LOCAL" else "INSTALLED") ];
-    if is_local then (
-      (* Local package - use standard HTML generation *)
-      Log.info [ Pp.textf "odoc v3: Calling setup_pkg_html_rules for LOCAL package %s"
-                   lib_unique_name_or_pkg ];
+
+    if is_local then
       setup_pkg_html_rules sctx ~pkg
-    ) else (
-      (* Installed package - use installed library HTML generation *)
-      Log.info [ Pp.textf "odoc v3: Calling setup_installed_pkg_html_rules for INSTALLED package %s"
-                   lib_unique_name_or_pkg ];
+    else
       setup_installed_pkg_html_rules sctx ~pkg
-    )
   ) else (
-    (* v2 library unique name (contains @) *)
-    (* TODO we can be a better with the error handling in the case where
-        lib_unique_name_or_pkg is neither a valid pkg or lnu *)
-     let ctx = Super_context.context sctx in
-     let* lib, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name_or_pkg in
-     (* jeremiedimino: why isn't [None] some kind of error here? *)
-     let* lib =
-       let+ lib = Lib.DB.find lib_db lib in
-       Option.bind ~f:Lib.Local.of_lib lib
-     in
-     let+ () =
-       match lib with
-       | None -> Memo.return ()
-       | Some lib ->
-         (match Lib_info.package (Lib.Local.info lib) with
-          | None ->
-            (* lib with no package above it *)
-            let* search_db = search_db_for_lib sctx lib in
-            setup_lib_html_rules sctx ~search_db lib
-          | Some pkg -> setup_pkg_html_rules sctx ~pkg)
-     and+ () =
-       let* packages = Dune_load.packages () in
-       match
-         Package.Name.Map.find packages (Package.Name.of_string lib_unique_name_or_pkg)
-       with
-       | None -> Memo.return ()
-       | Some pkg ->
-         let name = Package.name pkg in
-         setup_pkg_html_rules sctx ~pkg:name
-     in
-     ()
+    (* v2 library (contains '@') *)
+    let ctx = Super_context.context sctx in
+    let* lib_name, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name_or_pkg in
+    let* lib_opt =
+      let+ lib = Lib.DB.find lib_db lib_name in
+      Option.bind ~f:Lib.Local.of_lib lib
+    in
+
+    match lib_opt with
+    | None ->
+      Log.info [ Pp.textf "odoc v3: v2 library %s not found" lib_unique_name_or_pkg ];
+      Memo.return ()
+    | Some lib ->
+      (* v2 library - generate HTML directly *)
+      let* search_db = search_db_for_lib sctx lib in
+      setup_lib_html_rules sctx ~search_db lib
   )
 ;;
 
