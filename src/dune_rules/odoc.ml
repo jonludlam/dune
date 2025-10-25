@@ -98,10 +98,12 @@ type artifact = {
   odocl_file : Path.Build.t;
   html_file : Path.Build.t;
   json_file : Path.Build.t;
+  output_dir : Path.Build.t;  (* Base output directory for this artifact *)
 
   (* Context for compilation/linking *)
   parent_id : string;  (* e.g., "dyn" or "lwt.unix" *)
   pkg : Package.Name.t option;
+  lib_name : Lib_name.t;  (* Library name - needed for -I paths *)
 
   (* Target context - needed for looking up dependencies *)
   target : target;
@@ -845,6 +847,55 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
      Action_builder.with_no_targets deps >>> run_odoc)
 ;;
 
+(* Unified compilation function that works for all artifact types.
+   This follows the driver's pattern where all information needed to compile
+   is contained in the artifact itself. *)
+let compile_artifact sctx ~artifact ~lib_deps =
+  let ctx = Super_context.context sctx in
+
+  (* Determine the compilation directory based on the target *)
+  let compile_dir = match artifact.target with
+    | Lib _ -> artifact.output_dir  (* Library artifacts compile in their own directory *)
+    | Pkg pkg -> Paths.odocs ctx (Pkg pkg)  (* Package artifacts compile in package directory *)
+  in
+
+  let run_odoc =
+    let open Action_builder.With_targets.O in
+    Action_builder.with_no_targets lib_deps
+    >>> Action_builder.With_targets.add ~file_targets:[artifact.odoc_file]
+      (run_odoc
+        sctx
+        ~dir:(Path.build compile_dir)
+        "compile"
+        ~quiet:false
+        ~flags_for:(Some artifact.odoc_file)
+        [ Command.Args.A "-I"
+        ; Command.Args.Path (Path.build artifact.output_dir)
+        ; Command.Args.A "--output-dir"
+        ; Command.Args.Path (Path.build (odoc_root_v3 ctx))
+        ; Command.Args.A "--parent-id"
+        ; Command.Args.A artifact.parent_id
+        ; (match artifact.source with
+           | Local_source path -> Command.Args.Dep (Path.build path)
+           | Installed_source { src_path; _ } -> Command.Args.Dep src_path)
+        ])
+  in
+  add_rule sctx run_odoc
+;;
+
+(* Unified linking function that works for all artifact types.
+   This follows the driver's pattern where all information needed to link
+   is derived from the artifact itself. *)
+let link_artifact sctx ~artifact =
+  (* Compute requires from the artifact's target *)
+  let* requires = match artifact.target with
+    | Lib lib -> Lib.requires (Lib.Local.to_lib lib)
+    | Pkg _ -> Memo.return (Resolve.return [])  (* Package-level artifacts have no library dependencies *)
+  in
+
+  (* Call the existing link_odoc_rules with computed requires *)
+  link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
+;;
 
 let setup_generate sctx ~search_db odoc_file out =
   let ctx = Super_context.context sctx in
@@ -1051,22 +1102,28 @@ let create_artifact_local ctx ~target ~source ~kind =
   let basename = Path.Build.basename odoc_file |> Filename.remove_extension in
   let odocl_file = odocl_base ++ (basename ^ ".odocl") in
 
-  let (html_file, json_file, parent_id) = match target with
+  let (html_file, json_file, parent_id, lib_name, output_dir) = match target with
   | Lib lib ->
+    let lib_t = Lib.Local.to_lib lib in
+    let lib_name = Lib.name lib_t in
     let html_dir = html_base ++ Stdune.String.capitalize basename in
     let file output =
       html_dir ++ "index"
       |> Path.Build.extend_basename ~suffix:(Output_format.extension output)
     in
-    let parent_id = Lib.name (Lib.Local.to_lib lib) |> Lib_name.to_string in
-    (file Html, file Json, parent_id)
+    let parent_id = Lib_name.to_string lib_name in
+    let output_dir = Paths.odocs ctx (Lib lib) in
+    (file Html, file Json, parent_id, lib_name, output_dir)
   | Pkg pkg ->
     let file output =
       html_base ++ (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
       |> Path.Build.extend_basename ~suffix:(Output_format.extension output)
     in
     let parent_id = Package.Name.to_string pkg in
-    (file Html, file Json, parent_id)
+    (* For package-level artifacts, use package name as lib name *)
+    let lib_name = Lib_name.of_string parent_id in
+    let output_dir = Paths.odocs ctx (Pkg pkg) in
+    (file Html, file Json, parent_id, lib_name, output_dir)
   in
 
   let pkg = match target with
@@ -1080,8 +1137,10 @@ let create_artifact_local ctx ~target ~source ~kind =
   ; odocl_file
   ; html_file
   ; json_file
+  ; output_dir
   ; parent_id
   ; pkg
+  ; lib_name
   ; target
   }
 ;;
@@ -1112,14 +1171,18 @@ let create_artifact_installed ctx ~pkg ~lib_name ~module_name ~archive ~visible 
   (* The target will be used to look up dependencies when needed *)
   let target = Pkg pkg in  (* Use package as target for installed libs *)
 
+  let output_dir = Paths.root ctx ++ "_odoc" ++ pkg_name_str ++ lib_name_str in
+
   { kind
   ; source = Installed_source { src_path = Path.external_ (Path.External.of_string "/dev/null"); module_name; archive }
   ; odoc_file
   ; odocl_file
   ; html_file
   ; json_file
+  ; output_dir
   ; parent_id
   ; pkg = Some pkg
+  ; lib_name
   ; target
   }
 ;;
@@ -1143,6 +1206,8 @@ let create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name =
   let parent_id = pkg_name_str in
   let kind = Page { name = page_name } in
   let target = Pkg pkg in
+  let lib_name = Lib_name.of_string pkg_name_str in  (* Use package name as lib name for pages *)
+  let output_dir = odoc_root ++ pkg_name_str in
 
   { kind
   ; source = Installed_source { src_path = mld_path; module_name = page_name; archive = pkg_name_str }
@@ -1150,8 +1215,10 @@ let create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name =
   ; odocl_file
   ; html_file
   ; json_file
+  ; output_dir
   ; parent_id
   ; pkg = Some pkg
+  ; lib_name
   ; target
   }
 ;;
@@ -1270,14 +1337,18 @@ let create_artifact_local_module ctx ~pkg ~lib_name ~local_lib ~module_ =
   let obj_dir = Lib.Local.obj_dir local_lib in
   let source_file = Obj_dir.Module.cmti_file obj_dir module_ ~cm_kind:(Ocaml Cmi) in
 
+  let output_dir = Paths.root ctx ++ "_odoc" ++ pkg_name_str ++ lib_name_str in
+
   { kind
   ; source = Local_source source_file
   ; odoc_file
   ; odocl_file
   ; html_file
   ; json_file
+  ; output_dir
   ; parent_id
   ; pkg = Some pkg
+  ; lib_name
   ; target
   }
 ;;
@@ -2534,16 +2605,6 @@ let handle_odoc_lib_dir sctx ~pkg_name ~lib_name =
             if List.is_empty artifacts then
               Memo.return ()
             else (
-              (* Get source directory and module names for dependency resolution *)
-              let info = Lib.info lib in
-              let src_dir = Lib_info.src_dir info in
-              let module_names =
-                List.filter_map artifacts ~f:(fun artifact ->
-                  match artifact.kind with
-                  | Module { module_name; _ } -> Some (Module_name.to_string module_name)
-                  | Page _ -> None)
-              in
-
               (* Set up library dependencies *)
               let* pkg_discovery = Package_discovery.create ~context:ctx in
               let* stdlib_opt =
@@ -2584,16 +2645,9 @@ let handle_odoc_lib_dir sctx ~pkg_name ~lib_name =
                 Action_builder.deps dep_set
               in
 
-              (* Compile each artifact *)
+              (* Compile each artifact using unified compilation function *)
               Memo.parallel_iter artifacts ~f:(fun artifact ->
-                compile_installed_module_artifact sctx
-                  ~artifact
-                  ~src_dir
-                  ~lib_deps
-                  ~module_names
-                  ~pkg_name
-                  ~lib_name:(Lib_name.to_string lib_name)
-              )
+                compile_artifact sctx ~artifact ~lib_deps)
             )
           in
 
@@ -2657,46 +2711,9 @@ let handle_odoc_lib_dir sctx ~pkg_name ~lib_name =
                 Action_builder.deps dep_set
               in
 
-              (* Compile each artifact - for local artifacts we need to compile from cmti files *)
+              (* Compile each artifact using unified compilation function *)
               Memo.parallel_iter artifacts ~f:(fun artifact ->
-                match artifact.source with
-                | Local_source source_file ->
-                  (* Get module from artifact kind *)
-                  (match artifact.kind with
-                   | Module _ ->
-                     (* Build odoc compilation rule *)
-                     let parent_id = artifact.parent_id in
-                     let lib_odoc_dir =
-                       let pkg_name = Package.Name.to_string pkg in
-                       let lib_name_str = Lib_name.to_string lib_name in
-                       Paths.root ctx ++ "_odoc" ++ pkg_name ++ lib_name_str
-                     in
-
-                     let run_odoc =
-                       let open Action_builder.With_targets.O in
-                       Action_builder.with_no_targets lib_deps
-                       >>> Action_builder.With_targets.add ~file_targets:[artifact.odoc_file]
-                         (run_odoc
-                           sctx
-                           ~dir:(Path.build (Paths.odocs ctx (Pkg pkg)))
-                           "compile"
-                           ~quiet:false
-                           ~flags_for:(Some artifact.odoc_file)
-                           [ A "-I"
-                           ; Path (Path.build lib_odoc_dir)
-                           ; A "--parent-id"
-                           ; A parent_id
-                           ; Dep (Path.build source_file)
-                           ])
-                     in
-                     let* () = Super_context.add_rule sctx ~dir:(Paths.odocs ctx (Pkg pkg)) run_odoc in
-                     Memo.return ()
-                   | Page _ ->
-                     (* Pages should not appear in local library artifacts for modules *)
-                     Memo.return ())
-                | Installed_source _ ->
-                  (* This shouldn't happen for local libraries *)
-                  Memo.return ())
+                compile_artifact sctx ~artifact ~lib_deps)
             )
           in
 
@@ -2889,47 +2906,10 @@ let gen_rules sctx ~dir rest =
               Action_builder.deps dep_set
             in
 
-            (* Compile each artifact - for local artifacts we compile from cmti files *)
+            (* Compile each artifact using unified compilation function *)
             let* () =
               Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
-                match artifact.source with
-                | Local_source source_file ->
-                  (* Get module from artifact kind *)
-                  (match artifact.kind with
-                   | Module _ ->
-                     (* Build odoc compilation rule *)
-                     let parent_id = artifact.parent_id in
-                     let lib_odoc_dir =
-                       let pkg_name = Package.Name.to_string pkg in
-                       let lib_name_str = Lib_name.to_string lib_name in
-                       Paths.root ctx ++ "_odoc" ++ pkg_name ++ lib_name_str
-                     in
-
-                     let run_odoc =
-                       let open Action_builder.With_targets.O in
-                       Action_builder.with_no_targets lib_deps
-                       >>> Action_builder.With_targets.add ~file_targets:[artifact.odoc_file]
-                         (run_odoc
-                           sctx
-                           ~dir:(Path.build (Paths.odocs ctx (Pkg pkg)))
-                           "compile"
-                           ~quiet:false
-                           ~flags_for:(Some artifact.odoc_file)
-                           [ A "-I"
-                           ; Path (Path.build lib_odoc_dir)
-                           ; A "--parent-id"
-                           ; A parent_id
-                           ; Dep (Path.build source_file)
-                           ])
-                     in
-                     let* () = Super_context.add_rule sctx ~dir:(Paths.odocs ctx (Pkg pkg)) run_odoc in
-                     Memo.return ()
-                   | Page _ ->
-                     (* Pages should not appear in local library artifacts for modules *)
-                     Memo.return ())
-                | Installed_source _ ->
-                  (* This shouldn't happen for local libraries *)
-                  Memo.return ())
+                compile_artifact sctx ~artifact ~lib_deps)
             in
 
             (* Set up the .odoc-all alias for this library *)
@@ -2997,16 +2977,6 @@ let gen_rules sctx ~dir rest =
             if List.is_empty lib_artifacts then
               Memo.return ()
             else (
-              (* Get source directory and module names for dependency resolution *)
-              let info = Lib.info lib in
-              let src_dir = Lib_info.src_dir info in
-              let module_names =
-                List.filter_map lib_artifacts ~f:(fun artifact ->
-                  match artifact.kind with
-                  | Module { module_name; _ } -> Some (Module_name.to_string module_name)
-                  | Page _ -> None)
-              in
-
               (* Set up library dependencies *)
               let* pkg_discovery = Package_discovery.create ~context:ctx in
               let* stdlib_opt =
@@ -3047,17 +3017,10 @@ let gen_rules sctx ~dir rest =
                 Action_builder.deps dep_set
               in
 
-              (* Compile each artifact *)
+              (* Compile each artifact using unified compilation function *)
               let* () =
                 Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
-                  compile_installed_module_artifact sctx
-                    ~artifact
-                    ~src_dir
-                    ~lib_deps
-                    ~module_names
-                    ~pkg_name
-                    ~lib_name:(Lib_name.to_string lib_name)
-                )
+                  compile_artifact sctx ~artifact ~lib_deps)
               in
 
               (* Set up .odoc-all alias for this library *)
