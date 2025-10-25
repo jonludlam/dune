@@ -1400,13 +1400,33 @@ let create_artifact_v2_module ctx ~lib_unique_name ~local_lib ~module_ =
   }
 ;;
 
-(* Discover modules for a local library and create artifacts *)
+(* Discover modules for a local library and create artifacts.
+   Handles both v3 libraries (with packages) and v2 libraries (without packages). *)
 let discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib : artifact list Memo.t =
   let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
   let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
-  let artifacts = List.map modules ~f:(fun module_ ->
-    create_artifact_local_module ctx ~pkg ~lib_name ~local_lib ~module_
-  ) in
+
+  (* Check if this is a v2 library (no package) *)
+  let info = Lib.Local.info local_lib in
+  let actual_pkg = Lib_info.package info in
+
+  let artifacts = match actual_pkg with
+  | None ->
+    (* v2 library - use lib_unique_name for directory structure *)
+    let status = Lib_info.status info in
+    let lib_unique_name = match status with
+      | Lib_info.Status.Private (project, _) -> Scope_key.to_string lib_name project
+      | _ -> Lib_name.to_string lib_name  (* Fallback, shouldn't happen for private libs *)
+    in
+    List.map modules ~f:(fun module_ ->
+      create_artifact_v2_module ctx ~lib_unique_name ~local_lib ~module_
+    )
+  | Some _ ->
+    (* v3 library - use pkg/lib directory structure *)
+    List.map modules ~f:(fun module_ ->
+      create_artifact_local_module ctx ~pkg ~lib_name ~local_lib ~module_
+    )
+  in
   Memo.return artifacts
 ;;
 
@@ -2532,13 +2552,13 @@ let handle_html_dir sctx ~lib_unique_name_or_pkg =
 
 let handle_odoc_v2_lib_dir sctx ~lib_unique_name =
   (* v2 library directory: _doc/_odoc/{lib_unique_name} for libraries without packages *)
-  Log.info [ Pp.textf "odoc v3: Handling v2 library dir for lib=%s (using artifact-based architecture)" lib_unique_name ];
+  Log.info [ Pp.textf "odoc v3: Handling v2 library dir for lib=%s (using unified artifact discovery)" lib_unique_name ];
   let ctx = Super_context.context sctx in
 
   (* Parse the lib_unique_name to find the library *)
-  let* lib, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name in
+  let* lib_name, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name in
   let* lib_opt =
-    let+ lib = Lib.DB.find lib_db lib in
+    let+ lib = Lib.DB.find lib_db lib_name in
     Option.bind ~f:Lib.Local.of_lib lib
   in
 
@@ -2556,20 +2576,17 @@ let handle_odoc_v2_lib_dir sctx ~lib_unique_name =
        Log.info [ Pp.textf "odoc v3: Warning: Library %s has a package but using v2 path" lib_unique_name ];
        Memo.return ()
      | None ->
-       (* Get ALL modules for this library (not just entry modules) *)
-       let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
-       let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
-       Log.info [ Pp.textf "odoc v3: Found %d modules for library %s" (List.length modules) lib_unique_name ];
+       (* Use a dummy package name for v2 libraries - this will be ignored by discover_local_lib_artifacts *)
+       let dummy_pkg = Package.Name.of_string lib_unique_name in
 
-       (* Create artifacts for all modules *)
-       let artifacts = List.map modules ~f:(fun module_ ->
-         create_artifact_v2_module ctx ~lib_unique_name ~local_lib ~module_
-       ) in
+       (* Use unified artifact discovery - it will automatically detect v2 and use create_artifact_v2_module *)
+       let* artifacts = discover_local_lib_artifacts sctx ctx ~pkg:dummy_pkg ~lib_name ~local_lib in
+
+       Log.info [ Pp.textf "odoc v3: Found %d artifacts for library %s" (List.length artifacts) lib_unique_name ];
 
        (* Set up library dependencies *)
        let* pkg_discovery = Package_discovery.create ~context:ctx in
        let* stdlib_opt =
-         let lib_name = Lib.name lib_t in
          if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
          then Memo.return None
          else
