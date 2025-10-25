@@ -1503,6 +1503,95 @@ let odoc_artefacts sctx target =
         create_artifact_local ctx ~target ~source:odoc_file ~kind)
 ;;
 
+(* Discover ALL artifacts for a package identifier (either a v3 package name or v2 lib_unique_name).
+   For v3 packages: returns artifacts for all libraries in the package + package-level mld files
+   For v2 libraries: returns artifacts for all modules in the library (no mld files since v2 has no packages)
+
+   This is the unified entry point that all handlers (odoc, odocls, html) should use. *)
+let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list * string list) Memo.t =
+  (* Check if this is a v2 library (contains '@') or a v3 package *)
+  if String.contains pkg_or_lib_unique_name '@' then (
+    (* v2 library: lib_unique_name format like "dune_pkg@e6ee5b2bc981" *)
+    let* lib_name, lib_db = Scope_key.of_string (Context.name ctx) pkg_or_lib_unique_name in
+    let* lib_opt =
+      let+ lib = Lib.DB.find lib_db lib_name in
+      Option.bind ~f:Lib.Local.of_lib lib
+    in
+    match lib_opt with
+    | None -> Memo.return ([], [])
+    | Some local_lib ->
+      (* Discover artifacts for this v2 library - discover_local_lib_artifacts will detect no package *)
+      let dummy_pkg = Package.Name.of_string pkg_or_lib_unique_name in
+      let+ artifacts = discover_local_lib_artifacts sctx ctx ~pkg:dummy_pkg ~lib_name ~local_lib in
+      (* v2 libraries don't have subdirectories in the same sense as v3 packages *)
+      (artifacts, [])
+  ) else (
+    (* v3 package: regular package name like "dyn" *)
+    let pkg = Package.Name.of_string pkg_or_lib_unique_name in
+
+    (* Check if this is a local project package or an installed package *)
+    let* is_project_pkg =
+      let* packages = Dune_load.packages () in
+      Memo.return (Package.Name.Map.mem packages pkg)
+    in
+
+    if is_project_pkg then (
+      (* Local package - discover mld artifacts + all library artifacts *)
+      let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
+
+      (* Get library subdirectory names *)
+      let lib_subdirs = List.map local_libs ~f:(fun local_lib ->
+        Lib.name (Lib.Local.to_lib local_lib) |> Lib_name.to_string
+      ) in
+
+      (* Get package-level mld artifacts *)
+      let* pkg_artifacts = odoc_artefacts sctx (Pkg pkg) in
+
+      (* Get artifacts for all libraries in this package *)
+      let* lib_artifacts_list =
+        Memo.List.map local_libs ~f:(fun local_lib ->
+          let lib = Lib.Local.to_lib local_lib in
+          let lib_name = Lib.name lib in
+          discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib
+        )
+      in
+
+      (* Flatten and combine all artifacts *)
+      let all_artifacts = pkg_artifacts @ List.concat lib_artifacts_list in
+      Memo.return (all_artifacts, lib_subdirs)
+    ) else (
+      (* Installed package - discover mld artifacts + library artifacts *)
+      let* pkg_discovery = Package_discovery.create ~context:ctx in
+      let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+
+      (* Get library subdirectory names for build_dir_only_sub_dirs *)
+      let lib_subdirs =
+        List.filter_map installed_libs ~f:(fun lib ->
+          match Lib.Local.of_lib lib with
+          | Some _ -> None  (* Skip local libs *)
+          | None ->
+            let lib_name = Lib.name lib in
+            Some (Lib_name.to_string lib_name))
+      in
+
+      (* Get package-level mld artifacts *)
+      let* mld_artifacts = discover_installed_pkg_mld_artifacts ctx ~pkg in
+
+      (* Get artifacts for all installed libraries in this package *)
+      let* lib_artifacts_list =
+        Memo.List.map installed_libs ~f:(fun lib ->
+          let lib_name = Lib.name lib in
+          discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib
+        )
+      in
+
+      (* Flatten and combine all artifacts *)
+      let all_artifacts = mld_artifacts @ List.concat lib_artifacts_list in
+      Memo.return (all_artifacts, lib_subdirs)
+    )
+  )
+;;
+
 let setup_lib_odocl_rules_def =
   let module Input = struct
     module Super_context = Super_context.As_memo_key
@@ -2642,51 +2731,9 @@ let handle_odoc_v2_lib_dir sctx ~lib_unique_name =
    and the package-level handler generates rules for all libraries. *)
 
 
-let handle_odocls_lib_dir sctx ~pkg_name ~lib_name =
-  (* v3 library directory: _doc/_odocls/{package}/{library} *)
-  (* Generate linking rules for installed libraries *)
-      let pkg = Package.Name.of_string pkg_name in
-      let lib_name = Lib_name.of_string lib_name in
-      let ctx = Super_context.context sctx in
-
-      Log.info [ Pp.textf "odoc v3: (_odocls handler) calling find_lib_for_package" ];
-      let* lib_opt = find_lib_for_package sctx ~pkg ~lib_name in
-
-      match lib_opt with
-      | None -> Memo.return ()
-      | Some lib ->
-        (* Use unified artifact discovery for both local and installed libraries *)
-        let* artifacts = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib in
-
-        Log.info [ Pp.textf "odoc v3: Linking %d artifacts for %s/%s"
-                     (List.length artifacts) pkg_name (Lib_name.to_string lib_name) ];
-
-        (* Link artifacts if any exist *)
-        let* () =
-          if List.is_empty artifacts then (
-            Log.info [ Pp.textf "odoc v3: No artifacts found for linking %s/%s" pkg_name (Lib_name.to_string lib_name) ];
-            Memo.return ()
-          ) else (
-            (* Get library dependencies for linking *)
-            let* requires = Lib.requires lib in
-            let pkg_opt = match Lib.Local.of_lib lib with
-              | Some local_lib -> Lib_info.package (Lib.Local.info local_lib)
-              | None -> None
-            in
-
-            (* Link each artifact *)
-            Memo.parallel_iter artifacts ~f:(fun artifact ->
-              link_odoc_rules sctx artifact ~pkg:pkg_opt ~requires
-            )
-          )
-        in
-
-        (* Always set up .odoc-all alias, even if empty (needed for dependencies) *)
-        let odocls_dir = Paths.root ctx ++ "_odocls" ++ pkg_name ++ Lib_name.to_string lib_name in
-        let odocl_files = List.map artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
-        let odocl_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odocls_dir in
-        Rules.Produce.Alias.add_deps odocl_alias (Action_builder.paths odocl_files)
-;;
+(* NOTE: handle_odocls_lib_dir was deleted because it's never called.
+   The pattern [ "_odocls"; pkg_name; lib_name ] just redirects to parent,
+   and the package-level handler generates linking rules for all libraries. *)
 
 let gen_rules sctx ~dir rest =
   let rest_str = String.concat ~sep:"/" rest in
@@ -2745,52 +2792,48 @@ let gen_rules sctx ~dir rest =
       let* (), rules = setup_package_odoc_rules sctx ~pkg in
       Rules.produce rules) *)
   | [ "_odoc"; name ] when not (String.equal name "pkg") && not (String.contains name '@') ->
-    (* v3 package directory: _doc/_odoc/{package} - allow subdirs for libraries *)
-    (* Note: libraries without packages (with @) are handled by existing v2 mechanism *)
+    (* v3 package directory: _doc/_odoc/{package} - unified handler using discover_package_artifacts *)
+    (* Note: libraries without packages (with @) are handled by v2 mechanism below *)
     let pkg_name = name in
-    let pkg = Package.Name.of_string pkg_name in
-    (* Check if this is an installed package *)
-    let* is_project_pkg =
-      let* packages = Dune_load.packages () in
-      Memo.return (Package.Name.Map.mem packages pkg)
+    let ctx = Super_context.context sctx in
+
+    (* Use unified artifact discovery - handles both local and installed packages *)
+    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_name in
+
+    Log.info [ Pp.textf "odoc v3: Package %s - discovered %d artifacts in %d subdirs"
+                 pkg_name (List.length all_artifacts) (List.length lib_subdirs) ];
+
+    (* Group artifacts by library to compile them with appropriate dependencies *)
+    let artifacts_by_lib =
+      List.fold_left all_artifacts ~init:Lib_name.Map.empty ~f:(fun acc artifact ->
+        let lib_name = artifact.lib_name in
+        let existing = Lib_name.Map.find acc lib_name |> Option.value ~default:[] in
+        Lib_name.Map.set acc lib_name (artifact :: existing)
+      )
     in
-    if is_project_pkg then (
-      (* Local package - generate compilation rules for mld files and all libraries *)
-      Log.info [ Pp.textf "odoc v3: Local package %s - generating compilation rules for mld and libraries" pkg_name ];
 
-      let ctx = Super_context.context sctx in
+    let rules = Rules.collect_unit (fun () ->
+      (* Compile artifacts for each library *)
+      Lib_name.Map.to_list artifacts_by_lib
+      |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
+        if List.is_empty lib_artifacts then
+          Memo.return ()
+        else (
+          (* Get the library object for dependency computation *)
+          let* lib_db = Scope.DB.public_libs (Context.name ctx) in
+          let* lib_opt = Lib.DB.find lib_db lib_name in
 
-      (* Get local libraries for this package *)
-      let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
-
-      (* Get library subdirectory names *)
-      let lib_subdirs = List.map local_libs ~f:(fun local_lib ->
-        Lib.name (Lib.Local.to_lib local_lib) |> Lib_name.to_string
-      ) in
-
-      (* Generate both mld and library compilation rules *)
-      let rules = Rules.collect_unit (fun () ->
-        (* Set up package mld rules *)
-        let* () = setup_package_odoc_rules sctx ~pkg >>| fst in
-
-        (* Generate compilation rules for all libraries *)
-        Memo.parallel_iter local_libs ~f:(fun local_lib ->
-          let lib = Lib.Local.to_lib local_lib in
-          let lib_name = Lib.name lib in
-
-          let* lib_artifacts = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib in
-
-          if List.is_empty lib_artifacts then
+          match lib_opt with
+          | None ->
+            Log.info [ Pp.textf "odoc v3: Library %s not found, skipping" (Lib_name.to_string lib_name) ];
             Memo.return ()
-          else (
+          | Some lib ->
             (* Set up library dependencies *)
             let* pkg_discovery = Package_discovery.create ~context:ctx in
             let* stdlib_opt =
               if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
               then Memo.return None
-              else
-                let* public_libs = Scope.DB.public_libs (Context.name ctx) in
-                Lib.DB.find public_libs (Lib_name.of_string "stdlib")
+              else Lib.DB.find lib_db (Lib_name.of_string "stdlib")
             in
 
             let lib_deps =
@@ -2829,133 +2872,22 @@ let gen_rules sctx ~dir rest =
                 compile_artifact sctx ~artifact ~lib_deps)
             in
 
-            (* Set up the .odoc-all alias for this library *)
+            (* Set up .odoc-all alias for this library *)
             let odoc_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odoc_file) in
             let odoc_path_set = Path.Set.of_list odoc_files in
-            let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:(Paths.odocs ctx (Lib local_lib)) in
+            (* Get output_dir from first artifact (all artifacts in same library have same output_dir) *)
+            let lib_odoc_dir = (List.hd lib_artifacts).output_dir in
+            let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
             Rules.Produce.Alias.add_deps alias (Action_builder.path_set odoc_path_set)
-          ))
-      ) in
+        ))
+    ) in
 
-      Memo.return
-        (Build_config.Gen_rules.make
-          ~build_dir_only_sub_dirs:
-            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
               (Subdir_set.of_list lib_subdirs))
-          rules)
-    ) else (
-      (* Installed package - generate compilation rules for mld files and discover library subdirectories *)
-      Log.info [ Pp.textf "odoc v3: Installed package %s - generating mld compilation rules" pkg_name ];
-      let ctx = Super_context.context sctx in
-      let* pkg_discovery = Package_discovery.create ~context:ctx in
-      let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
-
-      (* Get library subdirectory names for build_dir_only_sub_dirs *)
-      let lib_subdirs =
-        List.filter_map installed_libs ~f:(fun lib ->
-          match Lib.Local.of_lib lib with
-          | Some _ -> None  (* Skip local libs *)
-          | None ->
-            let lib_name = Lib.name lib in
-            Some (Lib_name.to_string lib_name))
-      in
-
-      let rules = Rules.collect_unit (fun () ->
-        (* Discover artifacts for mld files *)
-        let* mld_artifacts = discover_installed_pkg_mld_artifacts ctx ~pkg in
-
-        (* Generate odoc compile rules for each mld artifact *)
-        let* () =
-          Memo.parallel_iter mld_artifacts ~f:(fun artifact ->
-            let mld_path =
-              match artifact.source with
-              | Installed_source { src_path; _ } -> src_path
-              | Local_source _ -> assert false  (* Should never happen for installed packages *)
-            in
-            let odoc_root = odoc_root_v3 ctx in
-
-            (* Use the compile_mld_v3 helper *)
-            compile_mld_v3 sctx
-              ~mld_path
-              ~output_file:artifact.odoc_file
-              ~output_dir:odoc_root
-              ~parent_id:artifact.parent_id
-          )
-        in
-
-        (* Generate compilation rules for all libraries in the package *)
-        Memo.parallel_iter installed_libs ~f:(fun lib ->
-          match Lib.Local.of_lib lib with
-          | Some _ -> Memo.return ()  (* Skip local libs in installed package *)
-          | None ->
-            let lib_name = Lib.name lib in
-            let* lib_artifacts = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib in
-
-            if List.is_empty lib_artifacts then
-              Memo.return ()
-            else (
-              (* Set up library dependencies *)
-              let* pkg_discovery = Package_discovery.create ~context:ctx in
-              let* stdlib_opt =
-                if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
-                then Memo.return None
-                else
-                  let* public_libs = Scope.DB.public_libs (Context.name ctx) in
-                  Lib.DB.find public_libs (Lib_name.of_string "stdlib")
-              in
-
-              let lib_deps =
-                let open Action_builder.O in
-                let* requires = Resolve.Memo.read (Lib.requires lib) in
-                let requires =
-                  match stdlib_opt with
-                  | Some stdlib_lib -> stdlib_lib :: requires
-                  | None -> requires
-                in
-                let dep_set =
-                  List.fold_left requires ~init:Dune_engine.Dep.Set.empty ~f:(fun acc dep_lib ->
-                    let dep_lib_name = Lib.name dep_lib in
-                    match Lib.Local.of_lib dep_lib with
-                    | Some local_dep ->
-                      let dep_dir = Paths.odocs ctx (Lib local_dep) in
-                      let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
-                      Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
-                    | None ->
-                      let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
-                      (match dep_pkg_opt with
-                       | Some dep_pkg ->
-                         let dep_pkg_name = Package.Name.to_string dep_pkg in
-                         let dep_lib_name_str = Lib_name.to_string dep_lib_name in
-                         let dep_dir = Paths.root ctx ++ "_odoc" ++ dep_pkg_name ++ dep_lib_name_str in
-                         let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
-                         Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
-                       | None -> acc))
-                in
-                Action_builder.deps dep_set
-              in
-
-              (* Compile each artifact using unified compilation function *)
-              let* () =
-                Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
-                  compile_artifact sctx ~artifact ~lib_deps)
-              in
-
-              (* Set up .odoc-all alias for this library *)
-              let lib_odoc_dir = Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name in
-              let odoc_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odoc_file) in
-              let odoc_path_set = Path.Set.of_list odoc_files in
-              let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
-              Rules.Produce.Alias.add_deps alias (Action_builder.path_set odoc_path_set)
-            ))
-      ) in
-
-      Memo.return
-        (Build_config.Gen_rules.make
-           ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
-               (Subdir_set.of_list lib_subdirs))
-           rules)
-    )
+         rules)
   | [ "_odoc"; pkg_name; lib_name ] ->
     (* Library directory: _doc/_odoc/{package}/{library} *)
     (* Redirect to parent - the package level handler will generate rules for all libraries *)
