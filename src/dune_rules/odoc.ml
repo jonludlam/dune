@@ -1503,6 +1503,15 @@ let odoc_artefacts sctx target =
         create_artifact_local ctx ~target ~source:odoc_file ~kind)
 ;;
 
+(* Helper to group artifacts by library name *)
+let group_artifacts_by_lib artifacts =
+  List.fold_left artifacts ~init:Lib_name.Map.empty ~f:(fun acc artifact ->
+    let lib_name = artifact.lib_name in
+    let existing = Lib_name.Map.find acc lib_name |> Option.value ~default:[] in
+    Lib_name.Map.set acc lib_name (artifact :: existing)
+  )
+;;
+
 (* Helper function to compile artifacts for a single library with proper dependencies *)
 let compile_library_artifacts sctx ctx ~pkg_name ~lib_name ~lib_artifacts : Path.Build.t Memo.t =
   (* Get the library object for dependency computation *)
@@ -2851,13 +2860,7 @@ let gen_rules sctx ~dir rest =
                  pkg_name (List.length all_artifacts) (List.length lib_subdirs) ];
 
     (* Group artifacts by library to compile them with appropriate dependencies *)
-    let artifacts_by_lib =
-      List.fold_left all_artifacts ~init:Lib_name.Map.empty ~f:(fun acc artifact ->
-        let lib_name = artifact.lib_name in
-        let existing = Lib_name.Map.find acc lib_name |> Option.value ~default:[] in
-        Lib_name.Map.set acc lib_name (artifact :: existing)
-      )
-    in
+    let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
 
     let rules = Rules.collect_unit (fun () ->
       (* Compile artifacts for each library using helper function *)
@@ -2913,13 +2916,7 @@ let gen_rules sctx ~dir rest =
                  pkg_name (List.length all_artifacts) ];
 
     (* Group artifacts by library *)
-    let artifacts_by_lib =
-      List.fold_left all_artifacts ~init:Lib_name.Map.empty ~f:(fun acc artifact ->
-        let lib_name = artifact.lib_name in
-        let existing = Lib_name.Map.find acc lib_name |> Option.value ~default:[] in
-        Lib_name.Map.set acc lib_name (artifact :: existing)
-      )
-    in
+    let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
 
     let rules = Rules.collect_unit (fun () ->
       (* Link artifacts for each library *)
