@@ -3102,22 +3102,56 @@ let gen_rules sctx ~dir rest =
       Memo.return (Package.Name.Map.mem packages pkg)
     in
     if is_project_pkg then (
-      (* Local project package - enumerate library subdirectories *)
-      let* lib_subdirs =
-        let* libs = Context.name ctx |> libs_of_pkg ~pkg in
-        Memo.return (List.map libs ~f:(fun lib ->
-          let lib_name = Lib.name (Lib.Local.to_lib lib) in
-          Lib_name.to_string lib_name))
+      (* Local project package - generate linking rules for mld files and all libraries *)
+      Log.info [ Pp.textf "odoc v3: Local package %s - generating linking rules for mld and libraries" pkg_name ];
+
+      (* Get local libraries for this package *)
+      let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
+
+      (* Get library subdirectory names *)
+      let lib_subdirs = List.map local_libs ~f:(fun lib ->
+        let lib_name = Lib.name (Lib.Local.to_lib lib) in
+        Lib_name.to_string lib_name)
       in
+
       let rules = Rules.collect_unit (fun () ->
-        (* Only set up rules for package-level mld files, not library modules *)
+        (* Set up linking rules for package-level mld files *)
         let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-        let* libs = Context.name ctx |> libs_of_pkg ~pkg in
-        (* Mld files link against only the libraries in the package, not transitive deps *)
-        let requires = Resolve.return (libs :> Lib.t list) in
-        Memo.parallel_iter pkg_odocs ~f:(fun odoc ->
-          link_odoc_rules sctx ~pkg:(Some pkg) ~requires odoc)
+        let requires = Resolve.return (local_libs :> Lib.t list) in
+        let* () =
+          Memo.parallel_iter pkg_odocs ~f:(fun odoc ->
+            link_odoc_rules sctx ~pkg:(Some pkg) ~requires odoc)
+        in
+
+        (* Generate linking rules for all libraries *)
+        Memo.parallel_iter local_libs ~f:(fun local_lib ->
+          let lib = Lib.Local.to_lib local_lib in
+          let lib_name = Lib.name lib in
+
+          let* lib_artifacts = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib in
+
+          if List.is_empty lib_artifacts then
+            Memo.return ()
+          else (
+            (* Get library dependencies for linking *)
+            let* requires = Lib.requires lib in
+            let pkg_opt = Some pkg in
+
+            (* Link each artifact *)
+            let* () =
+              Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
+                link_odoc_rules sctx artifact ~pkg:pkg_opt ~requires
+              )
+            in
+
+            (* Set up .odoc-all alias for this library *)
+            let odocls_dir = Paths.root ctx ++ "_odocls" ++ pkg_name ++ Lib_name.to_string lib_name in
+            let odocl_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
+            let odocl_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odocls_dir in
+            Rules.Produce.Alias.add_deps odocl_alias (Action_builder.paths odocl_files)
+          ))
       ) in
+
       Memo.return
         (Build_config.Gen_rules.make
            ~build_dir_only_sub_dirs:
@@ -3125,8 +3159,8 @@ let gen_rules sctx ~dir rest =
                 (Subdir_set.of_list lib_subdirs))
            rules)
     ) else (
-      (* Installed package - link mld files *)
-      Log.info [ Pp.textf "odoc v3: Package %s is installed (not in project), linking mld files" pkg_name ];
+      (* Installed package - generate linking rules for mld files and all libraries *)
+      Log.info [ Pp.textf "odoc v3: Installed package %s - generating linking rules for mld and libraries" pkg_name ];
       let* pkg_discovery = Package_discovery.create ~context:ctx in
       let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
 
@@ -3138,64 +3172,92 @@ let gen_rules sctx ~dir rest =
         )
       in
 
-      let rules = Rules.collect_unit (fun () ->
-        if not (List.is_empty truly_installed_libs) then (
-          (* Discover artifacts for mld files *)
-          let* artifacts = discover_installed_pkg_mld_artifacts ctx ~pkg in
-
-          if List.is_empty artifacts then
-            Memo.return ()
-          else (
-            (* Get config for this package to find additional libraries to link *)
-            let config = Package_discovery.config_of_package pkg_discovery pkg in
-
-            (* Resolve additional libraries from config *)
-            let* additional_libs =
-              if List.is_empty config.Odoc_config.deps.libraries then
-                Memo.return []
-              else (
-                let* db = Lib.DB.installed ctx in
-                Memo.parallel_map config.Odoc_config.deps.libraries ~f:(fun lib_name ->
-                  let* resolve = Lib.DB.resolve db (Loc.none, lib_name) in
-                  match Resolve.peek resolve with
-                  | Ok lib -> Memo.return (Some lib)
-                  | Error () ->
-                    Log.info [ Pp.textf "Could not resolve library %s from odoc-config" (Lib_name.to_string lib_name) ];
-                    Memo.return None)
-                >>| List.filter_map ~f:Fun.id
-              )
-            in
-
-            (* Resolve additional packages from config *)
-            let* additional_pkg_libs =
-              if List.is_empty config.Odoc_config.deps.packages then
-                Memo.return []
-              else (
-                Memo.parallel_map config.Odoc_config.deps.packages ~f:(fun pkg_name ->
-                  let libs = Package_discovery.libraries_of_package pkg_discovery pkg_name in
-                  Memo.return libs)
-                >>| List.concat
-              )
-            in
-
-            (* Combine package libs + config libs + config package libs *)
-            let all_libs = truly_installed_libs @ additional_libs @ additional_pkg_libs in
-
-            (* Mld files link against only the libraries in the package + config deps, not transitive deps *)
-            let requires = Resolve.return all_libs in
-
-            (* Link each artifact *)
-            Memo.parallel_iter artifacts ~f:(fun artifact ->
-              (* Pass pkg:None to avoid circular dependency on package's .odoc-all alias *)
-              link_odoc_rules sctx ~pkg:None ~requires artifact
-            )
-          )
-        ) else
-          Memo.return ()
-      ) in
-
       let lib_subdirs = List.map truly_installed_libs ~f:(fun lib ->
         Lib.name lib |> Lib_name.to_string
+      ) in
+
+      let rules = Rules.collect_unit (fun () ->
+        (* Link package-level mld files *)
+        let* () =
+          if not (List.is_empty truly_installed_libs) then (
+            (* Discover artifacts for mld files *)
+            let* artifacts = discover_installed_pkg_mld_artifacts ctx ~pkg in
+
+            if List.is_empty artifacts then
+              Memo.return ()
+            else (
+              (* Get config for this package to find additional libraries to link *)
+              let config = Package_discovery.config_of_package pkg_discovery pkg in
+
+              (* Resolve additional libraries from config *)
+              let* additional_libs =
+                if List.is_empty config.Odoc_config.deps.libraries then
+                  Memo.return []
+                else (
+                  let* db = Lib.DB.installed ctx in
+                  Memo.parallel_map config.Odoc_config.deps.libraries ~f:(fun lib_name ->
+                    let* resolve = Lib.DB.resolve db (Loc.none, lib_name) in
+                    match Resolve.peek resolve with
+                    | Ok lib -> Memo.return (Some lib)
+                    | Error () ->
+                      Log.info [ Pp.textf "Could not resolve library %s from odoc-config" (Lib_name.to_string lib_name) ];
+                      Memo.return None)
+                  >>| List.filter_map ~f:Fun.id
+                )
+              in
+
+              (* Resolve additional packages from config *)
+              let* additional_pkg_libs =
+                if List.is_empty config.Odoc_config.deps.packages then
+                  Memo.return []
+                else (
+                  Memo.parallel_map config.Odoc_config.deps.packages ~f:(fun pkg_name ->
+                    let libs = Package_discovery.libraries_of_package pkg_discovery pkg_name in
+                    Memo.return libs)
+                  >>| List.concat
+                )
+              in
+
+              (* Combine package libs + config libs + config package libs *)
+              let all_libs = truly_installed_libs @ additional_libs @ additional_pkg_libs in
+
+              (* Mld files link against only the libraries in the package + config deps, not transitive deps *)
+              let requires = Resolve.return all_libs in
+
+              (* Link each artifact *)
+              Memo.parallel_iter artifacts ~f:(fun artifact ->
+                (* Pass pkg:None to avoid circular dependency on package's .odoc-all alias *)
+                link_odoc_rules sctx ~pkg:None ~requires artifact
+              )
+            )
+          ) else
+            Memo.return ()
+        in
+
+        (* Generate linking rules for all libraries in the package *)
+        Memo.parallel_iter truly_installed_libs ~f:(fun lib ->
+          let lib_name = Lib.name lib in
+          let* lib_artifacts = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib in
+
+          if List.is_empty lib_artifacts then
+            Memo.return ()
+          else (
+            (* Get library dependencies for linking *)
+            let* requires = Lib.requires lib in
+
+            (* Link each artifact *)
+            let* () =
+              Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
+                link_odoc_rules sctx artifact ~pkg:None ~requires
+              )
+            in
+
+            (* Set up .odoc-all alias for this library *)
+            let odocls_dir = Paths.root ctx ++ "_odocls" ++ pkg_name ++ Lib_name.to_string lib_name in
+            let odocl_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
+            let odocl_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odocls_dir in
+            Rules.Produce.Alias.add_deps odocl_alias (Action_builder.paths odocl_files)
+          ))
       ) in
 
       Memo.return
