@@ -2841,16 +2841,9 @@ let gen_rules sctx ~dir rest =
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
   | [ "_mlds"; pkg_name ] ->
     has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
-  (* Old handler for _odoc/pkg/{package} - no longer used, local packages now use _odoc/{package} *)
-  (* | [ "_odoc"; "pkg"; pkg ] ->
-    with_package pkg ~f:(fun pkg ->
-      let pkg = Package.name pkg in
-      let* (), rules = setup_package_odoc_rules sctx ~pkg in
-      Rules.produce rules) *)
-  | [ "_odoc"; name ] when not (String.equal name "pkg") && not (String.contains name '@') ->
+  | [ "_odoc"; pkg_name ] when not (String.contains pkg_name '@') ->
     (* v3 package directory: _doc/_odoc/{package} - unified handler using discover_package_artifacts *)
     (* Note: libraries without packages (with @) are handled by v2 mechanism below *)
-    let pkg_name = name in
     let ctx = Super_context.context sctx in
 
     (* Use unified artifact discovery - handles both local and installed packages *)
@@ -2903,7 +2896,7 @@ let gen_rules sctx ~dir rest =
          ~build_dir_only_sub_dirs:
            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
          (Memo.return Rules.empty))
-  | [ "_odocls"; pkg_or_lib_name ] when not (String.equal pkg_or_lib_name "pkg") ->
+  | [ "_odocls"; pkg_or_lib_name ] ->
     (* Unified handler for _doc/_odocls/{package_or_lib_unique_name}
        Handles both v3 packages (e.g., "dyn") and v2 libraries (e.g., "lib@scope")
        The discover_package_artifacts function detects which type based on '@' presence *)
