@@ -1098,8 +1098,17 @@ let entry_modules sctx ~pkg =
 let create_artifact_local ctx ~target ~source ~kind =
   let html_base = Paths.html ctx target in
   let odocl_base = Paths.odocl ctx target in
-  let odoc_file = source in  (* For local sources, the source path is the odoc file path *)
-  let basename = Path.Build.basename odoc_file |> Filename.remove_extension in
+
+  (* Compute the odoc file path based on the source *)
+  let source_basename = Path.Build.basename source |> Filename.remove_extension in
+  let odoc_basename = match kind with
+    | Page _ -> "page-" ^ source_basename ^ ".odoc"
+    | Module _ -> source_basename ^ ".odoc"
+  in
+  let odoc_dir = Paths.odocs ctx target in
+  let odoc_file = odoc_dir ++ odoc_basename in
+
+  let basename = Filename.remove_extension odoc_basename in
   let odocl_file = odocl_base ++ (basename ^ ".odocl") in
 
   let (html_file, json_file, parent_id, lib_name, output_dir) = match target with
@@ -1460,7 +1469,6 @@ let check_mlds_no_dupes ~pkg ~mlds =
 
 let odoc_artefacts sctx target =
   let ctx = Super_context.context sctx in
-  let dir = Paths.odocs ctx target in
   match target with
   | Pkg pkg ->
     let+ mlds =
@@ -1471,9 +1479,8 @@ let odoc_artefacts sctx target =
         | Some _ as s -> s)
     in
     Filename.Map.to_list_map mlds ~f:(fun name mld ->
-      let odoc_file = Mld.create mld |> Mld.odoc_file ~doc_dir:dir in
       let kind = Page { name } in
-      create_artifact_local ctx ~target ~source:odoc_file ~kind)
+      create_artifact_local ctx ~target ~source:mld ~kind)
   | Lib lib ->
     let info = Lib.Local.info lib in
     let+ modules = entry_modules_by_lib sctx lib in
@@ -1677,11 +1684,20 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
 let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
   let ctx = Super_context.context sctx in
 
+  Log.info [ Pp.textf "odoc v3: handle_package_artifacts called for %s with path_prefix=%s"
+              pkg_or_lib_name path_prefix ];
+
   (* Use unified artifact discovery *)
   let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name in
 
+  Log.info [ Pp.textf "odoc v3: discovered %d artifacts for %s"
+              (List.length all_artifacts) pkg_or_lib_name ];
+
   (* Group artifacts by library *)
   let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
+
+  Log.info [ Pp.textf "odoc v3: grouped into %d lib groups for %s"
+              (Lib_name.Map.cardinal artifacts_by_lib) pkg_or_lib_name ];
 
   (* Determine which operation to perform based on path_prefix *)
   let rules = match path_prefix with
@@ -1693,8 +1709,53 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           |> Memo.List.map ~f:(fun (lib_name, lib_artifacts) ->
             if List.is_empty lib_artifacts then
               Memo.return (Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name)
-            else
-              compile_library_artifacts sctx ctx ~pkg_name:pkg_or_lib_name ~lib_name ~lib_artifacts)
+            else (
+              (* Separate Page artifacts from Module artifacts *)
+              let page_artifacts, module_artifacts =
+                List.partition_map lib_artifacts ~f:(fun artifact ->
+                  match artifact.kind with
+                  | Page _ -> Either.Left artifact
+                  | Module _ -> Either.Right artifact)
+              in
+              Log.info [ Pp.textf "odoc v3: _odoc handler for lib_name=%s: %d pages, %d modules"
+                          (Lib_name.to_string lib_name)
+                          (List.length page_artifacts)
+                          (List.length module_artifacts) ];
+
+              (* Compile Page artifacts (MLD files) without library dependencies *)
+              let* () =
+                Memo.parallel_iter page_artifacts ~f:(fun artifact ->
+                  (* Pages don't have library dependencies *)
+                  let lib_deps = Action_builder.return () in
+                  compile_artifact sctx ~artifact ~lib_deps)
+              in
+
+              (* Compile Module artifacts with library dependencies *)
+              if List.is_empty module_artifacts then (
+                (* Only pages, no modules - return the output directory *)
+                let lib_odoc_dir = (List.hd page_artifacts).output_dir in
+
+                (* Set up .odoc-all alias for page odoc files *)
+                let odoc_files = List.map page_artifacts ~f:(fun artifact -> Path.build artifact.odoc_file) in
+                let odoc_path_set = Path.Set.of_list odoc_files in
+                let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
+                let* () = Rules.Produce.Alias.add_deps alias (Action_builder.path_set odoc_path_set) in
+                Memo.return lib_odoc_dir
+              ) else (
+                (* Compile modules with full dependency resolution *)
+                let* lib_odoc_dir = compile_library_artifacts sctx ctx ~pkg_name:pkg_or_lib_name ~lib_name ~lib_artifacts:module_artifacts in
+
+                (* Add page odoc files to the alias if we have both *)
+                if not (List.is_empty page_artifacts) then (
+                  let page_odoc_files = List.map page_artifacts ~f:(fun artifact -> Path.build artifact.odoc_file) in
+                  let page_odoc_set = Path.Set.of_list page_odoc_files in
+                  let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
+                  let* () = Rules.Produce.Alias.add_deps alias (Action_builder.path_set page_odoc_set) in
+                  Memo.return lib_odoc_dir
+                ) else
+                  Memo.return lib_odoc_dir
+              )
+            ))
         in
 
         (* Create package-level .odoc-all alias *)
@@ -1727,8 +1788,9 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
             (* Link Page artifacts (MLD files) without library dependencies *)
             let* () =
               Memo.parallel_iter page_artifacts ~f:(fun artifact ->
-                (* Pages don't have library dependencies, use empty requires *)
-                link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires:(Resolve.return [])
+                (* Pages don't have library dependencies or package alias dependencies
+                   to avoid cycles (page-index.odocl would depend on .odoc-all which includes page-index.odoc) *)
+                link_odoc_rules sctx artifact ~pkg:None ~requires:(Resolve.return [])
               )
             in
 
