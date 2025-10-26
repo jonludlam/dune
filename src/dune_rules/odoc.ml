@@ -2848,7 +2848,7 @@ let gen_rules sctx ~dir rest =
     let ctx = Super_context.context sctx in
 
     (* Use unified artifact discovery - handles both v3 packages and v2 libraries *)
-    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name in
+    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name in
 
     Log.info [ Pp.textf "odoc v3: %s - discovered %d artifacts in %d subdirs"
                  pkg_or_lib_name (List.length all_artifacts) (List.length lib_subdirs) ];
