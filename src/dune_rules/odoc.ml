@@ -1668,6 +1668,89 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
   )
 ;;
 
+(* Unified handler for _odoc and _odocls package/library directories.
+   Both handlers follow the same pattern:
+   1. Discover artifacts for the package/library
+   2. Group artifacts by library
+   3. Process each library (either compile for _odoc or link for _odocls)
+   4. Return Build_config with rules *)
+let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
+  let ctx = Super_context.context sctx in
+
+  (* Use unified artifact discovery *)
+  let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name in
+
+  (* Group artifacts by library *)
+  let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
+
+  (* Determine which operation to perform based on path_prefix *)
+  let rules = match path_prefix with
+    | "_odoc" ->
+      (* Compilation: use compile_library_artifacts helper *)
+      Rules.collect_unit (fun () ->
+        let* lib_alias_dirs =
+          Lib_name.Map.to_list artifacts_by_lib
+          |> Memo.List.map ~f:(fun (lib_name, lib_artifacts) ->
+            if List.is_empty lib_artifacts then
+              Memo.return (Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name)
+            else
+              compile_library_artifacts sctx ctx ~pkg_name:pkg_or_lib_name ~lib_name ~lib_artifacts)
+        in
+
+        (* Create package-level .odoc-all alias *)
+        let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
+        let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_dir in
+        let lib_alias_deps =
+          List.map lib_alias_dirs ~f:(fun lib_dir ->
+            Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
+            |> Dune_engine.Dep.alias)
+          |> Dune_engine.Dep.Set.of_list
+        in
+        Rules.Produce.Alias.add_deps pkg_alias (Action_builder.deps lib_alias_deps)
+      )
+    | "_odocls" ->
+      (* Linking: link each artifact and create library-level aliases *)
+      Rules.collect_unit (fun () ->
+        Lib_name.Map.to_list artifacts_by_lib
+        |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
+          if List.is_empty lib_artifacts then
+            Memo.return ()
+          else (
+            (* Get the library object for dependency resolution *)
+            let* lib_db = Scope.DB.public_libs (Context.name ctx) in
+            let* lib_opt = Lib.DB.find lib_db lib_name in
+
+            match lib_opt with
+            | None -> Memo.return ()
+            | Some lib ->
+              (* Get library dependencies for linking *)
+              let* requires = Lib.requires lib in
+
+              (* Link each artifact *)
+              let* () =
+                Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
+                  link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
+                )
+              in
+
+              (* Set up .odoc-all alias for this library's odocl files *)
+              let odocl_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
+              let lib_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name in
+              let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
+              Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files)
+          ))
+      )
+    | _ -> failwith ("Unexpected path_prefix: " ^ path_prefix)
+  in
+
+  Memo.return
+    (Build_config.Gen_rules.make
+       ~build_dir_only_sub_dirs:
+         (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
+            (Subdir_set.of_list lib_subdirs))
+       rules)
+;;
+
 let setup_lib_odocl_rules_def =
   let module Input = struct
     module Super_context = Super_context.As_memo_key
@@ -2842,49 +2925,8 @@ let gen_rules sctx ~dir rest =
   | [ "_mlds"; pkg_name ] ->
     has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
   | [ "_odoc"; pkg_or_lib_name ] ->
-    (* Unified handler for _doc/_odoc/{package_or_lib_unique_name}
-       Handles both v3 packages (e.g., "dyn") and v2 libraries (e.g., "lib@scope")
-       The discover_package_artifacts function detects which type based on '@' presence *)
-    let ctx = Super_context.context sctx in
-
-    (* Use unified artifact discovery - handles both v3 packages and v2 libraries *)
-    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name in
-
-    Log.info [ Pp.textf "odoc v3: %s - discovered %d artifacts in %d subdirs"
-                 pkg_or_lib_name (List.length all_artifacts) (List.length lib_subdirs) ];
-
-    (* Group artifacts by library to compile them with appropriate dependencies *)
-    let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
-
-    let rules = Rules.collect_unit (fun () ->
-      (* Compile artifacts for each library using helper function *)
-      let* lib_alias_dirs =
-        Lib_name.Map.to_list artifacts_by_lib
-        |> Memo.List.map ~f:(fun (lib_name, lib_artifacts) ->
-          if List.is_empty lib_artifacts then
-            Memo.return (Paths.root ctx ++ "_odoc" ++ pkg_or_lib_name ++ Lib_name.to_string lib_name)
-          else
-            compile_library_artifacts sctx ctx ~pkg_name:pkg_or_lib_name ~lib_name ~lib_artifacts)
-      in
-
-      (* Create package-level .odoc-all alias that depends on all library aliases *)
-      let pkg_odoc_dir = Paths.root ctx ++ "_odoc" ++ pkg_or_lib_name in
-      let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_odoc_dir in
-      let lib_alias_deps =
-        List.map lib_alias_dirs ~f:(fun lib_dir ->
-          Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
-          |> Dune_engine.Dep.alias)
-        |> Dune_engine.Dep.Set.of_list
-      in
-      Rules.Produce.Alias.add_deps pkg_alias (Action_builder.deps lib_alias_deps)
-    ) in
-
-    Memo.return
-      (Build_config.Gen_rules.make
-         ~build_dir_only_sub_dirs:
-           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
-              (Subdir_set.of_list lib_subdirs))
-         rules)
+    (* Compilation: use unified handler *)
+    handle_package_artifacts sctx ~dir ~path_prefix:"_odoc" pkg_or_lib_name
   | [ "_odoc"; pkg_name; lib_name ] ->
     (* Library directory: _doc/_odoc/{package}/{library} *)
     (* Redirect to parent - the package level handler will generate rules for all libraries *)
@@ -2898,62 +2940,8 @@ let gen_rules sctx ~dir rest =
            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
          (Memo.return Rules.empty))
   | [ "_odocls"; pkg_or_lib_name ] ->
-    (* Unified handler for _doc/_odocls/{package_or_lib_unique_name}
-       Handles both v3 packages (e.g., "dyn") and v2 libraries (e.g., "lib@scope")
-       The discover_package_artifacts function detects which type based on '@' presence *)
-    Log.info [ Pp.textf "odoc v3: Handling odocls dir for %s (unified)" pkg_or_lib_name ];
-    let ctx = Super_context.context sctx in
-
-    (* Use unified artifact discovery - handles both v3 packages and v2 libraries *)
-    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name in
-
-    Log.info [ Pp.textf "odoc v3: %s - discovered %d artifacts for linking"
-                 pkg_or_lib_name (List.length all_artifacts) ];
-
-    (* Group artifacts by library *)
-    let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
-
-    let rules = Rules.collect_unit (fun () ->
-      (* Link artifacts for each library *)
-      Lib_name.Map.to_list artifacts_by_lib
-      |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
-        if List.is_empty lib_artifacts then
-          Memo.return ()
-        else (
-          (* Get the library object for dependency resolution *)
-          let* lib_db = Scope.DB.public_libs (Context.name ctx) in
-          let* lib_opt = Lib.DB.find lib_db lib_name in
-
-          match lib_opt with
-          | None ->
-            Log.info [ Pp.textf "odoc v3: Library %s not found for linking, skipping" (Lib_name.to_string lib_name) ];
-            Memo.return ()
-          | Some lib ->
-            (* Get library dependencies for linking *)
-            let* requires = Lib.requires lib in
-
-            (* Link each artifact - use the pkg from the artifact itself *)
-            let* () =
-              Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
-                link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
-              )
-            in
-
-            (* Set up .odoc-all alias for this library's odocl files *)
-            let odocl_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
-            (* odocl files go in _odocls/{pkg_or_lib_name}/{lib}/ directory *)
-            let odocls_lib_dir = Paths.root ctx ++ "_odocls" ++ pkg_or_lib_name ++ Lib_name.to_string lib_name in
-            let odocl_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odocls_lib_dir in
-            Rules.Produce.Alias.add_deps odocl_alias (Action_builder.paths odocl_files)
-        ))
-    ) in
-
-    Memo.return
-      (Build_config.Gen_rules.make
-         ~build_dir_only_sub_dirs:
-           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir
-              (Subdir_set.of_list lib_subdirs))
-         rules)
+    (* Linking: use unified handler *)
+    handle_package_artifacts sctx ~dir ~path_prefix:"_odocls" pkg_or_lib_name
   | [ "_odocls"; pkg_name; lib_name ] ->
     (* Library directory: _doc/_odocls/{package}/{library} *)
     (* Redirect to parent - the package level handler will generate rules for all libraries *)
