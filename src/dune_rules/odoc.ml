@@ -2967,8 +2967,8 @@ let gen_rules sctx ~dir rest =
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
   | [ "_odocls"; lib_unique_name_or_pkg ] ->
     has_rules (fun () ->
-      (* TODO we can be a better with the error handling in the case where
-          lib_unique_name_or_pkg is neither a valid pkg or lnu *)
+      (* v2 library handler: should only handle libraries with '@' in name *)
+      (* v3 packages without '@' are handled by the clause at line 2906 *)
        let ctx = Super_context.context sctx in
        let* lib, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name_or_pkg in
        (* jeremiedimino: why isn't [None] some kind of error here? *)
@@ -2976,26 +2976,18 @@ let gen_rules sctx ~dir rest =
          let+ lib = Lib.DB.find lib_db lib in
          Option.bind ~f:Lib.Local.of_lib lib
        in
-       let+ () =
-         match lib with
-         | None -> Memo.return ()
-         | Some lib ->
-           (match Lib_info.package (Lib.Local.info lib) with
-            | None ->
-              let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false in
-              setup_lib_odocl_rules sctx lib ~requires
-            | Some pkg -> setup_pkg_odocl_rules sctx ~pkg)
-       and+ () =
-         let* packages = Dune_load.packages () in
-         match
-           Package.Name.Map.find packages (Package.Name.of_string lib_unique_name_or_pkg)
-         with
-         | None -> Memo.return ()
-         | Some pkg ->
-           let name = Package.name pkg in
-           setup_pkg_odocl_rules sctx ~pkg:name
-       in
-       ())
+       (* Only handle v2 libraries here; v3 packages are handled by the unified handler above *)
+       match lib with
+       | None -> Memo.return ()
+       | Some lib ->
+         (match Lib_info.package (Lib.Local.info lib) with
+          | None ->
+            (* v2 library without package *)
+            let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false in
+            setup_lib_odocl_rules sctx lib ~requires
+          | Some pkg ->
+            (* Library with package - should be using v3 handler, but fallback to old behavior *)
+            setup_pkg_odocl_rules sctx ~pkg))
   | [ "_odoc"; lib_unique_name ] when String.contains lib_unique_name '@' ->
     (* v2 library directory: _doc/_odoc/{lib_unique_name} for libraries without packages *)
     has_rules (fun () -> handle_odoc_v2_lib_dir sctx ~lib_unique_name)
