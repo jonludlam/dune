@@ -2778,92 +2778,9 @@ let handle_html_dir sctx ~lib_unique_name_or_pkg =
   )
 ;;
 
-let handle_odoc_v2_lib_dir sctx ~lib_unique_name =
-  (* v2 library directory: _doc/_odoc/{lib_unique_name} for libraries without packages *)
-  Log.info [ Pp.textf "odoc v3: Handling v2 library dir for lib=%s (using unified artifact discovery)" lib_unique_name ];
-  let ctx = Super_context.context sctx in
-
-  (* Parse the lib_unique_name to find the library *)
-  let* lib_name, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name in
-  let* lib_opt =
-    let+ lib = Lib.DB.find lib_db lib_name in
-    Option.bind ~f:Lib.Local.of_lib lib
-  in
-
-  match lib_opt with
-  | None ->
-    Log.info [ Pp.textf "odoc v3: Library %s not found or not local" lib_unique_name ];
-    Memo.return ()
-  | Some local_lib ->
-    let lib_t = Lib.Local.to_lib local_lib in
-    let info = Lib.Local.info local_lib in
-
-    (* Verify this library has no package *)
-    (match Lib_info.package info with
-     | Some _ ->
-       Log.info [ Pp.textf "odoc v3: Warning: Library %s has a package but using v2 path" lib_unique_name ];
-       Memo.return ()
-     | None ->
-       (* Use a dummy package name for v2 libraries - this will be ignored by discover_local_lib_artifacts *)
-       let dummy_pkg = Package.Name.of_string lib_unique_name in
-
-       (* Use unified artifact discovery - it will automatically detect v2 and use create_artifact_v2_module *)
-       let* artifacts = discover_local_lib_artifacts sctx ctx ~pkg:dummy_pkg ~lib_name ~local_lib in
-
-       Log.info [ Pp.textf "odoc v3: Found %d artifacts for library %s" (List.length artifacts) lib_unique_name ];
-
-       (* Set up library dependencies *)
-       let* pkg_discovery = Package_discovery.create ~context:ctx in
-       let* stdlib_opt =
-         if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
-         then Memo.return None
-         else
-           let* public_libs = Scope.DB.public_libs (Context.name ctx) in
-           Lib.DB.find public_libs (Lib_name.of_string "stdlib")
-       in
-
-       let lib_deps =
-         let open Action_builder.O in
-         let* requires = Resolve.Memo.read (Lib.requires lib_t) in
-         let requires =
-           match stdlib_opt with
-           | Some stdlib_lib -> stdlib_lib :: requires
-           | None -> requires
-         in
-         let dep_set =
-           List.fold_left requires ~init:Dune_engine.Dep.Set.empty ~f:(fun acc dep_lib ->
-             let dep_lib_name = Lib.name dep_lib in
-             match Lib.Local.of_lib dep_lib with
-             | Some local_dep ->
-               let dep_dir = Paths.odocs ctx (Lib local_dep) in
-               let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
-               Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
-             | None ->
-               let dep_pkg_opt = Package_discovery.package_of_library pkg_discovery dep_lib in
-               (match dep_pkg_opt with
-                | Some dep_pkg ->
-                  let dep_pkg_name = Package.Name.to_string dep_pkg in
-                  let dep_lib_name_str = Lib_name.to_string dep_lib_name in
-                  let dep_dir = Paths.root ctx ++ "_odoc" ++ dep_pkg_name ++ dep_lib_name_str in
-                  let dep_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:dep_dir in
-                  Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias dep_alias)
-                | None -> acc))
-         in
-         Action_builder.deps dep_set
-       in
-
-       (* Compile each artifact using unified compilation function *)
-       let* () =
-         Memo.parallel_iter artifacts ~f:(fun artifact ->
-           compile_artifact sctx ~artifact ~lib_deps)
-       in
-
-       (* Set up .odoc-all alias for this library *)
-       let odoc_dir = Paths.root ctx ++ "_odoc" ++ lib_unique_name in
-       let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odoc_dir in
-       let odoc_files = List.map artifacts ~f:(fun artifact -> Path.build artifact.odoc_file) in
-       Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odoc_files))
-;;
+(* NOTE: handle_odoc_v2_lib_dir was deleted - it's no longer needed.
+   The unified _odoc handler now handles both v3 packages and v2 libraries
+   through discover_package_artifacts, which internally detects '@' in the name. *)
 
 (* NOTE: handle_odoc_lib_dir was deleted because it's never called.
    The pattern [ "_odoc"; pkg_name; lib_name ] just redirects to parent,
