@@ -1716,28 +1716,52 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           if List.is_empty lib_artifacts then
             Memo.return ()
           else (
-            (* Get the library object for dependency resolution *)
-            let* lib_db = Scope.DB.public_libs (Context.name ctx) in
-            let* lib_opt = Lib.DB.find lib_db lib_name in
+            (* Separate Page artifacts from Module artifacts *)
+            let page_artifacts, module_artifacts =
+              List.partition_map lib_artifacts ~f:(fun artifact ->
+                match artifact.kind with
+                | Page _ -> Either.Left artifact
+                | Module _ -> Either.Right artifact)
+            in
 
-            match lib_opt with
-            | None -> Memo.return ()
-            | Some lib ->
-              (* Get library dependencies for linking *)
-              let* requires = Lib.requires lib in
+            (* Link Page artifacts (MLD files) without library dependencies *)
+            let* () =
+              Memo.parallel_iter page_artifacts ~f:(fun artifact ->
+                (* Pages don't have library dependencies, use empty requires *)
+                link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires:(Resolve.return [])
+              )
+            in
 
-              (* Link each artifact *)
-              let* () =
-                Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
-                  link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
-                )
-              in
+            (* Link Module artifacts with library dependencies *)
+            let* () =
+              if List.is_empty module_artifacts then
+                Memo.return ()
+              else (
+                (* Get the library object for dependency resolution *)
+                let* lib_db = Scope.DB.public_libs (Context.name ctx) in
+                let* lib_opt = Lib.DB.find lib_db lib_name in
 
-              (* Set up .odoc-all alias for this library's odocl files *)
-              let odocl_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
-              let lib_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name in
-              let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
-              Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files)
+                match lib_opt with
+                | None ->
+                  Log.info [ Pp.textf "odoc v3: Library %s not found in lib_db, skipping module artifacts"
+                              (Lib_name.to_string lib_name) ];
+                  Memo.return ()
+                | Some lib ->
+                  (* Get library dependencies for linking *)
+                  let* requires = Lib.requires lib in
+
+                  (* Link each module artifact *)
+                  Memo.parallel_iter module_artifacts ~f:(fun artifact ->
+                    link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
+                  )
+              )
+            in
+
+            (* Set up .odoc-all alias for this library's odocl files (both pages and modules) *)
+            let odocl_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
+            let lib_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name in
+            let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
+            Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files)
           ))
       )
     | _ -> failwith ("Unexpected path_prefix: " ^ path_prefix)
