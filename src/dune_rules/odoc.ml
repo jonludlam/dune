@@ -2903,17 +2903,18 @@ let gen_rules sctx ~dir rest =
          ~build_dir_only_sub_dirs:
            (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
          (Memo.return Rules.empty))
-  | [ "_odocls"; pkg_name ] when not (String.equal pkg_name "pkg") && not (String.contains pkg_name '@') ->
-    (* v3 package directory: _doc/_odocls/{package} - unified handler using discover_package_artifacts *)
-    Log.info [ Pp.textf "odoc v3: Handling odocls package dir for pkg=%s (unified)" pkg_name ];
-    let pkg = Package.Name.of_string pkg_name in
+  | [ "_odocls"; pkg_or_lib_name ] when not (String.equal pkg_or_lib_name "pkg") ->
+    (* Unified handler for _doc/_odocls/{package_or_lib_unique_name}
+       Handles both v3 packages (e.g., "dyn") and v2 libraries (e.g., "lib@scope")
+       The discover_package_artifacts function detects which type based on '@' presence *)
+    Log.info [ Pp.textf "odoc v3: Handling odocls dir for %s (unified)" pkg_or_lib_name ];
     let ctx = Super_context.context sctx in
 
-    (* Use unified artifact discovery - handles both local and installed packages *)
-    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_name in
+    (* Use unified artifact discovery - handles both v3 packages and v2 libraries *)
+    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name in
 
-    Log.info [ Pp.textf "odoc v3: Package %s - discovered %d artifacts for linking"
-                 pkg_name (List.length all_artifacts) ];
+    Log.info [ Pp.textf "odoc v3: %s - discovered %d artifacts for linking"
+                 pkg_or_lib_name (List.length all_artifacts) ];
 
     (* Group artifacts by library *)
     let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
@@ -2936,19 +2937,18 @@ let gen_rules sctx ~dir rest =
           | Some lib ->
             (* Get library dependencies for linking *)
             let* requires = Lib.requires lib in
-            let pkg_opt = Some pkg in
 
-            (* Link each artifact *)
+            (* Link each artifact - use the pkg from the artifact itself *)
             let* () =
               Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
-                link_odoc_rules sctx artifact ~pkg:pkg_opt ~requires
+                link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
               )
             in
 
             (* Set up .odoc-all alias for this library's odocl files *)
             let odocl_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
-            (* odocl files go in _odocls/{pkg}/{lib}/ directory *)
-            let odocls_lib_dir = Paths.root ctx ++ "_odocls" ++ pkg_name ++ Lib_name.to_string lib_name in
+            (* odocl files go in _odocls/{pkg_or_lib_name}/{lib}/ directory *)
+            let odocls_lib_dir = Paths.root ctx ++ "_odocls" ++ pkg_or_lib_name ++ Lib_name.to_string lib_name in
             let odocl_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odocls_lib_dir in
             Rules.Produce.Alias.add_deps odocl_alias (Action_builder.paths odocl_files)
         ))
@@ -2965,29 +2965,6 @@ let gen_rules sctx ~dir rest =
     (* Redirect to parent - the package level handler will generate rules for all libraries *)
     Log.info [ Pp.textf "odoc v3: Library directory handler for pkg=%s lib=%s - redirecting to parent" pkg_name lib_name ];
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-  | [ "_odocls"; lib_unique_name_or_pkg ] ->
-    has_rules (fun () ->
-      (* v2 library handler: should only handle libraries with '@' in name *)
-      (* v3 packages without '@' are handled by the clause at line 2906 *)
-       let ctx = Super_context.context sctx in
-       let* lib, lib_db = Scope_key.of_string (Context.name ctx) lib_unique_name_or_pkg in
-       (* jeremiedimino: why isn't [None] some kind of error here? *)
-       let* lib =
-         let+ lib = Lib.DB.find lib_db lib in
-         Option.bind ~f:Lib.Local.of_lib lib
-       in
-       (* Only handle v2 libraries here; v3 packages are handled by the unified handler above *)
-       match lib with
-       | None -> Memo.return ()
-       | Some lib ->
-         (match Lib_info.package (Lib.Local.info lib) with
-          | None ->
-            (* v2 library without package *)
-            let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false in
-            setup_lib_odocl_rules sctx lib ~requires
-          | Some pkg ->
-            (* Library with package - should be using v3 handler, but fallback to old behavior *)
-            setup_pkg_odocl_rules sctx ~pkg))
   | [ "_odoc"; lib_unique_name ] when String.contains lib_unique_name '@' ->
     (* v2 library directory: _doc/_odoc/{lib_unique_name} for libraries without packages *)
     has_rules (fun () -> handle_odoc_v2_lib_dir sctx ~lib_unique_name)
