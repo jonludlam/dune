@@ -2841,16 +2841,17 @@ let gen_rules sctx ~dir rest =
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
   | [ "_mlds"; pkg_name ] ->
     has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
-  | [ "_odoc"; pkg_name ] when not (String.contains pkg_name '@') ->
-    (* v3 package directory: _doc/_odoc/{package} - unified handler using discover_package_artifacts *)
-    (* Note: libraries without packages (with @) are handled by v2 mechanism below *)
+  | [ "_odoc"; pkg_or_lib_name ] ->
+    (* Unified handler for _doc/_odoc/{package_or_lib_unique_name}
+       Handles both v3 packages (e.g., "dyn") and v2 libraries (e.g., "lib@scope")
+       The discover_package_artifacts function detects which type based on '@' presence *)
     let ctx = Super_context.context sctx in
 
-    (* Use unified artifact discovery - handles both local and installed packages *)
-    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_name in
+    (* Use unified artifact discovery - handles both v3 packages and v2 libraries *)
+    let* all_artifacts, lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name in
 
-    Log.info [ Pp.textf "odoc v3: Package %s - discovered %d artifacts in %d subdirs"
-                 pkg_name (List.length all_artifacts) (List.length lib_subdirs) ];
+    Log.info [ Pp.textf "odoc v3: %s - discovered %d artifacts in %d subdirs"
+                 pkg_or_lib_name (List.length all_artifacts) (List.length lib_subdirs) ];
 
     (* Group artifacts by library to compile them with appropriate dependencies *)
     let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
@@ -2861,13 +2862,13 @@ let gen_rules sctx ~dir rest =
         Lib_name.Map.to_list artifacts_by_lib
         |> Memo.List.map ~f:(fun (lib_name, lib_artifacts) ->
           if List.is_empty lib_artifacts then
-            Memo.return (Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name)
+            Memo.return (Paths.root ctx ++ "_odoc" ++ pkg_or_lib_name ++ Lib_name.to_string lib_name)
           else
-            compile_library_artifacts sctx ctx ~pkg_name ~lib_name ~lib_artifacts)
+            compile_library_artifacts sctx ctx ~pkg_name:pkg_or_lib_name ~lib_name ~lib_artifacts)
       in
 
       (* Create package-level .odoc-all alias that depends on all library aliases *)
-      let pkg_odoc_dir = Paths.root ctx ++ "_odoc" ++ pkg_name in
+      let pkg_odoc_dir = Paths.root ctx ++ "_odoc" ++ pkg_or_lib_name in
       let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_odoc_dir in
       let lib_alias_deps =
         List.map lib_alias_dirs ~f:(fun lib_dir ->
@@ -2958,9 +2959,6 @@ let gen_rules sctx ~dir rest =
     (* Redirect to parent - the package level handler will generate rules for all libraries *)
     Log.info [ Pp.textf "odoc v3: Library directory handler for pkg=%s lib=%s - redirecting to parent" pkg_name lib_name ];
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-  | [ "_odoc"; lib_unique_name ] when String.contains lib_unique_name '@' ->
-    (* v2 library directory: _doc/_odoc/{lib_unique_name} for libraries without packages *)
-    has_rules (fun () -> handle_odoc_v2_lib_dir sctx ~lib_unique_name)
   | [ "_html"; lib_unique_name_or_pkg ] ->
     has_rules (fun () -> handle_html_dir sctx ~lib_unique_name_or_pkg)
   | [ "classify"; pkg_name; lib_name ] ->
