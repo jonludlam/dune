@@ -1155,7 +1155,7 @@ let create_artifact_local ctx ~target ~source ~kind =
 ;;
 
 (* Create an artifact for an installed library module *)
-let create_artifact_installed ctx ~pkg ~lib_name ~module_name ~archive ~visible =
+let create_artifact_installed ctx ~pkg ~lib_name ~module_name ~archive ~visible ~src_path =
   let pkg_name_str = Package.Name.to_string pkg in
   let lib_name_str = Lib_name.to_string lib_name in
   let module_name_lower = String.uncapitalize_ascii module_name in
@@ -1182,8 +1182,10 @@ let create_artifact_installed ctx ~pkg ~lib_name ~module_name ~archive ~visible 
 
   let output_dir = Paths.root ctx ++ "_odoc" ++ pkg_name_str ++ lib_name_str in
 
+  (* src_path is provided by the caller (from Package_discovery.module_source_file) *)
+
   { kind
-  ; source = Installed_source { src_path = Path.external_ (Path.External.of_string "/dev/null"); module_name; archive }
+  ; source = Installed_source { src_path; module_name; archive }
   ; odoc_file
   ; odocl_file
   ; html_file
@@ -1306,10 +1308,21 @@ let discover_installed_lib_artifacts ctx ~pkg ~lib_name ~lib : artifact list Mem
       | [] -> "unknown"
       | archive :: _ -> archive
     in
-    let artifacts = List.map module_names ~f:(fun module_name ->
-      create_artifact_installed ctx ~pkg ~lib_name ~module_name
-        ~archive:default_archive
-        ~visible:true
+
+    (* Get Package_discovery to find source files *)
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+
+    let artifacts = List.filter_map module_names ~f:(fun module_name ->
+      match Package_discovery.module_source_file pkg_discovery ~lib ~module_name with
+      | None ->
+          Log.info [ Pp.textf "odoc v3: Could not find source file for module %s in library %s/%s"
+                       module_name pkg_name_str lib_name_str ];
+          None
+      | Some src_path ->
+          Some (create_artifact_installed ctx ~pkg ~lib_name ~module_name
+                  ~archive:default_archive
+                  ~visible:true
+                  ~src_path)
     ) in
 
     Memo.return artifacts
@@ -1814,7 +1827,9 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
 
                   (* Link each module artifact *)
                   Memo.parallel_iter module_artifacts ~f:(fun artifact ->
-                    link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
+                    (* Modules should not depend on the package-level .odoc-all alias
+                       to avoid cycles. They only need library dependencies. *)
+                    link_odoc_rules sctx artifact ~pkg:None ~requires
                   )
               )
             in

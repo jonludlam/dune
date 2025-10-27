@@ -10,6 +10,8 @@ type t = {
   libs_of_package : Lib.t list Package.Name.Map.t;
   mlds_of_package : Path.t list Package.Name.Map.t;
   config_of_package : Odoc_config.t Package.Name.Map.t;
+  installed_files : string list Package.Name.Map.t; (* Files from .changes files *)
+  opam_prefix : Path.t option; (* Root of opam installation *)
 }
 
 let empty = {
@@ -17,6 +19,8 @@ let empty = {
   libs_of_package = Package.Name.Map.empty;
   mlds_of_package = Package.Name.Map.empty;
   config_of_package = Package.Name.Map.empty;
+  installed_files = Package.Name.Map.empty;
+  opam_prefix = None;
 }
 
 (* Parse an opam changes file using the opam-format library *)
@@ -138,6 +142,8 @@ let build_mappings_from_changes_data ~file_to_package_map libs =
             | Some libs -> Some (lib :: libs));
         mlds_of_package = acc.mlds_of_package;
         config_of_package = acc.config_of_package;
+        installed_files = acc.installed_files;
+        opam_prefix = acc.opam_prefix;
       })
 
 let build_file_to_package_map packages_with_files ~opam_prefix =
@@ -146,6 +152,11 @@ let build_file_to_package_map packages_with_files ~opam_prefix =
       List.fold_left files ~init:acc ~f:(fun acc file_str ->
         let file_path = Path.relative opam_prefix file_str in
         Path.Map.set acc file_path pkg_name))
+
+let build_installed_files_map packages_with_files =
+  List.fold_left packages_with_files ~init:Package.Name.Map.empty
+    ~f:(fun acc (pkg_name, files) ->
+      Package.Name.Map.set acc pkg_name files)
 
 let build_mlds_map packages_with_files ~opam_prefix =
   (* Extract mld files from the changes data
@@ -218,6 +229,7 @@ let create_impl context =
     let file_to_package = build_file_to_package_map packages_with_files ~opam_prefix:prefix in
     let mlds_map = build_mlds_map packages_with_files ~opam_prefix:prefix in
     let config_map = build_config_map packages_with_files ~opam_prefix:prefix in
+    let installed_files_map = build_installed_files_map packages_with_files in
 
     (* Debug: Log discovered mld files *)
     Package.Name.Map.iteri mlds_map ~f:(fun pkg mlds ->
@@ -240,7 +252,11 @@ let create_impl context =
 
     let lib_mappings = build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs in
 
-    Memo.return { lib_mappings with mlds_of_package = mlds_map; config_of_package = config_map }
+    Memo.return { lib_mappings with
+                  mlds_of_package = mlds_map;
+                  config_of_package = config_map;
+                  installed_files = installed_files_map;
+                  opam_prefix = Some prefix }
 
 let create =
   let memo = Memo.create "package-discovery" ~input:(module Context) create_impl in
@@ -255,6 +271,64 @@ let libraries_of_package t pkg =
 
 let mlds_of_package t pkg =
   Package.Name.Map.find t.mlds_of_package pkg |> Option.value ~default:[]
+
+let module_source_file t ~lib ~module_name =
+  (* For installed libraries, query the installed files from .changes data *)
+  match t.opam_prefix with
+  | None -> None
+  | Some prefix ->
+    let info = Lib.info lib in
+    let src_dir = Lib_info.src_dir info in
+    let module_name_lower = String.uncapitalize_ascii module_name in
+
+    (* Get the package this library belongs to *)
+    let lib_name = Lib.name lib in
+    match Lib_name.Map.find t.package_of_lib lib_name with
+    | None -> None
+    | Some pkg ->
+      (* Get installed files for this package *)
+      match Package.Name.Map.find t.installed_files pkg with
+      | None -> None
+      | Some files ->
+        (* Build the relative path from opam prefix to the source directory *)
+        let src_dir_str = Path.to_string src_dir in
+        let prefix_str = Path.to_string prefix in
+
+        (* Remove the prefix to get the relative path *)
+        let rel_dir =
+          if String.is_prefix src_dir_str ~prefix:prefix_str then
+            let prefix_len = String.length prefix_str in
+            let src_len = String.length src_dir_str in
+            if prefix_len < src_len && src_dir_str.[prefix_len] = '/' then
+              String.sub src_dir_str ~pos:(prefix_len + 1) ~len:(src_len - prefix_len - 1)
+            else if prefix_len = src_len then
+              ""
+            else
+              src_dir_str
+          else
+            src_dir_str
+        in
+
+        (* Check if .cmti exists, otherwise use .cmt *)
+        let cmti_rel =
+          if String.is_empty rel_dir then
+            module_name_lower ^ ".cmti"
+          else
+            rel_dir ^ "/" ^ module_name_lower ^ ".cmti"
+        in
+        let cmt_rel =
+          if String.is_empty rel_dir then
+            module_name_lower ^ ".cmt"
+          else
+            rel_dir ^ "/" ^ module_name_lower ^ ".cmt"
+        in
+
+        if List.mem files cmti_rel ~equal:String.equal then
+          Some (Path.relative src_dir (module_name_lower ^ ".cmti"))
+        else if List.mem files cmt_rel ~equal:String.equal then
+          Some (Path.relative src_dir (module_name_lower ^ ".cmt"))
+        else
+          None
 
 let config_of_package t pkg =
   Package.Name.Map.find t.config_of_package pkg |> Option.value ~default:Odoc_config.empty
