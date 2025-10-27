@@ -261,7 +261,7 @@ end = struct
        List.fold_left libs ~init ~f:(fun acc (lib : Lib.t) ->
          match Lib.Local.of_lib lib with
          | None ->
-           (* Installed library - add dependency on its odocl files via .odoc-all alias *)
+           (* Installed library - add dependency on its .odoc files via .odoc-all alias *)
            (* Use Package_discovery to get the correct opam package name *)
            let lib_name = Lib.name lib in
            let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
@@ -269,12 +269,12 @@ end = struct
             | Some lib_pkg ->
               let dir =
                 Paths.root ctx
-                ++ "_odocls"
+                ++ "_odoc"
                 ++ Package.Name.to_string lib_pkg
                 ++ Lib_name.to_string lib_name
               in
               let alias_path = alias ~dir in
-              Log.info [ Pp.textf "Dep.deps: Adding dependency on installed library %s (opam package=%s) odocls alias at %s"
+              Log.info [ Pp.textf "Dep.deps: Adding dependency on installed library %s (opam package=%s) odoc alias at %s"
                            (Lib_name.to_string lib_name)
                            (Package.Name.to_string lib_pkg)
                            (Path.Build.to_string dir) ];
@@ -1828,13 +1828,14 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                   (* Link each module artifact *)
                   Memo.parallel_iter module_artifacts ~f:(fun artifact ->
                     (* Modules should not depend on the package-level .odoc-all alias
-                       to avoid cycles. They only need library dependencies. *)
+                       to avoid cycles. They only need library dependencies via requires. *)
                     link_odoc_rules sctx artifact ~pkg:None ~requires
                   )
               )
             in
 
             (* Set up .odoc-all alias for this library's odocl files (both pages and modules) *)
+            (* This is in the _odocls directory structure, completely separate from the _odoc aliases *)
             let odocl_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
             let lib_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name in
             let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
