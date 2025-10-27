@@ -853,11 +853,8 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
 let compile_artifact sctx ~artifact ~lib_deps =
   let ctx = Super_context.context sctx in
 
-  (* Determine the compilation directory based on the target *)
-  let compile_dir = match artifact.target with
-    | Lib _ -> artifact.output_dir  (* Library artifacts compile in their own directory *)
-    | Pkg pkg -> Paths.odocs ctx (Pkg pkg)  (* Package artifacts compile in package directory *)
-  in
+  (* Run odoc compile from the build directory (_build/default) *)
+  let compile_dir = Context.build_dir ctx in
 
   let run_odoc =
     let open Action_builder.With_targets.O in
@@ -872,7 +869,7 @@ let compile_artifact sctx ~artifact ~lib_deps =
         [ Command.Args.A "-I"
         ; Command.Args.Path (Path.build artifact.output_dir)
         ; Command.Args.A "--output-dir"
-        ; Command.Args.Path (Path.build (odoc_root_v3 ctx))
+        ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
         ; Command.Args.A artifact.parent_id
         ; (match artifact.source with
@@ -1496,31 +1493,19 @@ let odoc_artefacts sctx target =
       create_artifact_local ctx ~target ~source:mld ~kind)
   | Lib lib ->
     let info = Lib.Local.info lib in
-    let+ modules = entry_modules_by_lib sctx lib in
-    (* Determine the package this library belongs to *)
-    let pkg = Lib_info.package info in
+    let obj_dir = Lib_info.obj_dir info in
+    (* Get ALL modules, not just entry modules *)
+    let+ all_modules = Dir_contents.modules_of_local_lib sctx lib in
+    let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
 
     List.map modules ~f:(fun m ->
       let visible = Module.visibility m = Visibility.Public in
       let module_name = Module.name m in
       let kind = Module { visible; module_name } in
 
-      match pkg with
-      | Some pkg ->
-        (* Use v3 paths for libraries with packages *)
-        let lib_t = Lib.Local.to_lib lib in
-        let lib_name = Lib.name lib_t in
-        let odoc_file = odoc_file_v3 ctx pkg lib_name m in
-        create_artifact_local ctx ~target ~source:odoc_file ~kind
-      | None ->
-        (* Fallback to v2 paths for libraries without packages *)
-        (* Use v2 path pattern: _doc/_odoc/{lib_unique_name} *)
-        let lib_t = Lib.Local.to_lib lib in
-        let lib_unique = lib_unique_name lib_t in
-        let odoc_dir = Paths.root ctx ++ "_odoc" ++ lib_unique in
-        let basename = Module.obj_name m |> Module_name.Unique.artifact_filename ~ext:".odoc" in
-        let odoc_file = Path.Build.relative odoc_dir basename in
-        create_artifact_local ctx ~target ~source:odoc_file ~kind)
+      (* Get the source file (.cmti or .cmt) for this module *)
+      let source = Obj_dir.Module.cmti_file obj_dir m ~cm_kind:(Ocaml Cmi) in
+      create_artifact_local ctx ~target ~source ~kind)
 ;;
 
 (* Helper to group artifacts by library name *)
