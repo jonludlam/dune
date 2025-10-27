@@ -1331,14 +1331,16 @@ let create_artifact_local_module ctx ~pkg ~lib_name ~local_lib ~module_ =
   let pkg_name_str = Package.Name.to_string pkg in
   let lib_name_str = Lib_name.to_string lib_name in
   let module_name = Module.name module_ |> Module_name.to_string in
-  let module_name_lower = String.uncapitalize_ascii module_name in
+
+  (* Use obj_name for the file basename to match what odoc creates *)
+  let obj_basename = Module.obj_name module_ |> Module_name.Unique.artifact_filename ~ext:"" in
 
   (* Paths for local libraries follow the same v3 structure as installed *)
   let odoc_file =
-    Paths.root ctx ++ "_odoc" ++ pkg_name_str ++ lib_name_str ++ (module_name_lower ^ ".odoc")
+    Paths.root ctx ++ "_odoc" ++ pkg_name_str ++ lib_name_str ++ (obj_basename ^ ".odoc")
   in
   let odocl_file =
-    Paths.root ctx ++ "_odocls" ++ pkg_name_str ++ lib_name_str ++ (module_name_lower ^ ".odocl")
+    Paths.root ctx ++ "_odocls" ++ pkg_name_str ++ lib_name_str ++ (obj_basename ^ ".odocl")
   in
 
   let html_base = Paths.html_root ctx ++ pkg_name_str ++ lib_name_str in

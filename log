@@ -1,0 +1,1588 @@
+File "_doc/_html/dune-action-plugin/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-action-plugin/dune-action-plugin/dune_action_plugin__Sexpable_intf.odocl
+File "_doc/_html/dune-build-info/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-build-info/dune-build-info/build_info__Build_info_data.odocl
+File "_doc/_html/dune-configurator/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-configurator/dune-configurator/configurator__V1.odocl
+File "_doc/_html/dune-glob/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-glob/dune-glob/dune_glob__Lexer.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Where.odocl
+File "_doc/_html/dune-site/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-site/dune-site/dune_site__Helpers.odocl
+File "_doc/_html/dune-site/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-site/dune-site.linker/dune_site_backend__Linker.odocl
+File "_doc/_html/dune-site/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-site/dune-site.plugins/dune_site_plugins__Plugins.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Str.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.meta_parser/dune_meta_parser__Meta_parser.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__User_warning.odocl
+File "_doc/_html/dune-action-plugin/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-action-plugin/dune-action-plugin/dune_action_plugin__Protocol.odocl
+File "_doc/_html/dune-action-plugin/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-action-plugin/dune-action-plugin/dune_action_plugin__Path.odocl
+File "_doc/_html/dune-action-plugin/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-action-plugin/dune-action-plugin/dune_action_plugin__Import.odocl
+File "_doc/_html/dune-configurator/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-configurator/dune-configurator/configurator__Ocaml_config.odocl
+File "_doc/_html/dune-configurator/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-configurator/dune-configurator/configurator__Import.odocl
+File "_doc/_html/dune-configurator/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-configurator/dune-configurator/configurator__Extract_obj.odocl
+File "_doc/_html/dune-configurator/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-configurator/dune-configurator/configurator__Dune_lang.odocl
+File "_doc/_html/dune-glob/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-glob/dune-glob/dune_glob__Glob.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Versioned.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Types.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Sub.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Registry.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Procedures.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Menu.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Import.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Fiber_intf.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Exported_types.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Diagnostics_v1.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Dbus_address.odocl
+File "_doc/_html/dune-rpc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-rpc/dune-rpc.private/dune_rpc_private__Conv.odocl
+File "_doc/_html/dune-site/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-site/dune-site/dune_site__Dune_site_data.odocl
+File "_doc/_html/dune-site/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-site/dune-site.plugins/dune_site_plugins__Meta_parser.odocl
+File "_doc/_html/dune-site/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-site/dune-site.plugins/dune_site_plugins__Dune_site_plugins_data.odocl
+File "_doc/_html/ocamlc-loc/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/ocamlc-loc/ocamlc-loc/ocamlc_loc__Lexer.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Re.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Posix.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Pmark.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Perl.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Pcre.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Group.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Glob.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Fmt.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Emacs.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Cset.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Core.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Color_map.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Category.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.dune_re/dune_re__Automata.odocl
+File "_doc/_html/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/dune-private-libs/dune-private-libs.meta_parser/dune_meta_parser__Meta_lexer.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__User_message.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__User_error.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Univ_map_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Univ_map.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Unit.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Type_eq.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Tuple.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Top_closure_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Top_closure.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Temp.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Table.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Sys.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__String_split.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__String_builder.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__String.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__State.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Staged.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Signal.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Sexp.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Set_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Set.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Seq.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Scanf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Result.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Queue.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Proc.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Predicate.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Poly.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Platform.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Pid.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Per_item_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Per_item.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Path_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Path.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Or_exn.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Option.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Nothing.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Nonempty_list.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Monoid_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Monoid.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Monad_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Monad.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Map_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Map.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Loc0.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Loc.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__List.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Lexbuf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Lazy.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Io_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Io.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Int.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Id.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Hashtbl_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Hashtbl.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Hashable.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Fpath.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Format.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Float.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Filename_set.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Filename.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Fdecl.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Exn_with_backtrace.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Exn.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Escape.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Env_path.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Env.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Either.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Dune_filesystem_stubs.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Dune_either.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Dev_null.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Comparator.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Comparable_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Comparable.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Compact_position.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Code_error.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Char.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Caller_id.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Bytes_unit.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Bytes.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Bool.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Bit_set.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Bin.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Array.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Applicative_intf.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Applicative.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for
+_doc/_odocls/stdune/stdune/stdune__Appendable_list.odocl
+File "_doc/_html/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for _doc/_odocls/stdune/stdune/stdune__Ansi_color.odocl
+File "otherlibs/configurator/src/index.mld", line 15, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Configurator).V1 Couldn't find "Configurator"
+File "otherlibs/xdg/index.mld", line 28, characters 36-42:
+Warning: Failed to resolve reference unresolvedroot(Xdg) Couldn't find "Xdg"
+File "otherlibs/dune-glob/index.mld", line 32, characters 36-51:
+Warning: Failed to resolve reference unresolvedroot(Dune_glob).V1 Couldn't find "Dune_glob"
+File "driver/test/config_file/test_odoc_driver/doc/yo.mld", line 3, characters 23-44:
+Warning: Failed to resolve reference /brr.poke/Brr_poke Path '/brr.poke/Brr_poke' not found
+File "driver/test/config_file/test_odoc_driver/doc/yo.mld", line 3, characters 4-22:
+Warning: Failed to resolve reference /brr/index Path '/brr/index' not found
+File "otherlibs/dune-build-info/src/index.mld", line 39, characters 36-52:
+Warning: Failed to resolve reference unresolvedroot(Build_info).V1 Couldn't find "Build_info"
+File "_doc/_mlds/test_odoc_driver/index.mld", line 4, characters 0-26:
+Warning: Failed to resolve reference unresolvedroot(Test_odoc_driver) Parent_module: Lookup failure (root module): Test_odoc_driver
+File "_doc/_mlds/chrome-trace/index.mld", line 4, characters 0-22:
+Warning: Failed to resolve reference unresolvedroot(Chrome_trace) Parent_module: Lookup failure (root module): Chrome_trace
+File "_doc/_mlds/dune-action-plugin/index.mld", line 4, characters 0-28:
+Warning: Failed to resolve reference unresolvedroot(Dune_action_plugin) Parent_module: Lookup failure (root module): Dune_action_plugin
+File "_doc/_mlds/dune-rpc/index.mld", line 7, characters 0-26:
+Warning: Failed to resolve reference unresolvedroot(Dune_rpc_private) Parent_module: Lookup failure (root module): Dune_rpc_private
+File "_doc/_mlds/dune-rpc/index.mld", line 4, characters 0-18:
+Warning: Failed to resolve reference unresolvedroot(Dune_rpc) Parent_module: Lookup failure (root module): Dune_rpc
+File "_doc/_mlds/dune-rpc-lwt/index.mld", line 4, characters 0-22:
+Warning: Failed to resolve reference unresolvedroot(Dune_rpc_lwt) Parent_module: Lookup failure (root module): Dune_rpc_lwt
+File "_doc/_mlds/dune-site/index.mld", line 13, characters 0-27:
+Warning: Failed to resolve reference unresolvedroot(Dune_site_private) Parent_module: Lookup failure (root module): Dune_site_private
+File "_doc/_mlds/dune-site/index.mld", line 10, characters 0-27:
+Warning: Failed to resolve reference unresolvedroot(Dune_site_plugins) Parent_module: Lookup failure (root module): Dune_site_plugins
+File "_doc/_mlds/dune-site/index.mld", line 7, characters 0-27:
+Warning: Failed to resolve reference unresolvedroot(Dune_site_backend) Parent_module: Lookup failure (root module): Dune_site_backend
+File "_doc/_mlds/dune-site/index.mld", line 4, characters 0-19:
+Warning: Failed to resolve reference unresolvedroot(Dune_site) Parent_module: Lookup failure (root module): Dune_site
+File "_doc/_mlds/ocamlc-loc/index.mld", line 4, characters 0-20:
+Warning: Failed to resolve reference unresolvedroot(Ocamlc_loc) Parent_module: Lookup failure (root module): Ocamlc_loc
+File "_doc/_mlds/ordering/index.mld", line 4, characters 0-18:
+Warning: Failed to resolve reference unresolvedroot(Ordering) Parent_module: Lookup failure (root module): Ordering
+File "_doc/_mlds/dyn/index.mld", line 7, characters 0-12:
+Warning: Failed to resolve reference unresolvedroot(Pp) Parent_module: Lookup failure (root module): Pp
+File "_doc/_mlds/dyn/index.mld", line 4, characters 0-13:
+Warning: Failed to resolve reference unresolvedroot(Dyn) Parent_module: Lookup failure (root module): Dyn
+File "_doc/_mlds/dune-private-libs/index.mld", line 10, characters 0-26:
+Warning: Failed to resolve reference unresolvedroot(Dune_meta_parser) Parent_module: Lookup failure (root module): Dune_meta_parser
+File "_doc/_mlds/dune-private-libs/index.mld", line 7, characters 0-17:
+Warning: Failed to resolve reference unresolvedroot(Dune_re) Parent_module: Lookup failure (root module): Dune_re
+File "_doc/_mlds/dune-private-libs/index.mld", line 4, characters 0-22:
+Warning: Failed to resolve reference unresolvedroot(Dune_section) Parent_module: Lookup failure (root module): Dune_section
+File "_doc/_mlds/stdune/index.mld", line 7, characters 0-15:
+Warning: Failed to resolve reference unresolvedroot(Csexp) Parent_module: Lookup failure (root module): Csexp
+File "_doc/_mlds/stdune/index.mld", line 4, characters 0-16:
+Warning: Failed to resolve reference unresolvedroot(Stdune) Parent_module: Lookup failure (root module): Stdune
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 389, character 8 to line 393, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 394, character 8 to line 398, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 400, character 8 to line 404, character 22:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 405, character 8 to line 409, character 22:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 411, character 8 to line 415, character 22:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 416, character 8 to line 420, character 22:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 422, character 8 to line 424, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 425, character 8 to line 427, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "arrayLabels.mli", line 433, character 1 to line 439, character 2:
+Warning: Code blocks should be indented at the opening `{`.
+File "array.mli", line 433, character 1 to line 439, character 2:
+Warning: Code blocks should be indented at the opening `{`.
+File "buffer.mli", line 35, character 0 to line 37, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "bytesLabels.mli", line 368, character 3 to line 373, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytesLabels.mli", line 395, character 3 to line 398, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytesLabels.mli", line 432, character 4 to line 435, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytes.mli", line 368, character 3 to line 373, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytes.mli", line 395, character 3 to line 398, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytes.mli", line 432, character 4 to line 435, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "domain.mli", line 69, character 4 to line 74, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "dynarray.mli", line 47, character 0 to line 49, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "ephemeron.mli", line 70, character 0 to line 72, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "gc.mli", line 429, character 3 to line 438, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "format.mli", line 362, character 3 to line 368, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "format.mli", line 371, character 3 to line 374, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "format.mli", line 1538, character 2 to line 1542, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "hashtbl.mli", line 47, character 0 to line 49, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "moreLabels.mli", line 64, character 2 to line 66, character 3:
+Warning: Alert unsynchronized_access not expected here.
+File "queue.mli", line 24, character 0 to line 26, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "scanf.mli", line 86, character 0 to line 88, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "stack.mli", line 23, character 0 to line 25, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "src/core/lwt_pool.mli", line 23, character 4 to line 39, character 2:
+Warning: Code blocks should be indented at the opening `{`.
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "src/core/lwt_sequence.mli", line 21, character 0 to line 23, character 41:
+Warning: Alert deprecated not expected here.
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "_doc/_odoc/lwt/lwt/lwt.odoc":
+Error while unmarshalling "_doc/_odoc/lwt/lwt/lwt.odoc": End_of_file
+
+File "unixLabels.mli", line 1590, characters 65-78:
+Warning: '@since' should begin on its own line.
+File "otherlibs/unix/unix.mli", line 1590, characters 65-78:
+Warning: '@since' should begin on its own line.
+File "src/core/lwt_pool.mli", line 42, characters 50-67:
+Warning: Failed to resolve reference unresolvedroot(Lwt_preemptive) Couldn't find "Lwt_preemptive"
+File "src/core/lwt.mli", line 1903, characters 50-67:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).yield Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 1903, characters 4-42:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).abandon_yielded_and_paused Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 1874, characters 27-44:
+Warning: Failed to resolve reference unresolvedroot(Lwt_preemptive) Couldn't find "Lwt_preemptive"
+File "src/core/lwt.mli", line 1758, characters 14-38:
+Warning: Failed to resolve reference unresolvedroot(Lwt_preemptive).detach Couldn't find "Lwt_preemptive"
+File "src/core/lwt.mli", line 1740, characters 6-21:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 1145, characters 39-54:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 893, characters 4-26:
+Warning: Failed to resolve reference unresolvedroot(Lwt_react).of_stream Couldn't find "Lwt_react"
+File "src/core/lwt.mli", line 884, characters 41-56:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 424, characters 25-54:
+Warning: Failed to resolve reference unresolvedroot(Lwt_unix).send_notification Couldn't find "Lwt_unix"
+File "src/core/lwt.mli", line 424, characters 4-21:
+Warning: Failed to resolve reference unresolvedroot(Lwt_preemptive) Couldn't find "Lwt_preemptive"
+File "src/core/lwt.mli", line 354, characters 22-32:
+Warning: Failed to resolve reference unresolvedroot(Lwt_sys) Couldn't find "Lwt_sys"
+File "src/core/lwt.mli", line 354, characters 6-20:
+Warning: Failed to resolve reference unresolvedroot(Lwt_timeout) Couldn't find "Lwt_timeout"
+File "src/core/lwt.mli", line 353, characters 54-69:
+Warning: Failed to resolve reference unresolvedroot(Lwt_throttle) Couldn't find "Lwt_throttle"
+File "src/core/lwt.mli", line 353, characters 39-52:
+Warning: Failed to resolve reference unresolvedroot(Lwt_engine) Couldn't find "Lwt_engine"
+File "src/core/lwt.mli", line 353, characters 28-37:
+Warning: Failed to resolve reference unresolvedroot(Lwt_gc) Couldn't find "Lwt_gc"
+File "src/core/lwt.mli", line 352, characters 6-23:
+Warning: Failed to resolve reference unresolvedroot(Lwt_preemptive) Couldn't find "Lwt_preemptive"
+File "src/core/lwt.mli", line 351, characters 6-20:
+Warning: Failed to resolve reference unresolvedroot(Lwt_process) Couldn't find "Lwt_process"
+File "src/core/lwt.mli", line 350, characters 6-15:
+Warning: Failed to resolve reference unresolvedroot(Lwt_io) Couldn't find "Lwt_io"
+File "src/core/lwt.mli", line 349, characters 6-18:
+Warning: Failed to resolve reference unresolvedroot(Lwt_bytes) Couldn't find "Lwt_bytes"
+File "src/core/lwt.mli", line 348, characters 6-17:
+Warning: Failed to resolve reference unresolvedroot(Lwt_unix) Couldn't find "Lwt_unix"
+File "src/core/lwt.mli", line 343, characters 21-36:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 338, characters 52-67:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 338, characters 11-22:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main) Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 302, characters 4-19:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 301, characters 4-21:
+Warning: Failed to resolve reference unresolvedroot(Lwt_unix).sleep Couldn't find "Lwt_unix"
+File "src/core/lwt.mli", line 294, characters 63-78:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 294, characters 22-37:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 285, characters 6-21:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 284, characters 52-67:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 283, characters 6-21:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 281, characters 6-21:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 272, characters 63-78:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 267, characters 4-19:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 239, characters 30-45:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 238, characters 26-41:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 233, characters 32-47:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 178, characters 40-59:
+Warning: Failed to resolve reference unresolvedroot(Lwt_io).read_line Couldn't find "Lwt_io"
+File "src/core/lwt.mli", line 134, characters 4-19:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 119, characters 4-19:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "src/core/lwt.mli", line 85, characters 6-21:
+Warning: Failed to resolve reference unresolvedroot(Lwt_main).run Couldn't find "Lwt_main"
+File "_doc/_odoc/dune-site/dune-site.linker/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-site/dune-site.linker/linker.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.meta_parser/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.meta_parser/meta_lexer.odoc
+File "_doc/_odoc/dune-site/dune-site/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-site/dune-site/dune_site_data.odoc
+File "_doc/_odoc/dune-site/dune-site/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-site/dune-site/helpers.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.meta_parser/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.meta_parser/meta_parser.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/appendable_list.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/ansi_color.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/applicative_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/array.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/bin.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/bit_set.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/applicative.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/bool.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/bytes.odoc
+File "stdlib.mli", line 25, characters 4-40:
+Warning: Multiple sections named 'modules' found. Please alter one to ensure reference is unambiguous. Locations:
+  File "stdlib.mli", line 1387, character 4
+  File "stdlib.mli", line 1387, character 4
+File "set.mli", line 289, characters 23-34:
+Warning: Reference to 'elements' is ambiguous. Please specify its kind: section-elements, val-elements.
+File "set.mli", line 289, characters 23-34:
+Warning: Reference to 'elements' is ambiguous. Please specify its kind: section-elements, val-elements.
+File "scanf.mli", line 431, characters 4-10:
+Warning: Failed to resolve reference unresolvedroot(Str) Couldn't find "Str"
+File "../_odoc/ocaml-compiler/stdlib/stdlib.odoc":
+Warning: Hidden fields in type 'Stdlib.Parsing.parse_tables'
+File "out_channel.mli", line 119, characters 12-21:
+Warning: Reference to 'output' is ambiguous. Please specify its kind: section-output, val-output.
+File "out_channel.mli", line 113, characters 12-21:
+Warning: Reference to 'output' is ambiguous. Please specify its kind: section-output, val-output.
+File "moreLabels.mli", line 1296, characters 25-36:
+Warning: Reference to 'elements' is ambiguous. Please specify its kind: section-elements, val-elements.
+File "moreLabels.mli", line 1296, characters 25-36:
+Warning: Reference to 'elements' is ambiguous. Please specify its kind: section-elements, val-elements.
+File "moreLabels.mli", line 985, characters 25-36:
+Warning: Reference to 'bindings' is ambiguous. Please specify its kind: section-bindings, val-bindings.
+File "moreLabels.mli", line 985, characters 25-36:
+Warning: Reference to 'bindings' is ambiguous. Please specify its kind: section-bindings, val-bindings.
+File "map.mli", line 334, characters 23-34:
+Warning: Reference to 'bindings' is ambiguous. Please specify its kind: section-bindings, val-bindings.
+File "map.mli", line 334, characters 23-34:
+Warning: Reference to 'bindings' is ambiguous. Please specify its kind: section-bindings, val-bindings.
+File "in_channel.mli", line 140, characters 12-20:
+Warning: Reference to 'input' is ambiguous. Please specify its kind: section-input, val-input.
+File "filename.mli", line 213, characters 4-24:
+Warning: Failed to resolve reference unresolvedroot(Unix).open_process Couldn't find "Unix"
+File "filename.mli", line 212, characters 46-60:
+Warning: Failed to resolve reference unresolvedroot(Unix).system Couldn't find "Unix"
+File "stdlib.mli", line 1346, characters 34-52:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 1231, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 1225, characters 23-41:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 819, characters 34-52:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 692, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 473, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 467, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 462, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 457, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 452, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 446, characters 24-42:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 441, characters 24-42:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 422, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 415, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 407, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 398, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 393, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 388, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 368, characters 34-52:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 356, characters 34-52:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 347, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 342, characters 37-55:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 337, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 325, characters 24-42:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 319, characters 24-42:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 307, characters 33-51:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 300, characters 32-50:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 225, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 218, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 205, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 200, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 159, characters 34-52:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 147, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 142, characters 36-54:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 137, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 132, characters 35-53:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "stdlib.mli", line 128, characters 34-52:
+Warning: Failed to resolve reference unresolvedroot(Ocaml_operators) Couldn't find "Ocaml_operators"
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/bytes_unit.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/caller_id.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/char.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/code_error.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/compact_position.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/comparable_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/comparator.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/comparable.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/dev_null.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/dune_either.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/dune_filesystem_stubs.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/either.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/escape.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/env_path.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/env.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/exn.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/exn_with_backtrace.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/fdecl.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/filename.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/filename_set.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/float.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/format.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/hashable.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/fpath.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/hashtbl.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/hashtbl_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/id.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/io_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/int.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/io.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/lazy.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/lexbuf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/list.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/loc.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/loc0.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/map.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/map_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/monad_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/monad.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/monoid_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/monoid.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/nonempty_list.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/nothing.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/option.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/or_exn.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/per_item.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/pid.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/platform.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/poly.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/per_item_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/path.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/path_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/proc.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/queue.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/predicate.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/result.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/scanf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/seq.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/sexp.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/signal.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/set.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/set_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/staged.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/string_builder.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/state.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/string_split.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/sys.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/string.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/table.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/top_closure.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/top_closure_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/tuple.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/type_eq.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/temp.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/unit.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/univ_map_intf.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/univ_map.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/user_error.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/user_warning.odoc
+File "_doc/_odoc/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/stdune/stdune/user_message.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/category.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/cset.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/pmark.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/fmt.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/str.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/color_map.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/automata.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/group.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/emacs.odoc
+File "vendor/re/src/core.mli", line 69, characters 22-56:
+Warning: Alert deprecated not expected here.
+File "vendor/re/src/core.mli", line 716, characters 0-34:
+Warning: Alert deprecated not expected here.
+File "vendor/re/src/core.mli", line 740, characters 0-32:
+Warning: Alert deprecated not expected here.
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/core.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/perl.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/glob.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/posix.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/pcre.odoc
+File "_doc/_odoc/dune-private-libs/dune-private-libs.dune_re/_unknown_", line 1, characters 0-0:
+Error: Rule failed to generate the following targets:
+- _doc/_odoc/dune-private-libs/dune-private-libs.dune_re/re.odoc
+File "vendor/re/src/pcre.mli", line 42, characters 18-31:
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Failed to resolve reference unresolvedroot(Core).execp Couldn't find "Core"
+File "vendor/re/src/pcre.mli", line 39, characters 18-38:
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Failed to resolve reference unresolvedroot(Core).Group.offset Couldn't find "Core"
+File "vendor/re/src/pcre.mli", line 30, characters 18-35:
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Failed to resolve reference unresolvedroot(Core).Group.get Couldn't find "Core"
+File "vendor/re/src/pcre.mli", line 27, characters 18-30:
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Failed to resolve reference unresolvedroot(Core).exec Couldn't find "Core"
+File "../_odoc/dune-private-libs/dune-private-libs.dune_re/dune_re.odoc":
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Hidden constructors in type 'Dune_re.View.t'
+File "vendor/re/src/core.mli", line 397, characters 16-43:
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Failed to resolve reference unresolvedroot(Re).split_full Parent_module: Lookup failure (root module): Re
+File "vendor/re/src/core.mli", line 381, characters 16-38:
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Failed to resolve reference unresolvedroot(Re).split Parent_module: Lookup failure (root module): Re
+File "vendor/re/src/core.mli", line 365, characters 16-40:
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Failed to resolve reference unresolvedroot(Re).matches Parent_module: Lookup failure (root module): Re
+File "vendor/re/src/core.mli", line 349, characters 16-36:
+Warning: While resolving the expansion of include at File "vendor/re/src/dune_re.ml", line 1, character 0
+Failed to resolve reference unresolvedroot(Re).all Parent_module: Lookup failure (root module): Re
+File "../_odoc/stdune/stdune/stdune.odoc":
+Warning: Hidden fields in type 'Stdune.User_message.t'
+File "../_odoc/stdune/stdune/stdune.odoc":
+Warning: Hidden fields in type 'Stdune.Code_error.t'
+File "otherlibs/stdune/src/string.mli", line 72, characters 31-40:
+Warning: Failed to resolve reference unresolvedroot(escape) Couldn't find "escape"
+File "src/unix/lwt_engine.mli", line 219, character 2 to line 221, character 43:
+Warning: Alert deprecated not expected here.
+File "src/unix/lwt_engine.mli", line 234, character 2 to line 235, character 59:
+Warning: Alert deprecated not expected here.
+File "src/unix/lwt_main.mli", line 20, character 6 to line 24, character 8:
+Warning: Code blocks should be indented at the opening `{`.
+File "src/unix/lwt_fmt.mli", line 58, characters 47-73:
+Warning: Reference to 'formatter' is ambiguous. Please specify its kind: section-formatter, type-formatter.
+File "src/unix/lwt_fmt.mli", line 53, characters 4-30:
+Warning: Reference to 'formatter' is ambiguous. Please specify its kind: section-formatter, type-formatter.
+File "src/unix/lwt_process.mli", line 47, characters 11-26:
+Warning: Failed to resolve reference unresolvedroot(Unix).sigkill Couldn't find "sigkill"
+File "src/unix/lwt_io.mli", line 123, characters 37-46:
+Warning: Reference to 'output' is ambiguous. Please specify its kind: type-output, val-output.
+File "src/unix/lwt_io.mli", line 123, characters 25-33:
+Warning: Reference to 'input' is ambiguous. Please specify its kind: type-input, val-input.
+File "parsing/ast_mapper.mli", line 29, character 2 to line 43, character 35:
+Warning: Code blocks should be indented at the opening `{`.
+File "utils/config.mli", line 251, characters 24-29:
+Warning: Unknown tag '@FILE'.
+File "utils/config_boot.mli", line 251, characters 24-29:
+Warning: Unknown tag '@FILE'.
+File "utils/config_main.mli", line 251, characters 24-29:
+Warning: Unknown tag '@FILE'.
+File "driver/main_args.mli", line 278, characters 27-34:
+Warning: '{c,opt}': bad markup.
+Suggestion: did you mean '{!c,opt}' or '[c,opt]'?
+File "driver/main_args.mli", line 279, characters 22-29:
+Warning: '{c,opt}': bad markup.
+Suggestion: did you mean '{!c,opt}' or '[c,opt]'?
+File "typing/out_type.mli", line 125, characters 4-7:
+Warning: Heading label should not be empty.
+File "typing/patterns.mli", line 101, characters 27-28:
+Warning: Unpaired ']' (end of code).
+Suggestion: try '\]'.
+File "parsing/parsetree.mli", line 648, characters 40-41:
+Warning: '.' is not allowed in '{ul ...}' (bulleted list).
+Suggestion: move '.' into a list item, '{li ...}' or '{- ...}'.
+File "typing/shape.mli", line 50, characters 0-0:
+Warning: End of text is not allowed in '{{:...} ...}' (external link).
+File "lambda/tmc.mli", line 30, character 4 to line 36, character 6:
+Warning: '{|
+     let[@tail_mod_cons] rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       y :: map f xs
+    |}': bad markup.
+Suggestion: did you mean '{!|
+     let[@tail_mod_cons] rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       y :: map f xs
+    |}' or '[|
+     let[@tail_mod_cons] rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       y :: map f xs
+    |]'?
+File "lambda/tmc.mli", line 39, character 4 to line 54, character 6:
+Warning: '{|
+     let rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       let dst = y :: Placeholder in
+       map_dps dst 1 f xs; dst
+     and map_dps dst offset f = function
+     | [] ->
+       dst.offset <- []
+     | x :: xs ->
+       let y = f x in
+       let dst' = y :: Placeholder in
+       dst.offset <- dst';
+       map_dps dst 1 f fx
+    |}': bad markup.
+Suggestion: did you mean '{!|
+     let rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       let dst = y :: Placeholder in
+       map_dps dst 1 f xs; dst
+     and map_dps dst offset f = function
+     | [] ->
+       dst.offset <- []
+     | x :: xs ->
+       let y = f x in
+       let dst' = y :: Placeholder in
+       dst.offset <- dst';
+       map_dps dst 1 f fx
+    |}' or '[|
+     let rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       let dst = y :: Placeholder in
+       map_dps dst 1 f xs; dst
+     and map_dps dst offset f = function
+     | [] ->
+       dst.offset <- []
+     | x :: xs ->
+       let y = f x in
+       let dst' = y :: Placeholder in
+       dst.offset <- dst';
+       map_dps dst 1 f fx
+    |]'?
+File "typing/typedtree.mli", line 59, character 27 to line 60, character 75:
+Warning: '{ pat_desc = P
+                           ; pat_extra = (Tpat_constraint T, _, _) :: ... }': bad markup.
+Suggestion: did you mean '{! pat_desc = P
+                           ; pat_extra = (Tpat_constraint T, _, _) :: ... }' or '[ pat_desc = P
+                           ; pat_extra = (Tpat_constraint T, _, _) :: ... ]'?
+File "typing/typedtree.mli", line 63, character 27 to line 64, character 80:
+Warning: '{ pat_desc = disjunction
+                           ; pat_extra = (Tpat_type (P, "tconst"), _, _) :: ...}': bad markup.
+Suggestion: did you mean '{! pat_desc = disjunction
+                           ; pat_extra = (Tpat_type (P, "tconst"), _, _) :: ...}' or '[ pat_desc = disjunction
+                           ; pat_extra = (Tpat_type (P, "tconst"), _, _) :: ...]'?
+File "typing/typedtree.mli", line 71, character 27 to line 72, character 69:
+Warning: '{ pat_desc  = Tpat_var "P"
+                           ; pat_extra = (Tpat_unpack, _, _) :: ... }': bad markup.
+Suggestion: did you mean '{! pat_desc  = Tpat_var "P"
+                           ; pat_extra = (Tpat_unpack, _, _) :: ... }' or '[ pat_desc  = Tpat_var "P"
+                           ; pat_extra = (Tpat_unpack, _, _) :: ... ]'?
+File "typing/typedtree.mli", line 73, character 27 to line 74, character 54:
+Warning: '{ pat_desc  = Tpat_any
+            ; pat_extra = (Tpat_unpack, _, _) :: ... }': bad markup.
+Suggestion: did you mean '{! pat_desc  = Tpat_any
+            ; pat_extra = (Tpat_unpack, _, _) :: ... }' or '[ pat_desc  = Tpat_any
+            ; pat_extra = (Tpat_unpack, _, _) :: ... ]'?
+File "typing/typedtree.mli", line 117, characters 12-33:
+Warning: '{ l1=P1; ...; ln=Pn }': bad markup.
+Suggestion: did you mean '{! l1=P1; ...; ln=Pn }' or '[ l1=P1; ...; ln=Pn ]'?
+File "typing/typedtree.mli", line 118, characters 12-35:
+Warning: '{ l1=P1; ...; ln=Pn; _}': bad markup.
+Suggestion: did you mean '{! l1=P1; ...; ln=Pn; _}' or '[ l1=P1; ...; ln=Pn; _]'?
+File "typing/typedtree.mli", line 244, characters 12-33:
+Warning: '{ l1=P1; ...; ln=Pn }': bad markup.
+Suggestion: did you mean '{! l1=P1; ...; ln=Pn }' or '[ l1=P1; ...; ln=Pn ]'?
+File "typing/typedtree.mli", line 245, characters 12-41:
+Warning: '{ E0 with l1=P1; ...; ln=Pn }': bad markup.
+Suggestion: did you mean '{! E0 with l1=P1; ...; ln=Pn }' or '[ E0 with l1=P1; ...; ln=Pn ]'?
+File "typing/typedtree.mli", line 249, characters 27-45:
+Warning: '{ l1: t1; l2: t2 }': bad markup.
+Suggestion: did you mean '{! l1: t1; l2: t2 }' or '[ l1: t1; l2: t2 ]'?
+File "typing/typedtree.mli", line 250, characters 12-29:
+Warning: '{ E0 with t2=P2 }': bad markup.
+Suggestion: did you mean '{! E0 with t2=P2 }' or '[ E0 with t2=P2 ]'?
+File "typing/typedtree.mli", line 252, character 14 to line 253, character 47:
+Warning: '{ fields = [| l1, Kept t1; l2 Override P2 |]; representation;
+                extended_expression = Some E0 }': bad markup.
+Suggestion: did you mean '{! fields = [| l1, Kept t1; l2 Override P2 |]; representation;
+                extended_expression = Some E0 }' or '[ fields = [| l1, Kept t1; l2 Override P2 |]; representation;
+                extended_expression = Some E0 ]'?
+File "typing/types.mli", line 16, characters 4-48:
+Warning: '{0': heading level should be lower than top heading level '0'.
+File "typing/types.mli", line 308, character 17 to line 314, character 48:
+Warning: '{ row_fields = [("X", _)];
+                   row_more   =
+                     Tvariant { row_fields = [("Y", _)];
+                                row_more   =
+                                  Tvariant { row_fields = [];
+                                             row_more   = _;
+                                             _ }': bad markup.
+Suggestion: did you mean '{! row_fields = [("X", _)];
+                   row_more   =
+                     Tvariant { row_fields = [("Y", _)];
+                                row_more   =
+                                  Tvariant { row_fields = [];
+                                             row_more   = _;
+                                             _ }' or '[ row_fields = [("X", _)];
+                   row_more   =
+                     Tvariant { row_fields = [("Y", _)];
+                                row_more   =
+                                  Tvariant { row_fields = [];
+                                             row_more   = _;
+                                             _ ]'?
+File "typing/types.mli", line 315, characters 34-35:
+Warning: Unpaired '}' (end of markup).
+Suggestion: try '\}'.
+File "typing/types.mli", line 317, characters 17-18:
+Warning: Unpaired '}' (end of markup).
+Suggestion: try '\}'.
+File "endianString.cppo.mli", line 80, characters 48-73:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 126, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_double Couldn't find "set_double"
+File "endianString.cppo.mli", line 76, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 126, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_float Couldn't find "set_float"
+File "endianString.cppo.mli", line 72, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 126, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int64 Couldn't find "set_int64"
+File "endianString.cppo.mli", line 68, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 126, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int32 Couldn't find "set_int32"
+File "endianString.cppo.mli", line 64, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 126, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int16 Couldn't find "set_int16"
+File "endianString.cppo.mli", line 60, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 126, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int8 Couldn't find "set_int8"
+File "endianString.cppo.mli", line 56, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 126, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_char Couldn't find "set_char"
+File "endianString.cppo.mli", line 80, characters 48-73:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 118, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_double Couldn't find "set_double"
+File "endianString.cppo.mli", line 76, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 118, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_float Couldn't find "set_float"
+File "endianString.cppo.mli", line 72, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 118, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int64 Couldn't find "set_int64"
+File "endianString.cppo.mli", line 68, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 118, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int32 Couldn't find "set_int32"
+File "endianString.cppo.mli", line 64, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 118, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int16 Couldn't find "set_int16"
+File "endianString.cppo.mli", line 60, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 118, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int8 Couldn't find "set_int8"
+File "endianString.cppo.mli", line 56, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 118, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_char Couldn't find "set_char"
+File "endianString.cppo.mli", line 80, characters 48-73:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 111, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_double Couldn't find "set_double"
+File "endianString.cppo.mli", line 76, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 111, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_float Couldn't find "set_float"
+File "endianString.cppo.mli", line 72, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 111, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int64 Couldn't find "set_int64"
+File "endianString.cppo.mli", line 68, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 111, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int32 Couldn't find "set_int32"
+File "endianString.cppo.mli", line 64, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 111, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int16 Couldn't find "set_int16"
+File "endianString.cppo.mli", line 60, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 111, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int8 Couldn't find "set_int8"
+File "endianString.cppo.mli", line 56, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 111, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_char Couldn't find "set_char"
+File "endianString.cppo.mli", line 80, characters 48-73:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 103, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_double Couldn't find "set_double"
+File "endianString.cppo.mli", line 76, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 103, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_float Couldn't find "set_float"
+File "endianString.cppo.mli", line 72, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 103, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int64 Couldn't find "set_int64"
+File "endianString.cppo.mli", line 68, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 103, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int32 Couldn't find "set_int32"
+File "endianString.cppo.mli", line 64, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 103, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int16 Couldn't find "set_int16"
+File "endianString.cppo.mli", line 60, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 103, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int8 Couldn't find "set_int8"
+File "endianString.cppo.mli", line 56, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 103, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_char Couldn't find "set_char"
+File "endianString.cppo.mli", line 80, characters 48-73:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 96, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_double Couldn't find "set_double"
+File "endianString.cppo.mli", line 76, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 96, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_float Couldn't find "set_float"
+File "endianString.cppo.mli", line 72, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 96, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int64 Couldn't find "set_int64"
+File "endianString.cppo.mli", line 68, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 96, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int32 Couldn't find "set_int32"
+File "endianString.cppo.mli", line 64, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 96, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int16 Couldn't find "set_int16"
+File "endianString.cppo.mli", line 60, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 96, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int8 Couldn't find "set_int8"
+File "endianString.cppo.mli", line 56, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 96, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_char Couldn't find "set_char"
+File "endianString.cppo.mli", line 80, characters 48-73:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 88, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_double Couldn't find "set_double"
+File "endianString.cppo.mli", line 76, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 88, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_float Couldn't find "set_float"
+File "endianString.cppo.mli", line 72, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 88, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int64 Couldn't find "set_int64"
+File "endianString.cppo.mli", line 68, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 88, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int32 Couldn't find "set_int32"
+File "endianString.cppo.mli", line 64, characters 48-72:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 88, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int16 Couldn't find "set_int16"
+File "endianString.cppo.mli", line 60, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 88, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_int8 Couldn't find "set_int8"
+File "endianString.cppo.mli", line 56, characters 48-71:
+Warning: While resolving the expansion of include at File "endianString.cppo.mli", line 88, character 2
+Failed to resolve reference unresolvedroot(endianBytes).set_char Couldn't find "set_char"
+File "endianString.cppo.mli", line 80, characters 48-73:
+Warning: Failed to resolve reference unresolvedroot(endianBytes).set_double Couldn't find "set_double"
+File "endianString.cppo.mli", line 76, characters 48-72:
+Warning: Failed to resolve reference unresolvedroot(endianBytes).set_float Couldn't find "set_float"
+File "endianString.cppo.mli", line 72, characters 48-72:
+Warning: Failed to resolve reference unresolvedroot(endianBytes).set_int64 Couldn't find "set_int64"
+File "endianString.cppo.mli", line 68, characters 48-72:
+Warning: Failed to resolve reference unresolvedroot(endianBytes).set_int32 Couldn't find "set_int32"
+File "endianString.cppo.mli", line 64, characters 48-72:
+Warning: Failed to resolve reference unresolvedroot(endianBytes).set_int16 Couldn't find "set_int16"
+File "endianString.cppo.mli", line 60, characters 48-71:
+Warning: Failed to resolve reference unresolvedroot(endianBytes).set_int8 Couldn't find "set_int8"
+File "endianString.cppo.mli", line 56, characters 48-71:
+Warning: Failed to resolve reference unresolvedroot(endianBytes).set_char Couldn't find "set_char"
+File "utils/arg_helper.mli", line 24, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/ast_invariants.mli", line 18, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/ast_iterator.mli", line 22, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/asttypes.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/ast_mapper.mli", line 50, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/attr_helper.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/ast_helper.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/build_path_prefix_map.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/builtin_attributes.mli", line 42, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/ccomp.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/config_boot.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/config_main.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/config.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/consistbl.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/depend.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/docstrings.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/format_doc.mli", line 159, characters 31-43:
+Warning: Reference to 'formatter' is ambiguous. Please specify its kind: type-formatter, val-formatter.
+File "typing/gprinttyp.mli", line 180, characters 64-73:
+Warning: Reference to 'params' is ambiguous. Please specify its kind: type-params, val-params.
+File "typing/ident.mli", line 41, characters 12-74:
+Warning: Failed to resolve reference unresolvedroot([Fatal_error]) Couldn't find "[Fatal_error]"
+File "parsing/lexer.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/identifiable.mli", line 20, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/longident.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/location.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/numbers.mli", line 20, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/misc.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/misc.mli", line 322, characters 48-71:
+Warning: Failed to resolve reference unresolvedroot(Stdlib).int_of_string Couldn't find "int_of_string"
+File "utils/misc.mli", line 135, characters 16-29:
+Warning: Failed to resolve reference unresolvedroot(List).iter2 Couldn't find "iter2"
+File "parsing/parse.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "typing/patterns.mli", line 101, characters 6-70:
+Warning: Failed to resolve reference unresolvedroot([Invalid_arg) Couldn't find "[Invalid_arg"
+File "driver/pparse.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/pprintast.mli", line 20, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/printast.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/parsetree.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/profile.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "lambda/simplif.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "typing/signature_group.mli", line 58, characters 43-54:
+Warning: Failed to resolve reference unresolvedroot(full_seq) Couldn't find "full_seq"
+File "parsing/syntaxerr.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/targetint.mli", line 28, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/strongly_connected_components.mli", line 20, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "lambda/tmc.mli", line 21, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "utils/terminfo.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "typing/typedecl_separability.mli", line 126, characters 42-50:
+Warning: Reference to 'Error' is ambiguous. Please specify its kind: constructor-Error, exception-Error.
+File "typing/typedecl_separability.mli", line 111, characters 8-16:
+Warning: Reference to 'Error' is ambiguous. Please specify its kind: constructor-Error, exception-Error.
+File "typing/typemod.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "parsing/unit_info.mli", line 87, characters 38-60:
+Warning: Failed to resolve reference unresolvedroot(modname_from_source) Couldn't find "modname_from_source"
+File "utils/warnings.mli", line 19, characters 2-33:
+Warning: Failed to resolve reference unresolvedroot(Compiler_libs) Couldn't find "Compiler_libs"
+File "typing/typedtree.mli", line 20, characters 12-27:
+Warning: Failed to resolve reference unresolvedroot(Longindent).t Couldn't find "Longindent"
+File "middle_end/flambda/flambda.mli", line 391, character 27 to line 393, character 41:
+Warning: '{ f x ->
+            let applied_function = Symbol f_closure in
+            Apply (applied_function, x) }': bad markup.
+Suggestion: did you mean '{! f x ->
+            let applied_function = Symbol f_closure in
+            Apply (applied_function, x) }' or '[ f x ->
+            let applied_function = Symbol f_closure in
+            Apply (applied_function, x) ]'?
+File "driver/optcompile.mli", line 25, characters 27-28:
+Warning: Paragraph should begin on its own line.
+File "middle_end/flambda/simple_value_approx.mli", line 107, character 25 to line 109, character 4:
+Warning: Blank line is not allowed in '[...]' (code).
+File "driver/compile.mli", line 24, characters 27-28:
+Warning: Paragraph should begin on its own line.
+File "toplevel/toploop.mli", line 202, characters 50-50:
+Warning: End of text is not allowed in '[...]' (code).
