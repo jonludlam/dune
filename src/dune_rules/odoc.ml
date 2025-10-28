@@ -1555,22 +1555,29 @@ let group_artifacts_by_lib artifacts =
 
 (* Helper function to compile artifacts for a single library with proper dependencies *)
 let compile_library_artifacts sctx ctx ~pkg_name ~lib_name ~lib_artifacts : Path.Build.t Memo.t =
-  (* Get the library object for dependency computation *)
-  let* lib_db = Scope.DB.public_libs (Context.name ctx) in
-  let* lib_opt = Lib.DB.find lib_db lib_name in
-
-  match lib_opt with
-  | None ->
-    Log.info [ Pp.textf "odoc v3: Library %s not found, skipping" (Lib_name.to_string lib_name) ];
-    (* Return a dummy output_dir *)
+  (* Extract the library from the artifact's target field - all artifacts in the list
+     have the same target since they're grouped by library *)
+  let first_artifact = List.hd lib_artifacts in
+  Log.info [ Pp.textf "odoc v3: compile_library_artifacts - examining first artifact's target" ];
+  match first_artifact.target with
+  | Pkg _ ->
+    (* This shouldn't happen - compile_library_artifacts is only called for libraries *)
+    Log.info [ Pp.textf "odoc v3: Unexpected Pkg target in compile_library_artifacts for %s" (Lib_name.to_string lib_name) ];
     Memo.return (Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name)
-  | Some lib ->
+  | Lib local_lib ->
+    let lib = Lib.Local.to_lib local_lib in
+    Log.info [ Pp.textf "odoc v3: compile_library_artifacts for lib=%s with %d artifacts"
+                (Lib_name.to_string lib_name) (List.length lib_artifacts) ];
     (* Set up library dependencies *)
     let* pkg_discovery = Package_discovery.create ~context:ctx in
+    (* Find stdlib for inclusion in -I paths *)
     let* stdlib_opt =
       if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
       then Memo.return None
-      else Lib.DB.find lib_db (Lib_name.of_string "stdlib")
+      else (
+        let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+        Lib.DB.find public_libs (Lib_name.of_string "stdlib")
+      )
     in
 
     let lib_deps =
