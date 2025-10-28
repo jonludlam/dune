@@ -1565,8 +1565,7 @@ let compile_library_artifacts sctx ctx ~pkg_name ~lib_name ~lib_artifacts : Path
     (* This shouldn't happen - compile_library_artifacts is only called for libraries *)
     Log.info [ Pp.textf "odoc v3: Unexpected Pkg target in compile_library_artifacts for %s" (Lib_name.to_string lib_name) ];
     Memo.return (Paths.root ctx ++ "_odoc" ++ pkg_name ++ Lib_name.to_string lib_name)
-  | Lib local_lib ->
-    let lib = Lib.Local.to_lib local_lib in
+  | Lib _local_lib ->
     Log.info [ Pp.textf "odoc v3: compile_library_artifacts for lib=%s with %d artifacts"
                 (Lib_name.to_string lib_name) (List.length lib_artifacts) ];
 
