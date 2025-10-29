@@ -1582,10 +1582,15 @@ let compile_library_artifacts sctx ctx ~pkg_name ~lib_name ~lib_artifacts : Path
        This alias is used by LINKING, not by compilation of other libraries.
        This avoids cycles during compilation. *)
     let odoc_files = List.map lib_artifacts ~f:(fun artifact -> Path.build artifact.odoc_file) in
+    Log.info [ Pp.textf "odoc v3: Creating .odoc-all alias with %d odoc files for lib=%s"
+                (List.length odoc_files) (Lib_name.to_string lib_name) ];
     let odoc_path_set = Path.Set.of_list odoc_files in
     let lib_odoc_dir = (List.hd lib_artifacts).output_dir in
+    Log.info [ Pp.textf "odoc v3: Library .odoc-all alias dir: %s" (Path.Build.to_string lib_odoc_dir) ];
     let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
+    Log.info [ Pp.textf "odoc v3: Calling Rules.Produce.Alias.add_deps for library alias" ];
     let* () = Rules.Produce.Alias.add_deps alias (Action_builder.path_set odoc_path_set) in
+    Log.info [ Pp.textf "odoc v3: Library alias registered successfully" ];
 
     (* Return the library's output directory *)
     Memo.return lib_odoc_dir
@@ -1770,16 +1775,21 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
             ))
         in
 
-        (* Create package-level .odoc-all alias *)
-        let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
-        let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_dir in
-        let lib_alias_deps =
-          List.map lib_alias_dirs ~f:(fun lib_dir ->
-            Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
-            |> Dune_engine.Dep.alias)
-          |> Dune_engine.Dep.Set.of_list
-        in
-        Rules.Produce.Alias.add_deps pkg_alias (Action_builder.deps lib_alias_deps)
+        (* Create package-level .odoc-all alias only for v3 packages (not v2 libraries).
+           For v2 libraries (contains '@'), the library-level alias IS the package-level alias
+           since there's only one library per "package". *)
+        if not (String.contains pkg_or_lib_name '@') then (
+          let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
+          let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_dir in
+          let lib_alias_deps =
+            List.map lib_alias_dirs ~f:(fun lib_dir ->
+              Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
+              |> Dune_engine.Dep.alias)
+            |> Dune_engine.Dep.Set.of_list
+          in
+          Rules.Produce.Alias.add_deps pkg_alias (Action_builder.deps lib_alias_deps)
+        ) else
+          Memo.return ()
       )
     | "_odocls" ->
       (* Linking: link each artifact and create library-level aliases *)
