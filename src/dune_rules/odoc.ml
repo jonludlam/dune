@@ -1274,77 +1274,70 @@ let discover_installed_pkg_mld_artifacts ctx ~pkg : artifact list Memo.t =
 ;;
 
 (* Discover modules for an installed library and create artifacts *)
-let discover_installed_lib_artifacts ctx ~pkg ~lib_name ~lib : artifact list Memo.t =
+let discover_installed_lib_artifacts sctx ctx ~pkg ~lib_name ~lib : artifact list Memo.t =
   let pkg_name_str = Package.Name.to_string pkg in
   let lib_name_str = Lib_name.to_string lib_name in
 
-  (* Get archive information *)
-  let info = Lib.info lib in
-  let archives = Lib_info.archives info in
-  let archive_names =
-    let byte_archives = Mode.Dict.get archives Mode.Byte in
-    match byte_archives with
-    | [] ->
-      if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
-      then [ "stdlib" ]
-      else []
-    | archives ->
-      List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
-  in
+  (* Use Dir_contents.modules_of_lib to get modules, like odoc_new does.
+     This works for both local and installed libraries and doesn't require
+     reading classify files during rule generation. *)
+  let* modules_opt = Dir_contents.modules_of_lib sctx lib in
 
-  if List.is_empty archive_names then (
-    Log.info [ Pp.textf "odoc v3: Installed library %s/%s has no archives, no artifacts"
+  match modules_opt with
+  | None ->
+    Log.info [ Pp.textf "odoc v3: No modules info for installed library %s/%s"
                  pkg_name_str lib_name_str ];
     Memo.return []
-  ) else (
-    (* Read classify file *)
-    let classify_file =
-      Paths.root ctx ++ "classify" ++ pkg_name_str ++ lib_name_str ++ "odoc.classify"
+  | Some modules_with_vlib ->
+    (* Extract the actual modules from With_vlib.t *)
+    let modules = Modules.With_vlib.drop_vlib modules_with_vlib in
+    (* Get the list of modules *)
+    let module_list = Modules.fold_user_written modules ~init:[] ~f:(fun module_ acc ->
+      module_ :: acc
+    ) in
+
+    Log.info [ Pp.textf "odoc v3: Found %d modules for installed library %s/%s via Dir_contents"
+                 (List.length module_list) pkg_name_str lib_name_str ];
+
+    (* Create artifacts for each module *)
+    (* Get Package_discovery to find source files *)
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+
+    (* Get archive information for error reporting *)
+    let info = Lib.info lib in
+    let archives = Lib_info.archives info in
+    let archive_names =
+      let byte_archives = Mode.Dict.get archives Mode.Byte in
+      match byte_archives with
+      | [] ->
+        if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+        then [ "stdlib" ]
+        else []
+      | archives ->
+        List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
     in
-
-    let* classify_content = Build_system.read_file (Path.build classify_file) in
-    let classify_lines = String.split_lines classify_content in
-
-    (* Parse classify file to get modules *)
-    let module_names =
-      List.concat_map classify_lines ~f:(fun line ->
-        match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
-        | [] -> []
-        | archive :: modules ->
-          if List.mem archive_names archive ~equal:String.equal
-          then modules
-          else []
-      )
-    in
-
-    Log.info [ Pp.textf "odoc v3: Found %d modules for installed library %s/%s"
-                 (List.length module_names) pkg_name_str lib_name_str ];
-
-    (* Create artifacts for each module - assume all are visible for now *)
-    (* TODO: We could potentially parse odoc files to check visibility *)
     let default_archive = match archive_names with
       | [] -> "unknown"
       | archive :: _ -> archive
     in
 
-    (* Get Package_discovery to find source files *)
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-
-    let artifacts = List.filter_map module_names ~f:(fun module_name ->
+    let artifacts = List.filter_map module_list ~f:(fun module_ ->
+      let module_name = Module.name module_ |> Module_name.to_string in
       match Package_discovery.module_source_file pkg_discovery ~lib ~module_name with
       | None ->
           Log.info [ Pp.textf "odoc v3: Could not find source file for module %s in library %s/%s"
                        module_name pkg_name_str lib_name_str ];
           None
       | Some src_path ->
+          (* Check if module is visible (not part of a private implementation) *)
+          let visible = Module.visibility module_ = Visibility.Public in
           Some (create_artifact_installed ctx ~pkg ~lib_name ~module_name
                   ~archive:default_archive
-                  ~visible:true
+                  ~visible
                   ~src_path)
     ) in
 
     Memo.return artifacts
-  )
 ;;
 
 (* Create an artifact for a local library module *)
@@ -1494,7 +1487,7 @@ let discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib : artifact list Memo.t =
       discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib
   | None ->
       (* Installed library *)
-      discover_installed_lib_artifacts ctx ~pkg ~lib_name ~lib
+      discover_installed_lib_artifacts sctx ctx ~pkg ~lib_name ~lib
 ;;
 
 let check_mlds_no_dupes ~pkg ~mlds =
@@ -2282,7 +2275,7 @@ let setup_installed_pkg_html_rules sctx ~pkg : unit Memo.t =
                  pkg_name_str (Lib_name.to_string lib_name) ];
 
     (* Discover artifacts for this library *)
-    let* all_artifacts = discover_installed_lib_artifacts ctx ~pkg ~lib_name ~lib in
+    let* all_artifacts = discover_installed_lib_artifacts sctx ctx ~pkg ~lib_name ~lib in
 
     (* Filter out hidden modules using the artifact's hidden field *)
     let artifacts = List.filter all_artifacts ~f:(fun artifact ->
