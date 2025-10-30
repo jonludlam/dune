@@ -1631,6 +1631,48 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
    2. Group artifacts by library
    3. Process each library (either compile for _odoc or link for _odocls)
    4. Return Build_config with rules *)
+(* Helper to compute library directory path for v2 vs v3 *)
+let lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name =
+  if String.contains pkg_or_lib_name '@' then
+    (* v2 library: pkg_or_lib_name already identifies the library *)
+    Paths.root ctx ++ path_prefix ++ pkg_or_lib_name
+  else
+    (* v3 library: path is pkg/lib *)
+    Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name
+;;
+
+(* Partition artifacts by kind *)
+let partition_artifacts artifacts =
+  List.partition_map artifacts ~f:(fun artifact ->
+    match artifact.kind with
+    | Page _ -> Either.Left artifact
+    | Module _ -> Either.Right artifact)
+;;
+
+(* Helper to create a library-level .odoc-all alias *)
+let create_lib_alias ctx ~path_prefix ~pkg_or_lib_name ~lib_name ~file_paths =
+  let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
+  let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
+  let+ () = Rules.Produce.Alias.add_deps alias (Action_builder.paths file_paths) in
+  lib_dir
+;;
+
+(* Helper to create package-level .odoc-all alias (only for v3 packages) *)
+let create_pkg_alias_if_v3 ctx ~path_prefix ~pkg_or_lib_name ~lib_alias_dirs =
+  if not (String.contains pkg_or_lib_name '@') then (
+    let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
+    let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_dir in
+    let lib_alias_deps =
+      List.map lib_alias_dirs ~f:(fun lib_dir ->
+        Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
+        |> Dune_engine.Dep.alias)
+      |> Dune_engine.Dep.Set.of_list
+    in
+    Rules.Produce.Alias.add_deps pkg_alias (Action_builder.deps lib_alias_deps)
+  ) else
+    Memo.return ()
+;;
+
 let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
   let ctx = Super_context.context sctx in
 
@@ -1652,178 +1694,85 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
   (* Determine which operation to perform based on path_prefix *)
   let rules = match path_prefix with
     | "_odoc" ->
-      (* Compilation: use compile_library_artifacts helper *)
+      (* Compilation *)
       Rules.collect_unit (fun () ->
         let* lib_alias_dirs =
           Lib_name.Map.to_list artifacts_by_lib
           |> Memo.List.map ~f:(fun (lib_name, lib_artifacts) ->
             if List.is_empty lib_artifacts then
-              (* For v2 libraries (contains '@'), don't append lib_name since pkg_or_lib_name already identifies the library *)
-              let dir_path =
-                if String.contains pkg_or_lib_name '@' then
-                  Paths.root ctx ++ path_prefix ++ pkg_or_lib_name
-                else
-                  Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name
-              in
-              Memo.return dir_path
-            else (
-              (* Separate Page artifacts from Module artifacts *)
-              let page_artifacts, module_artifacts =
-                List.partition_map lib_artifacts ~f:(fun artifact ->
-                  match artifact.kind with
-                  | Page _ -> Either.Left artifact
-                  | Module _ -> Either.Right artifact)
-              in
+              Memo.return (lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name)
+            else
+              let page_artifacts, module_artifacts = partition_artifacts lib_artifacts in
+
               Log.info [ Pp.textf "odoc v3: _odoc handler for lib_name=%s: %d pages, %d modules"
                           (Lib_name.to_string lib_name)
                           (List.length page_artifacts)
                           (List.length module_artifacts) ];
 
-              (* Compile Page artifacts (MLD files) without library dependencies *)
-              let* () =
-                Memo.parallel_iter page_artifacts ~f:(fun artifact ->
-                  compile_artifact sctx ~artifact)
-              in
+              (* Compile all artifacts *)
+              let* () = Memo.parallel_iter page_artifacts ~f:(fun artifact -> compile_artifact sctx ~artifact) in
+              let* () = Memo.parallel_iter module_artifacts ~f:(fun artifact -> compile_artifact sctx ~artifact) in
 
-              (* Compile Module artifacts with library dependencies *)
-              if List.is_empty module_artifacts then (
-                (* Only pages, no modules - return the output directory *)
-                let lib_odoc_dir = (List.hd page_artifacts).output_dir in
-
-                (* Set up .odoc-all alias for page odoc files *)
-                let odoc_files = List.map page_artifacts ~f:(fun artifact -> Path.build artifact.odoc_file) in
-                let odoc_path_set = Path.Set.of_list odoc_files in
-                let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
-                let* () = Rules.Produce.Alias.add_deps alias (Action_builder.path_set odoc_path_set) in
-                Memo.return lib_odoc_dir
-              ) else (
-                (* Compile modules with full dependency resolution *)
-                let* lib_odoc_dir = compile_library_artifacts sctx ctx ~pkg_name:pkg_or_lib_name ~lib_name ~lib_artifacts:module_artifacts in
-
-                (* Add page odoc files to the alias if we have both *)
-                if not (List.is_empty page_artifacts) then (
-                  let page_odoc_files = List.map page_artifacts ~f:(fun artifact -> Path.build artifact.odoc_file) in
-                  let page_odoc_set = Path.Set.of_list page_odoc_files in
-                  let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_odoc_dir in
-                  let* () = Rules.Produce.Alias.add_deps alias (Action_builder.path_set page_odoc_set) in
-                  Memo.return lib_odoc_dir
-                ) else
-                  Memo.return lib_odoc_dir
-              )
-            ))
+              (* Create library .odoc-all alias with all odoc files *)
+              let all_odoc_files = List.map lib_artifacts ~f:(fun a -> Path.build a.odoc_file) in
+              create_lib_alias ctx ~path_prefix ~pkg_or_lib_name ~lib_name ~file_paths:all_odoc_files
+            )
         in
-
-        (* Create package-level .odoc-all alias only for v3 packages (not v2 libraries).
-           For v2 libraries (contains '@'), the library-level alias IS the package-level alias
-           since there's only one library per "package". *)
-        if not (String.contains pkg_or_lib_name '@') then (
-          let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
-          let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_dir in
-          let lib_alias_deps =
-            List.map lib_alias_dirs ~f:(fun lib_dir ->
-              Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
-              |> Dune_engine.Dep.alias)
-            |> Dune_engine.Dep.Set.of_list
-          in
-          Rules.Produce.Alias.add_deps pkg_alias (Action_builder.deps lib_alias_deps)
-        ) else
-          Memo.return ()
+        create_pkg_alias_if_v3 ctx ~path_prefix ~pkg_or_lib_name ~lib_alias_dirs
       )
     | "_odocls" ->
-      (* Linking: link each artifact and create library-level aliases *)
+      (* Linking *)
       Rules.collect_unit (fun () ->
         Lib_name.Map.to_list artifacts_by_lib
         |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
           if List.is_empty lib_artifacts then
             Memo.return ()
-          else (
-            (* Separate Page artifacts from Module artifacts *)
-            let page_artifacts, module_artifacts =
-              List.partition_map lib_artifacts ~f:(fun artifact ->
-                match artifact.kind with
-                | Page _ -> Either.Left artifact
-                | Module _ -> Either.Right artifact)
-            in
-            Log.info [ Pp.textf "odoc v3: _odocls handler for lib_name=%s: %d pages, %d modules (before filtering)"
+          else
+            let page_artifacts, module_artifacts = partition_artifacts lib_artifacts in
+            let visible_modules = List.filter module_artifacts ~f:(fun a -> not a.hidden) in
+
+            Log.info [ Pp.textf "odoc v3: _odocls handler for lib_name=%s: %d pages, %d modules (%d visible)"
                         (Lib_name.to_string lib_name)
                         (List.length page_artifacts)
-                        (List.length module_artifacts) ];
+                        (List.length module_artifacts)
+                        (List.length visible_modules) ];
 
-            (* Link Page artifacts (MLD files) without library dependencies *)
+            (* Link pages without dependencies *)
             let* () =
               Memo.parallel_iter page_artifacts ~f:(fun artifact ->
-                (* Pages don't have library dependencies or package alias dependencies
-                   to avoid cycles (page-index.odocl would depend on .odoc-all which includes page-index.odoc) *)
-                link_odoc_rules sctx artifact ~pkg:None ~requires:(Resolve.return [])
-              )
+                link_odoc_rules sctx artifact ~pkg:None ~requires:(Resolve.return []))
             in
 
-            (* Link Module artifacts with library dependencies *)
+            (* Link visible modules with library dependencies *)
             let* () =
-              if List.is_empty module_artifacts then (
-                Log.info [ Pp.textf "odoc v3: _odocls handler for lib_name=%s: no modules to link"
-                            (Lib_name.to_string lib_name) ];
+              if List.is_empty visible_modules then
                 Memo.return ()
-              )
-              else (
-                (* Filter out hidden modules using the artifact's hidden field *)
-                let visible_module_artifacts = List.filter module_artifacts ~f:(fun artifact ->
-                  not artifact.hidden
-                ) in
-                Log.info [ Pp.textf "odoc v3: _odocls handler for lib_name=%s: %d total modules, %d visible after filtering"
-                            (Lib_name.to_string lib_name)
-                            (List.length module_artifacts)
-                            (List.length visible_module_artifacts) ];
-
+              else
                 (* Get the library object for dependency resolution *)
-                (* Check if this is a v2 library (contains '@') to use the correct lib_db *)
                 let* lib_opt =
-                  if String.contains pkg_or_lib_name '@' then (
-                    (* v2 library: use Scope_key to get the correct scope's lib_db *)
+                  if String.contains pkg_or_lib_name '@' then
                     let* _lib_name, lib_db = Scope_key.of_string (Context.name ctx) pkg_or_lib_name in
                     Lib.DB.find lib_db lib_name
-                  ) else (
-                    (* v3 library: use public_libs *)
+                  else
                     let* lib_db = Scope.DB.public_libs (Context.name ctx) in
                     Lib.DB.find lib_db lib_name
-                  )
                 in
-
                 match lib_opt with
                 | None ->
-                  Log.info [ Pp.textf "odoc v3: Library %s not found in lib_db, skipping module artifacts"
-                              (Lib_name.to_string lib_name) ];
+                  Log.info [ Pp.textf "odoc v3: Library %s not found, skipping modules" (Lib_name.to_string lib_name) ];
                   Memo.return ()
                 | Some lib ->
-                  (* Get library dependencies for linking *)
                   let* requires = Lib.requires lib in
-
-                  (* Link each visible module artifact *)
-                  Memo.parallel_iter visible_module_artifacts ~f:(fun artifact ->
-                    (* Modules should not depend on the package-level .odoc-all alias
-                       to avoid cycles. They only need library dependencies via requires. *)
-                    link_odoc_rules sctx artifact ~pkg:None ~requires
-                  )
-              )
+                  Memo.parallel_iter visible_modules ~f:(fun artifact ->
+                    link_odoc_rules sctx artifact ~pkg:None ~requires)
             in
 
-            (* Set up .odoc-all alias for this library's odocl files (both pages and visible modules) *)
-            (* This is in the _odocls directory structure, completely separate from the _odoc aliases *)
-            (* Filter to only include visible modules (not hidden) and all pages *)
-            let visible_artifacts = List.filter lib_artifacts ~f:(fun artifact ->
-              not artifact.hidden
-            ) in
-            let odocl_files = List.map visible_artifacts ~f:(fun artifact -> Path.build artifact.odocl_file) in
-            (* For v2 libraries (contains '@'), don't append lib_name since pkg_or_lib_name already identifies the library *)
-            let lib_dir =
-              if String.contains pkg_or_lib_name '@' then
-                Paths.root ctx ++ path_prefix ++ pkg_or_lib_name
-              else
-                Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name
-            in
+            (* Create library .odoc-all alias with odocl files (only visible artifacts) *)
+            let visible_artifacts = List.filter lib_artifacts ~f:(fun a -> not a.hidden) in
+            let odocl_files = List.map visible_artifacts ~f:(fun a -> Path.build a.odocl_file) in
+            let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
             let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
-            Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files)
-          ))
+            Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files))
       )
     | _ -> failwith ("Unexpected path_prefix: " ^ path_prefix)
   in
