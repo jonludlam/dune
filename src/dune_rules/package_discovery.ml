@@ -266,6 +266,9 @@ let package_of_library t lib =
   let lib_name = Lib.name lib in
   Lib_name.Map.find t.package_of_lib lib_name
 
+let package_of_lib_name t lib_name =
+  Lib_name.Map.find t.package_of_lib lib_name
+
 let libraries_of_package t pkg =
   Package.Name.Map.find t.libs_of_package pkg |> Option.value ~default:[]
 

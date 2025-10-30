@@ -15,6 +15,9 @@ val create : context:Context.t -> t Memo.t
 (** Find which package a library belongs to *)
 val package_of_library : t -> Lib.t -> Package.Name.t option
 
+(** Find which package a library belongs to, given its name *)
+val package_of_lib_name : t -> Lib_name.t -> Package.Name.t option
+
 (** Get all libraries belonging to a specific package *)
 val libraries_of_package : t -> Package.Name.t -> Lib.t list
 
