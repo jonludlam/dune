@@ -955,9 +955,24 @@ let compile_artifact sctx ~artifact =
       )
   in
 
+  (* Compute library dependencies from the artifact's target *)
+  let* requires = match artifact.target with
+    | Lib lib -> Lib.requires (Lib.Local.to_lib lib)
+    | Pkg _ -> Memo.return (Resolve.return [])  (* Package-level artifacts have no library dependencies *)
+  in
+
+  (* Get stdlib and package_discovery for include flags *)
+  let* stdlib_opt = stdlib_lib (Context.name ctx) in
+  let* pkg_discovery = Package_discovery.create ~context:ctx in
+
+  (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases) *)
+  let lib_deps = Dep.deps ctx artifact.pkg requires in
+
   let run_odoc =
     let open Action_builder.With_targets.O in
+    (* Depend on: 1) intra-library module deps, 2) inter-library deps *)
     Action_builder.with_no_targets module_deps
+    >>> Action_builder.with_no_targets lib_deps
     >>> Action_builder.With_targets.add ~file_targets:[artifact.odoc_file]
       (run_odoc
         sctx
@@ -965,8 +980,8 @@ let compile_artifact sctx ~artifact =
         "compile"
         ~quiet:false
         ~flags_for:(Some artifact.odoc_file)
-        [ Command.Args.A "-I"
-        ; Command.Args.Path (Path.build artifact.output_dir)
+        [ (* Include paths for all dependency libraries including stdlib *)
+          odoc_include_flags ctx artifact.pkg ~stdlib_opt requires pkg_discovery
         ; Command.Args.A "--output-dir"
         ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
