@@ -804,8 +804,9 @@ let compile_artifact sctx ~artifact =
         "compile"
         ~quiet:false
         ~flags_for:(Some artifact.odoc_file)
-        [ (* Include paths for all dependency libraries including stdlib *)
-          odoc_include_flags ctx artifact.pkg ~stdlib_opt requires pkg_discovery
+        [ (* Include paths for all dependency libraries including stdlib.
+             Pass None for pkg to avoid adding our own package directory to -I paths. *)
+          odoc_include_flags ctx None ~stdlib_opt requires pkg_discovery
         ; Command.Args.A "--output-dir"
         ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
