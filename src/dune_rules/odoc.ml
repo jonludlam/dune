@@ -807,37 +807,6 @@ let compile_artifact sctx ~artifact =
   add_rule sctx run_odoc
 ;;
 
-(* Unified linking function that works for all artifact types.
-   This follows the driver's pattern where all information needed to link
-   is derived from the artifact itself. *)
-(* Compute requires for linking an artifact.
-   For modules: use the library's requires
-   For pages: use all libraries in the package (since pages document the whole package) *)
-let compute_link_requires sctx ~artifact =
-  let ctx = Super_context.context sctx in
-  match artifact.kind, artifact.target with
-  | Module _, Lib lib ->
-    (* Module in a library: use library's dependencies *)
-    Lib.requires (Lib.Local.to_lib lib)
-  | Page _, Pkg pkg ->
-    (* Page in a package: needs all libraries in that package *)
-    let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
-    Memo.return (Resolve.return (List.map local_libs ~f:Lib.Local.to_lib))
-  | Module _, Pkg _ ->
-    (* This shouldn't happen - modules should have Lib targets *)
-    Memo.return (Resolve.return [])
-  | Page _, Lib lib ->
-    (* Page in a library target - just use that library *)
-    Memo.return (Resolve.return [ Lib.Local.to_lib lib ])
-;;
-
-let link_artifact sctx ~artifact =
-  let* requires = compute_link_requires sctx ~artifact in
-
-  (* Call the existing link_odoc_rules with computed requires *)
-  link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
-;;
-
 let setup_generate sctx ~search_db odoc_file out =
   let ctx = Super_context.context sctx in
   let odoc_support_path = Paths.odoc_support ctx in
@@ -1013,6 +982,37 @@ let libs_of_pkg ctx ~pkg =
     match Lib.Local.to_lib lib |> Lib.info |> Lib_info.implements with
     | None -> Some lib
     | Some _ -> None)
+;;
+
+(* Compute requires for linking an artifact.
+   For modules: use the library's requires
+   For pages: use all libraries in the package (since pages document the whole package) *)
+let compute_link_requires sctx ~artifact =
+  let ctx = Super_context.context sctx in
+  match artifact.kind, artifact.target with
+  | Module _, Lib lib ->
+    (* Module in a library: use library's dependencies *)
+    Lib.requires (Lib.Local.to_lib lib)
+  | Page _, Pkg pkg ->
+    (* Page in a package: needs all libraries in that package *)
+    let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
+    Memo.return (Resolve.return (List.map local_libs ~f:Lib.Local.to_lib))
+  | Module _, Pkg _ ->
+    (* This shouldn't happen - modules should have Lib targets *)
+    Memo.return (Resolve.return [])
+  | Page _, Lib lib ->
+    (* Page in a library target - just use that library *)
+    Memo.return (Resolve.return [ Lib.Local.to_lib lib ])
+;;
+
+(* Unified linking function that works for all artifact types.
+   This follows the driver's pattern where all information needed to link
+   is derived from the artifact itself. *)
+let link_artifact sctx ~artifact =
+  let* requires = compute_link_requires sctx ~artifact in
+
+  (* Call the existing link_odoc_rules with computed requires *)
+  link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
 ;;
 
 let entry_modules_by_lib sctx lib =
@@ -1658,14 +1658,6 @@ let lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name =
     Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name
 ;;
 
-(* Partition artifacts by kind *)
-let partition_artifacts artifacts =
-  List.partition_map artifacts ~f:(fun artifact ->
-    match artifact.kind with
-    | Page _ -> Either.Left artifact
-    | Module _ -> Either.Right artifact)
-;;
-
 (* Helper to create a library-level .odoc-all alias *)
 let create_lib_alias ctx ~path_prefix ~pkg_or_lib_name ~lib_name ~file_paths =
   let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
@@ -1718,21 +1710,18 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           |> Memo.List.map ~f:(fun (lib_name, lib_artifacts) ->
             if List.is_empty lib_artifacts then
               Memo.return (lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name)
-            else
-              let page_artifacts, module_artifacts = partition_artifacts lib_artifacts in
-
-              Log.info [ Pp.textf "odoc v3: _odoc handler for lib_name=%s: %d pages, %d modules"
+            else (
+              Log.info [ Pp.textf "odoc v3: _odoc handler for lib_name=%s: %d artifacts"
                           (Lib_name.to_string lib_name)
-                          (List.length page_artifacts)
-                          (List.length module_artifacts) ];
+                          (List.length lib_artifacts) ];
 
               (* Compile all artifacts *)
-              let* () = Memo.parallel_iter page_artifacts ~f:(fun artifact -> compile_artifact sctx ~artifact) in
-              let* () = Memo.parallel_iter module_artifacts ~f:(fun artifact -> compile_artifact sctx ~artifact) in
+              let* () = Memo.parallel_iter lib_artifacts ~f:(fun artifact -> compile_artifact sctx ~artifact) in
 
               (* Create library .odoc-all alias with all odoc files *)
               let all_odoc_files = List.map lib_artifacts ~f:(fun a -> Path.build a.odoc_file) in
               create_lib_alias ctx ~path_prefix ~pkg_or_lib_name ~lib_name ~file_paths:all_odoc_files
+            )
             )
         in
         create_pkg_alias_if_v3 ctx ~path_prefix ~pkg_or_lib_name ~lib_alias_dirs
@@ -1744,15 +1733,13 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
         |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
           if List.is_empty lib_artifacts then
             Memo.return ()
-          else
+          else (
             (* Filter to only visible artifacts for linking *)
             let visible_artifacts = List.filter lib_artifacts ~f:(fun a -> not a.hidden) in
-            let page_artifacts, module_artifacts = partition_artifacts visible_artifacts in
 
-            Log.info [ Pp.textf "odoc v3: _odocls handler for lib_name=%s: %d pages, %d modules"
+            Log.info [ Pp.textf "odoc v3: _odocls handler for lib_name=%s: %d visible artifacts"
                         (Lib_name.to_string lib_name)
-                        (List.length page_artifacts)
-                        (List.length module_artifacts) ];
+                        (List.length visible_artifacts) ];
 
             (* Link all visible artifacts using link_artifact, which determines requires based on artifact type *)
             let* () = Memo.parallel_iter visible_artifacts ~f:(fun artifact -> link_artifact sctx ~artifact) in
@@ -1761,7 +1748,8 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
             let odocl_files = List.map visible_artifacts ~f:(fun a -> Path.build a.odocl_file) in
             let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
             let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
-            Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files))
+            Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files)
+          ))
       )
     | _ -> failwith ("Unexpected path_prefix: " ^ path_prefix)
   in
