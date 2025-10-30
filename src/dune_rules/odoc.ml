@@ -780,8 +780,17 @@ let compile_artifact sctx ~artifact =
   let* stdlib_opt = stdlib_lib (Context.name ctx) in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
 
-  (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases) *)
-  let lib_deps = Dep.deps ctx artifact.pkg requires in
+  (* Add stdlib to requires for dependency resolution *)
+  let requires_with_stdlib =
+    match stdlib_opt with
+    | Some stdlib -> Resolve.map requires ~f:(fun libs -> stdlib :: libs)
+    | None -> requires
+  in
+
+  (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases)
+     IMPORTANT: Pass None for pkg during compilation to avoid creating a dependency cycle
+     on our own package's .odoc-all alias. The package alias is only needed during linking. *)
+  let lib_deps = Dep.deps ctx None requires_with_stdlib in
 
   let run_odoc =
     let open Action_builder.With_targets.O in
