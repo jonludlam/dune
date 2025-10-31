@@ -742,7 +742,15 @@ let compile_artifact sctx ~artifact =
         add_rule sctx run_compile_deps
       in
 
-      (* Parse deps file and create dependencies on .odoc files in same library *)
+      (* Parse deps file and create dependencies on .odoc files.
+         NOTE: odoc compile-deps returns ALL module dependencies, including from other libraries.
+         However, inter-library dependencies are already handled by lib_deps below via Dep.deps,
+         so here we ONLY handle intra-library dependencies (modules in the same library).
+
+         For intra-library deps, we use a heuristic:
+         - Modules that start with "{LibName}__" or equal "{LibName}" are in the library
+         - All other modules (like Stdlib, CamlinternalFormatBasics) are from other libraries *)
+      let lib_prefix = String.capitalize_ascii (Lib_name.to_string artifact.lib_name) in
       Memo.return (
         let open Action_builder.O in
         let* lines = Action_builder.lines_of (Path.build deps_file) in
@@ -752,19 +760,29 @@ let compile_artifact sctx ~artifact =
             | [ m; _hash ] -> Some (Module_name.of_string m)
             | _ -> None)
         in
-        (* Find .odoc files for dependencies in the same library *)
+        (* Find .odoc files for dependencies in the same library.
+           Use naming convention: modules starting with LibName__ or equal to LibName. *)
         let dep_odoc_files =
           List.filter_map dep_modules ~f:(fun dep_module ->
             let dep_module_str = Module_name.to_string dep_module in
             if String.equal dep_module_str module_name_str then
               None  (* Skip self-dependencies *)
             else
-              (* Dependencies in same library will be in same output_dir *)
-              let dep_module_lower = String.uncapitalize_ascii dep_module_str in
-              let dep_odoc =
-                Path.Build.relative artifact.output_dir (dep_module_lower ^ ".odoc")
+              (* Check if this module is in our library by name prefix *)
+              let is_in_our_lib =
+                String.equal dep_module_str lib_prefix ||
+                String.is_prefix dep_module_str ~prefix:(lib_prefix ^ "__")
               in
-              Some (Path.build dep_odoc))
+              if is_in_our_lib then
+                (* Module is in our library - use same output_dir *)
+                let dep_module_lower = String.uncapitalize_ascii dep_module_str in
+                let dep_odoc =
+                  Path.Build.relative artifact.output_dir (dep_module_lower ^ ".odoc")
+                in
+                Some (Path.build dep_odoc)
+              else
+                (* Module is from another library - skip it, handled by lib_deps *)
+                None)
         in
         Dune_engine.Dep.Set.of_files dep_odoc_files |> Action_builder.deps
       )
@@ -814,8 +832,9 @@ let compile_artifact sctx ~artifact =
         ~quiet:false
         ~flags_for:(Some artifact.odoc_file)
         [ (* Include paths for all dependency libraries including stdlib.
-             Pass None for pkg to avoid adding our own package directory to -I paths. *)
-          odoc_include_flags ctx None ~stdlib_opt requires pkg_discovery
+             Pass None for pkg to avoid adding our own package directory to -I paths.
+             Use requires_with_stdlib so stdlib is included in the dependencies. *)
+          odoc_include_flags ctx None ~stdlib_opt requires_with_stdlib pkg_discovery
         ; Command.Args.A "--output-dir"
         ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
