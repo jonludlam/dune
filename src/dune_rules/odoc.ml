@@ -1261,38 +1261,37 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : artifact li
   (* Get Lib_info to access module information *)
   let info = Lib.info lib in
 
-  (* For installed libraries, we need to get ALL modules (not just entry modules)
-     to ensure hidden wrapped modules are also compiled. *)
-  let modules_source = Lib_info.modules info in
+  (* For installed libraries, Lib_info.modules is not populated.
+     Instead, we need to use entry_modules which gives us the module names.
+     Then we can use Package_discovery to find the source files. *)
+  let entry_modules_source = Lib_info.entry_modules info in
 
-  (* Pattern match on Source.t to extract all modules *)
-  let modules = match modules_source with
+  (* Pattern match on Source.t to extract entry module names *)
+  let module_names = match entry_modules_source with
   | Lib_info.Source.Local ->
     (* This shouldn't happen for installed libraries *)
     Log.info [ Pp.textf "odoc v3: Unexpected Local source for installed library %s/%s"
                  pkg_name_str lib_name_str ];
     []
-  | Lib_info.Source.External modules_opt ->
-    match modules_opt with
-    | None ->
-      Log.info [ Pp.textf "odoc v3: No modules info for installed library %s/%s"
+  | Lib_info.Source.External result ->
+    (* entry_modules returns a Result.t *)
+    match result with
+    | Error _msg ->
+      Log.info [ Pp.textf "odoc v3: Error getting entry modules for installed library %s/%s"
                    pkg_name_str lib_name_str ];
       []
-    | Some modules_with_vlib ->
-      (* Modules.With_vlib.t contains all modules - extract the Modules.t and get module info *)
-      let all_modules = Modules.With_vlib.drop_vlib modules_with_vlib in
-      let module_list = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
-      Log.info [ Pp.textf "odoc v3: Found %d modules (including hidden) for installed library %s/%s via Lib_info.modules"
-                   (List.length module_list) pkg_name_str lib_name_str ];
-      module_list
+    | Ok module_names ->
+      Log.info [ Pp.textf "odoc v3: Found %d entry modules for installed library %s/%s via Lib_info"
+                   (List.length module_names) pkg_name_str lib_name_str ];
+      module_names
   in
 
-  if List.is_empty modules then
+  if List.is_empty module_names then
     Memo.return []
   else (
 
     (* Compute the set of all module names in this library *)
-    let lib_modules = Module_name.Set.of_list (List.map modules ~f:Module.name) in
+    let lib_modules = Module_name.Set.of_list module_names in
 
     (* Create artifacts for each module *)
     (* Get Package_discovery to find source files - Package_discovery uses opam metadata,
@@ -1318,8 +1317,8 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : artifact li
 
     let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
 
-    let artifacts = List.filter_map modules ~f:(fun module_ ->
-      let module_name = Module.name module_ |> Module_name.to_string in
+    let artifacts = List.filter_map module_names ~f:(fun module_name_t ->
+      let module_name = Module_name.to_string module_name_t in
       (* Use Package_discovery to find the source file - this uses opam metadata *)
       match Package_discovery.module_source_file pkg_discovery ~lib ~module_name with
       | None ->
@@ -1327,8 +1326,8 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : artifact li
                        module_name pkg_name_str lib_name_str ];
           None
       | Some src_path ->
-          (* Get visibility from the Module object *)
-          let visible = Module.visibility module_ = Visibility.Public in
+          (* Entry modules are public by definition *)
+          let visible = true in
           Some (create_artifact_installed ctx ~pkg ~lib_name ~module_name
                   ~archive:default_archive
                   ~visible
