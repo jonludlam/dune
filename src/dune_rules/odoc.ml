@@ -1551,9 +1551,14 @@ let odoc_artefacts sctx target =
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
-    let pkg = Lib_info.package info |> Option.value_exn in
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-    let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+    let pkg_opt = Lib_info.package info in
+    let* odoc_config =
+      match pkg_opt with
+      | None -> Memo.return Odoc_config.empty
+      | Some pkg ->
+        let+ pkg_discovery = Package_discovery.create ~context:ctx in
+        Package_discovery.config_of_package pkg_discovery pkg
+    in
     (* Get ALL modules, not just entry modules *)
     let+ all_modules = Dir_contents.modules_of_local_lib sctx lib in
     let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
