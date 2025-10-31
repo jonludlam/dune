@@ -1535,9 +1535,11 @@ let odoc_artefacts sctx target =
         | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
         | Some _ as s -> s)
     in
+    (* Pages don't have modules *)
+    let lib_modules = Module_name.Set.empty in
     Filename.Map.to_list_map mlds ~f:(fun name mld ->
       let kind = Page { name } in
-      create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config)
+      create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
@@ -1548,6 +1550,13 @@ let odoc_artefacts sctx target =
     let+ all_modules = Dir_contents.modules_of_local_lib sctx lib in
     let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
 
+    (* Compute the set of all module names in this library *)
+    let lib_modules =
+      modules
+      |> List.map ~f:(fun m -> Module.name m)
+      |> Module_name.Set.of_list
+    in
+
     List.map modules ~f:(fun m ->
       let visible = Module.visibility m = Visibility.Public in
       let module_name = Module.name m in
@@ -1555,7 +1564,7 @@ let odoc_artefacts sctx target =
 
       (* Get the source file (.cmti or .cmt) for this module *)
       let source = Obj_dir.Module.cmti_file obj_dir m ~cm_kind:(Ocaml Cmi) in
-      create_artifact_local ctx ~target ~source ~kind ~odoc_config)
+      create_artifact_local ctx ~target ~source ~kind ~odoc_config ~lib_modules)
 ;;
 
 (* Helper to group artifacts by library name *)
