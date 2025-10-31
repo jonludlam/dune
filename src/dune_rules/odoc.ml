@@ -2103,7 +2103,7 @@ let setup_installed_lib_html sctx lib =
         | archives ->
           List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
       in
-      let module_names =
+      let all_module_names =
         List.concat_map classify_lines ~f:(fun line ->
           match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
           | [] -> []
@@ -2114,7 +2114,25 @@ let setup_installed_lib_html sctx lib =
         )
       in
 
-      (* Generate HTML for each module *)
+      (* Filter to only entry/visible modules - don't generate HTML for hidden modules *)
+      let info = Lib.info lib in
+      let entry_modules_source = Lib_info.entry_modules info in
+      let entry_module_names = match entry_modules_source with
+      | Lib_info.Source.Local -> []
+      | Lib_info.Source.External result ->
+        match result with
+        | Error _msg -> []
+        | Ok module_names -> List.map module_names ~f:Module_name.to_string
+      in
+
+      let module_names = List.filter all_module_names ~f:(fun mod_name ->
+        List.mem entry_module_names mod_name ~equal:String.equal
+      ) in
+
+      Log.info [ Pp.textf "odoc v3: setup_installed_lib_html: lib %s/%s has %d total modules, %d visible modules"
+                   pkg_name_str lib_name_str (List.length all_module_names) (List.length module_names) ];
+
+      (* Generate HTML for each visible module *)
       Memo.parallel_iter module_names ~f:(fun module_name ->
         let module_name_lower = String.uncapitalize_ascii module_name in
         let odocl_file =
