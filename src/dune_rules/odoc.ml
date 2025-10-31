@@ -780,11 +780,20 @@ let compile_artifact sctx ~artifact =
   let* stdlib_opt = stdlib_lib (Context.name ctx) in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
 
-  (* Add stdlib to requires for dependency resolution *)
+  (* Add stdlib to requires for dependency resolution, but NOT if we're compiling stdlib itself.
+     Check if this artifact is part of stdlib by comparing library names. *)
+  let is_stdlib_artifact =
+    match stdlib_opt with
+    | Some stdlib -> Lib_name.equal (Lib.name stdlib) artifact.lib_name
+    | None -> false
+  in
+
   let requires_with_stdlib =
     match stdlib_opt with
-    | Some stdlib -> Resolve.map requires ~f:(fun libs -> stdlib :: libs)
-    | None -> requires
+    | Some stdlib when not is_stdlib_artifact ->
+      (* Add stdlib as a dependency, but not for stdlib's own modules *)
+      Resolve.map requires ~f:(fun libs -> stdlib :: libs)
+    | _ -> requires
   in
 
   (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases)
