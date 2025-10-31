@@ -1854,7 +1854,9 @@ let setup_lib_odocl_rules_def =
   end
   in
   let f (sctx, lib, requires) =
-    let* odocs = odoc_artefacts sctx (Lib lib) in
+    let* all_odocs = odoc_artefacts sctx (Lib lib) in
+    (* Filter out hidden modules - they don't need odocl files since they don't have HTML generated *)
+    let odocs = List.filter all_odocs ~f:(fun odoc -> not odoc.hidden) in
     let pkg = Lib_info.package (Lib.Local.info lib) in
     Memo.parallel_iter odocs ~f:(fun odoc -> link_odoc_rules sctx ~pkg ~requires odoc)
   in
@@ -1969,9 +1971,11 @@ let search_db_for_lib sctx lib =
   let ctx = Super_context.context sctx in
   let dir = Paths.html ctx target in
   Log.info [ Pp.textf "odoc v3: search_db_for_lib getting odocs" ];
-  let* odocs = odoc_artefacts sctx target in
+  let* all_odocs = odoc_artefacts sctx target in
+  (* Filter out hidden modules - they don't have odocl files *)
+  let odocs = List.filter all_odocs ~f:(fun odoc -> not odoc.hidden) in
   let odocls = List.map odocs ~f:(fun odoc -> odoc.odocl_file) in
-  Log.info [ Pp.textf "odoc v3: search_db_for_lib calling Sherlodoc.search_db" ];
+  Log.info [ Pp.textf "odoc v3: search_db_for_lib calling Sherlodoc.search_db with %d odocls" (List.length odocls) ];
   let* result = Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls in
   Log.info [ Pp.textf "odoc v3: search_db_for_lib done" ];
   Memo.return result
