@@ -28,6 +28,10 @@ val mlds_of_package : t -> Package.Name.t -> Path.t list
     Returns the path to the .cmti file if it exists, otherwise .cmt *)
 val module_source_file : t -> lib:Lib.t -> module_name:string -> Path.t option
 
+(** Get all module names for an installed library by examining installed files.
+    Returns both public and hidden modules. *)
+val all_modules_of_library : t -> Lib.t -> string list
+
 (** Get the odoc configuration for a specific package *)
 val config_of_package : t -> Package.Name.t -> Odoc_config.t
 

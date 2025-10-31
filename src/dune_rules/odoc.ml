@@ -1261,82 +1261,90 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : artifact li
   (* Get Lib_info to access module information *)
   let info = Lib.info lib in
 
-  (* For installed libraries, Lib_info.modules is not populated.
-     Instead, we need to use entry_modules which gives us the module names.
-     Then we can use Package_discovery to find the source files. *)
-  let entry_modules_source = Lib_info.entry_modules info in
-
-  (* Pattern match on Source.t to extract entry module names *)
-  let module_names = match entry_modules_source with
-  | Lib_info.Source.Local ->
-    (* This shouldn't happen for installed libraries *)
-    Log.info [ Pp.textf "odoc v3: Unexpected Local source for installed library %s/%s"
-                 pkg_name_str lib_name_str ];
-    []
-  | Lib_info.Source.External result ->
-    (* entry_modules returns a Result.t *)
-    match result with
-    | Error _msg ->
-      Log.info [ Pp.textf "odoc v3: Error getting entry modules for installed library %s/%s"
-                   pkg_name_str lib_name_str ];
-      []
-    | Ok module_names ->
-      Log.info [ Pp.textf "odoc v3: Found %d entry modules for installed library %s/%s via Lib_info"
-                   (List.length module_names) pkg_name_str lib_name_str ];
-      module_names
+  (* Get archive information - this tells us which .cma/.cmxa belongs to this library *)
+  let archives = Lib_info.archives info in
+  let archive_names =
+    let byte_archives = Mode.Dict.get archives Mode.Byte in
+    match byte_archives with
+    | [] ->
+      if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
+      then [ "stdlib" ]
+      else []
+    | archives ->
+      List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
   in
 
-  if List.is_empty module_names then
+  if List.is_empty archive_names then (
+    Log.info [ Pp.textf "odoc v3: No archives found for installed library %s/%s, skipping"
+                 pkg_name_str lib_name_str ];
     Memo.return []
-  else (
+  ) else (
+    let default_archive = List.hd archive_names in
 
-    (* Compute the set of all module names in this library *)
-    let lib_modules = Module_name.Set.of_list module_names in
+    (* Read the classify file to get ALL modules for this library's archive *)
+    let classify_path = Paths.root ctx ++ "classify" ++ pkg_name_str ++ lib_name_str ++ "odoc.classify" in
+    let* classify_content = Build_system.read_file (Path.build classify_path) in
+    let classify_lines = String.split_lines classify_content in
 
-    (* Create artifacts for each module *)
-    (* Get Package_discovery to find source files - Package_discovery uses opam metadata,
-       not filesystem scanning *)
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-
-    (* Get archive information for naming *)
-    let archives = Lib_info.archives info in
-    let archive_names =
-      let byte_archives = Mode.Dict.get archives Mode.Byte in
-      match byte_archives with
-      | [] ->
-        if Lib_name.equal lib_name (Lib_name.of_string "stdlib")
-        then [ "stdlib" ]
-        else []
-      | archives ->
-        List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
-    in
-    let default_archive = match archive_names with
-      | [] -> "unknown"
-      | archive :: _ -> archive
+    (* Parse classify output: each line is "archive_name Module1 Module2 ..." *)
+    let all_module_names =
+      List.concat_map classify_lines ~f:(fun line ->
+        match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
+        | [] -> []
+        | archive :: mods ->
+          (* Check if this line is for one of our archives *)
+          if List.mem archive_names archive ~equal:String.equal
+          then mods
+          else []
+      )
     in
 
-    let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+    Log.info [ Pp.textf "odoc v3: Found %d modules for installed library %s/%s via odoc classify"
+                 (List.length all_module_names) pkg_name_str lib_name_str ];
 
-    let artifacts = List.filter_map module_names ~f:(fun module_name_t ->
-      let module_name = Module_name.to_string module_name_t in
-      (* Use Package_discovery to find the source file - this uses opam metadata *)
-      match Package_discovery.module_source_file pkg_discovery ~lib ~module_name with
-      | None ->
-          Log.info [ Pp.textf "odoc v3: Could not find source file for module %s in library %s/%s"
-                       module_name pkg_name_str lib_name_str ];
-          None
-      | Some src_path ->
-          (* Entry modules are public by definition *)
-          let visible = true in
-          Some (create_artifact_installed ctx ~pkg ~lib_name ~module_name
-                  ~archive:default_archive
-                  ~visible
-                  ~src_path
-                  ~odoc_config
-                  ~lib_modules)
-    ) in
+    if List.is_empty all_module_names then
+      Memo.return []
+    else (
+      (* Get entry modules to determine visibility *)
+      let entry_modules_source = Lib_info.entry_modules info in
+      let entry_module_names = match entry_modules_source with
+      | Lib_info.Source.Local -> []
+      | Lib_info.Source.External result ->
+        match result with
+        | Error _msg -> []
+        | Ok module_names -> List.map module_names ~f:Module_name.to_string
+      in
 
-    Memo.return artifacts
+      (* Compute the set of all module names in this library *)
+      let lib_modules = Module_name.Set.of_list
+        (List.map all_module_names ~f:Module_name.of_string) in
+
+      (* Get Package_discovery for source file resolution and config *)
+      let* pkg_discovery = Package_discovery.create ~context:ctx in
+      let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+
+      (* Create artifacts for ALL modules *)
+      let+ all_module_artifacts =
+        Memo.parallel_map all_module_names ~f:(fun module_name ->
+          match Package_discovery.module_source_file pkg_discovery ~lib ~module_name with
+          | Some src_path ->
+            (* Determine visibility: entry modules are visible, others are hidden *)
+            let visible = List.mem entry_module_names module_name ~equal:String.equal in
+            Memo.return (Some (create_artifact_installed ctx ~pkg ~lib_name ~module_name
+                        ~archive:default_archive
+                        ~visible
+                        ~src_path
+                        ~odoc_config
+                        ~lib_modules))
+          | None ->
+            Log.info [ Pp.textf "odoc v3: Could not find source file for module %s in %s/%s"
+                         module_name pkg_name_str lib_name_str ];
+            Memo.return None
+        )
+      in
+
+      List.filter_map all_module_artifacts ~f:Fun.id
+    )
   )
 ;;
 

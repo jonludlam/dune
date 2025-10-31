@@ -333,6 +333,74 @@ let module_source_file t ~lib ~module_name =
         else
           None
 
+let all_modules_of_library t lib =
+  (* Get all module names for this library from installed files *)
+  match t.opam_prefix with
+  | None -> []
+  | Some prefix ->
+    let info = Lib.info lib in
+    let src_dir = Lib_info.src_dir info in
+    let lib_name = Lib.name lib in
+
+    (* Get the package this library belongs to *)
+    match Lib_name.Map.find t.package_of_lib lib_name with
+    | None -> []
+    | Some pkg ->
+      (* Get installed files for this package *)
+      match Package.Name.Map.find t.installed_files pkg with
+      | None -> []
+      | Some files ->
+        (* Build the relative path from opam prefix to the source directory *)
+        let src_dir_str = Path.to_string src_dir in
+        let prefix_str = Path.to_string prefix in
+
+        let rel_dir =
+          if String.is_prefix src_dir_str ~prefix:prefix_str then
+            let prefix_len = String.length prefix_str in
+            let src_len = String.length src_dir_str in
+            if prefix_len < src_len && src_dir_str.[prefix_len] = '/' then
+              String.sub src_dir_str ~pos:(prefix_len + 1) ~len:(src_len - prefix_len - 1)
+            else if prefix_len = src_len then
+              ""
+            else
+              src_dir_str
+          else
+            src_dir_str
+        in
+
+        (* Find all .cmti or .cmt files in the library directory *)
+        let module_names =
+          List.filter_map files ~f:(fun file_rel ->
+            (* Check if this file is in the library's directory *)
+            let matches_dir =
+              if String.is_empty rel_dir then
+                not (String.contains file_rel '/')
+              else
+                String.is_prefix file_rel ~prefix:(rel_dir ^ "/")
+            in
+
+            if matches_dir then
+              (* Extract basename *)
+              let basename = Filename.basename file_rel in
+              (* Check if it's a .cmti or .cmt file *)
+              if String.is_suffix basename ~suffix:".cmti" then
+                match String.drop_suffix basename ~suffix:".cmti" with
+                | Some module_name -> Some (String.capitalize_ascii module_name)
+                | None -> None
+              else if String.is_suffix basename ~suffix:".cmt" && not (String.is_suffix basename ~suffix:".cmti") then
+                match String.drop_suffix basename ~suffix:".cmt" with
+                | Some module_name -> Some (String.capitalize_ascii module_name)
+                | None -> None
+              else
+                None
+            else
+              None
+          )
+        in
+
+        (* Remove duplicates (in case both .cmt and .cmti exist) *)
+        List.sort_uniq module_names ~compare:String.compare
+
 let config_of_package t pkg =
   Package.Name.Map.find t.config_of_package pkg |> Option.value ~default:Odoc_config.empty
 
