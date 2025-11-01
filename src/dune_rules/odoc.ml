@@ -1530,54 +1530,46 @@ let check_mlds_no_dupes ~pkg ~mlds =
       ]
 ;;
 
+(* Unified artifact discovery function that replaces the old v2 odoc_artefacts.
+   This uses the v3 discover_* functions for consistency. *)
 let odoc_artefacts sctx target =
   let ctx = Super_context.context sctx in
   match target with
   | Pkg pkg ->
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-    let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-    let+ mlds =
-      let+ mlds = Packages.mlds sctx pkg in
-      let mlds = check_mlds_no_dupes ~pkg ~mlds in
-      Filename.Map.update mlds "index" ~f:(function
-        | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
-        | Some _ as s -> s)
+    (* For packages, get mld artifacts - both local and installed *)
+    let* packages = Dune_load.packages () in
+    (match Package.Name.Map.find packages pkg with
+    | Some _local_pkg ->
+      (* Local package - use Packages.mlds *)
+      let* pkg_discovery = Package_discovery.create ~context:ctx in
+      let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+      let+ mlds =
+        let+ mlds = Packages.mlds sctx pkg in
+        let mlds = check_mlds_no_dupes ~pkg ~mlds in
+        Filename.Map.update mlds "index" ~f:(function
+          | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
+          | Some _ as s -> s)
+      in
+      (* Pages don't have modules *)
+      let lib_modules = Module_name.Set.empty in
+      Filename.Map.to_list_map mlds ~f:(fun name mld ->
+        let kind = Page { name } in
+        create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
+    | None ->
+      (* Installed package - use discover_installed_pkg_mld_artifacts *)
+      discover_installed_pkg_mld_artifacts ctx ~pkg)
+  | Lib local_lib ->
+    (* For libraries, use the v3 unified discovery system *)
+    let lib = Lib.Local.to_lib local_lib in
+    let lib_name = Lib.name lib in
+    let* pkg =
+      match Lib.info lib |> Lib_info.package with
+      | Some pkg -> Memo.return pkg
+      | None ->
+        (* Library without package - use a dummy package name *)
+        Memo.return (Package.Name.of_string "_unknown_")
     in
-    (* Pages don't have modules *)
-    let lib_modules = Module_name.Set.empty in
-    Filename.Map.to_list_map mlds ~f:(fun name mld ->
-      let kind = Page { name } in
-      create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
-  | Lib lib ->
-    let info = Lib.Local.info lib in
-    let obj_dir = Lib_info.obj_dir info in
-    let pkg_opt = Lib_info.package info in
-    let* odoc_config =
-      match pkg_opt with
-      | None -> Memo.return Odoc_config.empty
-      | Some pkg ->
-        let+ pkg_discovery = Package_discovery.create ~context:ctx in
-        Package_discovery.config_of_package pkg_discovery pkg
-    in
-    (* Get ALL modules, not just entry modules *)
-    let+ all_modules = Dir_contents.modules_of_local_lib sctx lib in
-    let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
-
-    (* Compute the set of all module names in this library *)
-    let lib_modules =
-      modules
-      |> List.map ~f:(fun m -> Module.name m)
-      |> Module_name.Set.of_list
-    in
-
-    List.map modules ~f:(fun m ->
-      let visible = Module.visibility m = Visibility.Public in
-      let module_name = Module.name m in
-      let kind = Module { visible; module_name } in
-
-      (* Get the source file (.cmti or .cmt) for this module *)
-      let source = Obj_dir.Module.cmti_file obj_dir m ~cm_kind:(Ocaml Cmi) in
-      create_artifact_local ctx ~target ~source ~kind ~odoc_config ~lib_modules)
+    discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib
 ;;
 
 (* Helper to group artifacts by library name *)
