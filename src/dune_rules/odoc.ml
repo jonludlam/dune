@@ -1892,13 +1892,34 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
 
         (* Create format aliases for all output formats *)
         let pkg_name = Package.Name.of_string pkg_or_lib_name in
-        Output_format.iter ~f:(fun output ->
-          let paths = List.map visible_artifacts ~f:(fun artifact ->
+        let* () = Output_format.iter ~f:(fun output ->
+          (* Create package-level alias with all HTML files *)
+          let all_paths = List.map visible_artifacts ~f:(fun artifact ->
             Path.build (Output_format.target output artifact)
           ) in
-          (* Determine the alias - for packages use Pkg, for libraries use Lib *)
-          let alias = Dep.format_alias output ctx (Pkg pkg_name) in
-          Rules.Produce.Alias.add_deps alias (Action_builder.paths paths)
+          let pkg_alias = Dep.format_alias output ctx (Pkg pkg_name) in
+          Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_paths)
+        ) in
+
+        (* Also create library-level aliases for each library *)
+        Lib_name.Map.to_list artifacts_by_lib
+        |> Memo.parallel_iter ~f:(fun (_lib_name, lib_artifacts) ->
+          let visible_lib_artifacts = List.filter lib_artifacts ~f:(fun a -> not a.hidden) in
+          if List.is_empty visible_lib_artifacts then
+            Memo.return ()
+          else
+            Output_format.iter ~f:(fun output ->
+              let lib_paths = List.map visible_lib_artifacts ~f:(fun artifact ->
+                Path.build (Output_format.target output artifact)
+              ) in
+              (* Create library-level alias - need to find the Lib.Local.t for this lib_name *)
+              (* For now, use the artifact's target which should be Lib lib *)
+              match (List.hd visible_lib_artifacts).target with
+              | Lib lib ->
+                let lib_alias = Dep.format_alias output ctx (Lib lib) in
+                Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths lib_paths)
+              | Pkg _ -> Memo.return ()  (* Package artifacts don't have library aliases *)
+            )
         )
       )
     | _ -> failwith ("Unexpected path_prefix: " ^ path_prefix)
