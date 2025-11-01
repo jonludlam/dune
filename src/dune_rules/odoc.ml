@@ -1822,72 +1822,9 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
        rules)
 ;;
 
-let setup_lib_odocl_rules_def =
-  let module Input = struct
-    module Super_context = Super_context.As_memo_key
-
-    type t = Super_context.t * Lib.Local.t * Lib.t list Resolve.t
-
-    let equal (sc1, l1, r1) (sc2, l2, r2) =
-      Super_context.equal sc1 sc2
-      && Lib.Local.equal l1 l2
-      && Resolve.equal (List.equal Lib.equal) r1 r2
-    ;;
-
-    let hash (sc, l, r) =
-      Poly.hash
-        (Super_context.hash sc, Lib.Local.hash l, Resolve.hash (List.hash Lib.hash) r)
-    ;;
-
-    let to_dyn _ = Dyn.Opaque
-  end
-  in
-  let f (sctx, lib, requires) =
-    let ctx = Super_context.context sctx in
-    let lib_full = Lib.Local.to_lib lib in
-    let lib_name = Lib.name lib_full in
-    let* pkg =
-      match Lib_info.package (Lib.Local.info lib) with
-      | Some p -> Memo.return p
-      | None -> Memo.return (Package.Name.of_string "_unknown_")
-    in
-    let* all_odocs = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib:lib_full in
-    (* Filter out hidden modules - they don't need odocl files since they don't have HTML generated *)
-    let odocs = List.filter all_odocs ~f:(fun odoc -> not odoc.hidden) in
-    let pkg = Lib_info.package (Lib.Local.info lib) in
-    Memo.parallel_iter odocs ~f:(fun odoc -> link_odoc_rules sctx ~pkg ~requires odoc)
-  in
-  Memo.With_implicit_output.create
-    "setup_library_odocls_rules"
-    ~implicit_output:Rules.implicit_output
-    ~input:(module Input)
-    f
-;;
-
-let setup_lib_odocl_rules sctx lib ~requires =
-  Memo.With_implicit_output.exec setup_lib_odocl_rules_def (sctx, lib, requires)
-;;
-
-let setup_pkg_rules_def memo_name f =
-  let module Input = struct
-    module Super_context = Super_context.As_memo_key
-
-    type t = Super_context.t * Package.Name.t
-
-    let equal (s1, p1) (s2, p2) = Package.Name.equal p1 p2 && Super_context.equal s1 s2
-    let hash = Tuple.T2.hash Super_context.hash Package.Name.hash
-    let to_dyn (_, package) = Package.Name.to_dyn package
-  end
-  in
-  Memo.With_implicit_output.create
-    memo_name
-    ~input:(module Input)
-    ~implicit_output:Rules.implicit_output
-    f
-;;
-
-(* setup_pkg_odocl_rules was removed - it's dead code never called.
-   The v3 system handles odocl generation through handle_package_artifacts instead. *)
+(* setup_lib_odocl_rules and setup_pkg_odocl_rules were removed - dead code never called.
+   The v3 system handles odocl linking through handle_package_artifacts which calls
+   link_artifact for each artifact. This is cleaner and more unified. *)
 
 let out_file (output : Output_format.t) odoc =
   match output with
