@@ -1530,46 +1530,29 @@ let check_mlds_no_dupes ~pkg ~mlds =
       ]
 ;;
 
-(* Unified artifact discovery function that replaces the old v2 odoc_artefacts.
-   This uses the v3 discover_* functions for consistency. *)
-let odoc_artefacts sctx target =
-  let ctx = Super_context.context sctx in
-  match target with
-  | Pkg pkg ->
-    (* For packages, get mld artifacts - both local and installed *)
-    let* packages = Dune_load.packages () in
-    (match Package.Name.Map.find packages pkg with
-    | Some _local_pkg ->
-      (* Local package - use Packages.mlds *)
-      let* pkg_discovery = Package_discovery.create ~context:ctx in
-      let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-      let+ mlds =
-        let+ mlds = Packages.mlds sctx pkg in
-        let mlds = check_mlds_no_dupes ~pkg ~mlds in
-        Filename.Map.update mlds "index" ~f:(function
-          | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
-          | Some _ as s -> s)
-      in
-      (* Pages don't have modules *)
-      let lib_modules = Module_name.Set.empty in
-      Filename.Map.to_list_map mlds ~f:(fun name mld ->
-        let kind = Page { name } in
-        create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
-    | None ->
-      (* Installed package - use discover_installed_pkg_mld_artifacts *)
-      discover_installed_pkg_mld_artifacts ctx ~pkg)
-  | Lib local_lib ->
-    (* For libraries, use the v3 unified discovery system *)
-    let lib = Lib.Local.to_lib local_lib in
-    let lib_name = Lib.name lib in
-    let* pkg =
-      match Lib.info lib |> Lib_info.package with
-      | Some pkg -> Memo.return pkg
-      | None ->
-        (* Library without package - use a dummy package name *)
-        Memo.return (Package.Name.of_string "_unknown_")
+(* Helper to get mld artifacts for a package - both local and installed *)
+let get_pkg_mld_artifacts sctx ctx pkg =
+  let* packages = Dune_load.packages () in
+  match Package.Name.Map.find packages pkg with
+  | Some _local_pkg ->
+    (* Local package - use Packages.mlds *)
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+    let+ mlds =
+      let+ mlds = Packages.mlds sctx pkg in
+      let mlds = check_mlds_no_dupes ~pkg ~mlds in
+      Filename.Map.update mlds "index" ~f:(function
+        | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
+        | Some _ as s -> s)
     in
-    discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib
+    let lib_modules = Module_name.Set.empty in
+    let target = Pkg pkg in
+    Filename.Map.to_list_map mlds ~f:(fun name mld ->
+      let kind = Page { name } in
+      create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
+  | None ->
+    (* Installed package - use discover_installed_pkg_mld_artifacts *)
+    discover_installed_pkg_mld_artifacts ctx ~pkg
 ;;
 
 (* Helper to group artifacts by library name *)
@@ -1657,8 +1640,22 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
         Lib.name (Lib.Local.to_lib local_lib) |> Lib_name.to_string
       ) in
 
-      (* Get package-level mld artifacts *)
-      let* pkg_artifacts = odoc_artefacts sctx (Pkg pkg) in
+      (* Get package-level mld artifacts directly *)
+      let* pkg_discovery = Package_discovery.create ~context:ctx in
+      let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+      let* pkg_artifacts =
+        let+ mlds = Packages.mlds sctx pkg in
+        let mlds = check_mlds_no_dupes ~pkg ~mlds in
+        let mlds = Filename.Map.update mlds "index" ~f:(function
+          | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
+          | Some _ as s -> s)
+        in
+        let lib_modules = Module_name.Set.empty in
+        let target = Pkg pkg in
+        Filename.Map.to_list_map mlds ~f:(fun name mld ->
+          let kind = Page { name } in
+          create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
+      in
 
       (* Get artifacts for all libraries in this package *)
       let* lib_artifacts_list =
@@ -1846,7 +1843,15 @@ let setup_lib_odocl_rules_def =
   end
   in
   let f (sctx, lib, requires) =
-    let* all_odocs = odoc_artefacts sctx (Lib lib) in
+    let ctx = Super_context.context sctx in
+    let lib_full = Lib.Local.to_lib lib in
+    let lib_name = Lib.name lib_full in
+    let* pkg =
+      match Lib_info.package (Lib.Local.info lib) with
+      | Some p -> Memo.return p
+      | None -> Memo.return (Package.Name.of_string "_unknown_")
+    in
+    let* all_odocs = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib:lib_full in
     (* Filter out hidden modules - they don't need odocl files since they don't have HTML generated *)
     let odocs = List.filter all_odocs ~f:(fun odoc -> not odoc.hidden) in
     let pkg = Lib_info.package (Lib.Local.info lib) in
@@ -1881,64 +1886,8 @@ let setup_pkg_rules_def memo_name f =
     f
 ;;
 
-let setup_pkg_odocl_rules_def =
-  let f (sctx, pkg) =
-    let* libs = Super_context.context sctx |> Context.name |> libs_of_pkg ~pkg in
-    let ctx = Super_context.context sctx in
-    let* requires =
-      let libs = (libs :> Lib.t list) in
-      let* closure = Lib.closure libs ~linking:false in
-      (* Add stdlib explicitly to requires unless we ARE stdlib *)
-      let pkg_name = Package.Name.to_string pkg in
-      let is_stdlib_pkg = String.equal pkg_name "ocaml-compiler" in
-      if is_stdlib_pkg then (
-        Log.info [ Pp.textf "setup_pkg_odocl_rules: Package %s is stdlib, not adding stdlib to requires" pkg_name ];
-        Memo.return closure
-      ) else (
-        let* public_libs = Scope.DB.public_libs (Context.name ctx) in
-        let+ stdlib_opt = Lib.DB.find public_libs (Lib_name.of_string "stdlib") in
-        match stdlib_opt with
-        | Some stdlib_lib ->
-          Log.info [ Pp.textf "setup_pkg_odocl_rules: Adding stdlib to requires for package %s" pkg_name ];
-          Resolve.map closure ~f:(fun libs ->
-            Log.info [ Pp.textf "setup_pkg_odocl_rules: Closure has %d libs before adding stdlib" (List.length libs) ];
-            let result = stdlib_lib :: libs in
-            Log.info [ Pp.textf "setup_pkg_odocl_rules: Closure has %d libs after adding stdlib" (List.length result) ];
-            result)
-        | None ->
-          Log.info [ Pp.textf "setup_pkg_odocl_rules: stdlib not found in public_libs for package %s" pkg_name ];
-          closure
-      )
-    in
-    (* Debug: inspect what's in requires before passing to setup_lib_odocl_rules *)
-    let () =
-      match Resolve.peek requires with
-      | Ok libs_list ->
-        let lib_names = List.map libs_list ~f:(fun lib -> Lib_name.to_string (Lib.name lib)) in
-        Log.info [ Pp.textf "setup_pkg_odocl_rules: requires contains %d libs: %s"
-                     (List.length libs_list)
-                     (String.concat ~sep:", " lib_names) ]
-      | Error _ ->
-        Log.info [ Pp.textf "setup_pkg_odocl_rules: requires is Error" ]
-    in
-    let* () = Memo.parallel_iter libs ~f:(setup_lib_odocl_rules sctx ~requires)
-    and* _ =
-      let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-      let pkg = Some pkg in
-      let+ () =
-        Memo.parallel_iter pkg_odocs ~f:(fun odoc ->
-          link_odoc_rules sctx ~pkg ~requires odoc)
-      in
-      pkg_odocs
-    and* _ = Memo.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib)) in
-    Memo.return ()
-  in
-  setup_pkg_rules_def "setup-package-odocls-rules" f
-;;
-
-let setup_pkg_odocl_rules sctx ~pkg : unit Memo.t =
-  Memo.With_implicit_output.exec setup_pkg_odocl_rules_def (sctx, pkg)
-;;
+(* setup_pkg_odocl_rules was removed - it's dead code never called.
+   The v3 system handles odocl generation through handle_package_artifacts instead. *)
 
 let out_file (output : Output_format.t) odoc =
   match output with
@@ -1963,7 +1912,14 @@ let search_db_for_lib sctx lib =
   let ctx = Super_context.context sctx in
   let dir = Paths.html ctx target in
   Log.info [ Pp.textf "odoc v3: search_db_for_lib getting odocs" ];
-  let* all_odocs = odoc_artefacts sctx target in
+  let lib_full = Lib.Local.to_lib lib in
+  let lib_name = Lib.name lib_full in
+  let* pkg =
+    match Lib_info.package (Lib.Local.info lib) with
+    | Some p -> Memo.return p
+    | None -> Memo.return (Package.Name.of_string "_unknown_")
+  in
+  let* all_odocs = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib:lib_full in
   (* Filter out hidden modules - they don't have odocl files *)
   let odocs = List.filter all_odocs ~f:(fun odoc -> not odoc.hidden) in
   let odocls = List.map odocs ~f:(fun odoc -> odoc.odocl_file) in
@@ -1975,29 +1931,36 @@ let search_db_for_lib sctx lib =
 
 let setup_lib_html_rules sctx ~search_db lib =
   let ctx = Super_context.context sctx in
-  let lib_name = Lib.name (Lib.Local.to_lib lib) |> Lib_name.to_string in
-  Log.info [ Pp.textf "odoc v3: setup_lib_html_rules for lib=%s" lib_name ];
+  let lib_full = Lib.Local.to_lib lib in
+  let lib_name = Lib.name lib_full in
+  let lib_name_str = Lib_name.to_string lib_name in
+  Log.info [ Pp.textf "odoc v3: setup_lib_html_rules for lib=%s" lib_name_str ];
   let target = Lib lib in
-  let* all_odocs = odoc_artefacts sctx target in
+  let* pkg =
+    match Lib_info.package (Lib.Local.info lib) with
+    | Some p -> Memo.return p
+    | None -> Memo.return (Package.Name.of_string "_unknown_")
+  in
+  let* all_odocs = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib:lib_full in
   (* Filter out hidden modules using the artifact's hidden field *)
   let odocs = List.filter all_odocs ~f:(fun odoc ->
     not odoc.hidden
   ) in
   Log.info [ Pp.textf "odoc v3: got %d odocs (%d visible after filtering hidden modules) for lib=%s"
-              (List.length all_odocs) (List.length odocs) lib_name ];
+              (List.length all_odocs) (List.length odocs) lib_name_str ];
   let* _dirs =
     Memo.List.concat_map odocs ~f:(fun odoc ->
       let odoc_path = Path.Build.to_string odoc.odoc_file in
       Log.info [ Pp.textf "odoc v3: calling setup_generate_all for odoc=%s" odoc_path ];
       setup_generate_all sctx ~search_db odoc)
   in
-  Log.info [ Pp.textf "odoc v3: finished setup_generate_all for lib=%s" lib_name ];
+  Log.info [ Pp.textf "odoc v3: finished setup_generate_all for lib=%s" lib_name_str ];
 
   (* Add alias dependencies for this library's HTML outputs *)
   let* () =
     Output_format.iter ~f:(fun output ->
       let paths = out_files ctx output odocs in
-      Log.info [ Pp.textf "odoc v3: adding %d paths to alias for lib=%s" (List.length paths) lib_name ];
+      Log.info [ Pp.textf "odoc v3: adding %d paths to alias for lib=%s" (List.length paths) lib_name_str ];
       Rules.Produce.Alias.add_deps
         (Dep.format_alias output ctx target)
         (Action_builder.paths paths))
@@ -2017,7 +1980,7 @@ let setup_lib_html_rules sctx ~search_db lib =
   | Error _ -> Memo.return ()
   | Ok deps ->
     Log.info [ Pp.textf "odoc v3: Processing %d library deps + %d config pkg deps for HTML aliases for lib=%s"
-                 (List.length deps) (List.length config_pkg_deps) lib_name ];
+                 (List.length deps) (List.length config_pkg_deps) lib_name_str ];
     Output_format.iter ~f:(fun output ->
       (* Library dependencies *)
       let lib_dep_aliases =
@@ -2503,9 +2466,17 @@ let setup_pkg_html_rules sctx ~pkg : unit Memo.t =
   let* libs = Context.name ctx |> libs_of_pkg ~pkg in
   Log.info [ Pp.textf "odoc v3: found %d libs" (List.length libs) ];
   let dir = Paths.html ctx (Pkg pkg) in
-  let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
+  let* pkg_odocs = get_pkg_mld_artifacts sctx ctx pkg in
   let* lib_odocs =
-    Memo.List.concat_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
+    Memo.List.concat_map libs ~f:(fun lib ->
+      let lib_full = Lib.Local.to_lib lib in
+      let lib_name = Lib.name lib_full in
+      let* pkg =
+        match Lib_info.package (Lib.Local.info lib) with
+        | Some p -> Memo.return p
+        | None -> Memo.return (Package.Name.of_string "_unknown_")
+      in
+      discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib:lib_full)
   in
   let all_odocs_unfiltered = pkg_odocs @ lib_odocs in
   (* Filter out hidden modules using the artifact's hidden field *)
