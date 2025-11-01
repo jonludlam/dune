@@ -840,7 +840,64 @@ let compile_artifact sctx ~artifact =
   add_rule sctx run_odoc
 ;;
 
+(* Unified HTML generation function for artifacts.
+   Takes an artifact and search_db, generates HTML for it.
+   This follows the same pattern as compile_artifact and link_artifact. *)
+let generate_html_artifact sctx ~artifact ~search_db =
+  let ctx = Super_context.context sctx in
+  let odoc_support_path = Paths.odoc_support ctx in
+  let search_args =
+    Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:(Paths.html_root ctx)
+  in
+
+  (* Generate HTML for all output formats *)
+  Memo.List.iter Output_format.all ~f:(fun out ->
+    let html_file = Output_format.target out artifact in
+    Log.info [ Pp.textf "odoc v3: generate_html_artifact for html_file=%s" (Path.Build.to_string html_file) ];
+
+    (* Check if the HTML file is in a subdirectory (v3 path for modules) or not (v2 path or package mlds) *)
+    let html_dir_opt =
+      let html_dir = Path.Build.parent_exn html_file in
+      let html_root = Paths.html_root ctx in
+      if Path.Build.equal html_dir html_root then None else Some html_dir
+    in
+
+    let run_odoc =
+      run_odoc
+        sctx
+        ~dir:(Path.build (Paths.html_root ctx))
+        "html-generate"
+        ~quiet:false
+        ~flags_for:None
+        [ search_args
+        ; A "-o"
+        ; Path (Path.build (Paths.html_root ctx))
+        ; A "--support-uri"
+        ; Path (Path.build odoc_support_path)
+        ; A "--theme-uri"
+        ; Path (Path.build odoc_support_path)
+        ; Dep (Path.build artifact.odocl_file)
+        ; Output_format.args out
+        ; (match html_dir_opt with
+           | None -> Hidden_targets [ html_file ]
+           | Some _ -> Command.Args.empty)
+        ]
+    in
+
+    (* Add explicit dependency on CSS/support files *)
+    let rule =
+      let open Action_builder.With_targets.O in
+      Action_builder.with_no_targets (Action_builder.path (Path.build odoc_support_path))
+      >>> Action_builder.With_targets.add ~file_targets:[html_file] run_odoc
+    in
+
+    add_rule sctx rule
+  )
+;;
+
+(* Legacy wrapper for compatibility - calls generate_html_artifact *)
 let setup_generate sctx ~search_db odoc_file out =
+  (* This is kept for any remaining callers, but they should migrate to generate_html_artifact *)
   let ctx = Super_context.context sctx in
   let odoc_support_path = Paths.odoc_support ctx in
   let search_args =
@@ -848,7 +905,6 @@ let setup_generate sctx ~search_db odoc_file out =
   in
   let html_file = Output_format.target out odoc_file in
   Log.info [ Pp.textf "odoc v3: setup_generate for html_file=%s" (Path.Build.to_string html_file) ];
-  (* Check if the HTML file is in a subdirectory (v3 path for modules) or not (v2 path or package mlds) *)
   let html_dir_opt =
     let html_dir = Path.Build.parent_exn html_file in
     let html_root = Paths.html_root ctx in
@@ -875,7 +931,6 @@ let setup_generate sctx ~search_db odoc_file out =
          | Some _ -> Command.Args.empty)
       ]
   in
-  (* Add explicit dependency on CSS/support files *)
   let rule =
     let open Action_builder.With_targets.O in
     Action_builder.with_no_targets (Action_builder.path (Path.build odoc_support_path))
@@ -884,7 +939,7 @@ let setup_generate sctx ~search_db odoc_file out =
   Log.info [ Pp.textf "odoc v3: calling add_rule for html_file=%s" (Path.Build.to_string html_file) ];
   let+ () = add_rule sctx rule in
   Log.info [ Pp.textf "odoc v3: add_rule completed for html_file=%s" (Path.Build.to_string html_file) ];
-  None  (* No directory targets, using file targets instead *)
+  None
 ;;
 
 let setup_generate_all sctx ~search_db odoc_file =
@@ -1810,6 +1865,41 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
             let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
             Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files)
           ))
+      )
+    | "_html" ->
+      (* HTML generation *)
+      Rules.collect_unit (fun () ->
+        (* Filter to only visible artifacts for HTML generation *)
+        let visible_artifacts = List.filter all_artifacts ~f:(fun a -> not a.hidden) in
+
+        Log.info [ Pp.textf "odoc v3: _html handler for %s: %d visible artifacts"
+                    pkg_or_lib_name
+                    (List.length visible_artifacts) ];
+
+        (* Create search_db for the entire package (all visible artifacts) *)
+        let* search_db =
+          let odocls = List.map visible_artifacts ~f:(fun artifact -> artifact.odocl_file) in
+          Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
+        in
+
+        Log.info [ Pp.textf "odoc v3: _html handler created search_db with %d odocls"
+                    (List.length visible_artifacts) ];
+
+        (* Generate HTML for all visible artifacts *)
+        let* () = Memo.parallel_iter visible_artifacts ~f:(fun artifact ->
+          generate_html_artifact sctx ~artifact ~search_db
+        ) in
+
+        (* Create format aliases for all output formats *)
+        let pkg_name = Package.Name.of_string pkg_or_lib_name in
+        Output_format.iter ~f:(fun output ->
+          let paths = List.map visible_artifacts ~f:(fun artifact ->
+            Path.build (Output_format.target output artifact)
+          ) in
+          (* Determine the alias - for packages use Pkg, for libraries use Lib *)
+          let alias = Dep.format_alias output ctx (Pkg pkg_name) in
+          Rules.Produce.Alias.add_deps alias (Action_builder.paths paths)
+        )
       )
     | _ -> failwith ("Unexpected path_prefix: " ^ path_prefix)
   in
@@ -2839,8 +2929,9 @@ let gen_rules sctx ~dir rest =
     (* Redirect to parent - the package level handler will generate rules for all libraries *)
     Log.info [ Pp.textf "odoc v3: Library directory handler for pkg=%s lib=%s - redirecting to parent" pkg_name lib_name ];
     Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-  | [ "_html"; lib_unique_name_or_pkg ] ->
-    has_rules (fun () -> handle_html_dir sctx ~lib_unique_name_or_pkg)
+  | [ "_html"; pkg_or_lib_name ] ->
+    (* HTML generation: use unified handler *)
+    handle_package_artifacts sctx ~dir ~path_prefix:"_html" pkg_or_lib_name
   | [ "classify"; pkg_name; lib_name ] ->
     has_rules (fun () -> handle_classify_dir sctx ~pkg_name ~lib_name)
   | other ->
