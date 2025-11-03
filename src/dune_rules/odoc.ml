@@ -1437,10 +1437,11 @@ let create_artifact_local_module ctx ~pkg ~lib_name ~local_lib ~module_ ~odoc_co
 
   let output_dir = Paths.root ctx ++ "_odoc" ++ pkg_name_str ++ lib_name_str in
 
-  (* Determine if this is a hidden module (has __ in odocl path) *)
+  (* Determine if this is a hidden module (has __ in obj_name) *)
   let hidden =
-    let odocl_path = Path.Build.to_string odocl_file in
-    String.contains_double_underscore odocl_path
+    let obj_name = Module.obj_name module_ in
+    let obj_name_str = Module_name.Unique.to_string obj_name in
+    String.contains_double_underscore obj_name_str
   in
 
   { kind
@@ -1493,10 +1494,11 @@ let create_artifact_v2_module ctx ~lib_unique_name ~local_lib ~module_ ~odoc_con
 
   let output_dir = odoc_dir in
 
-  (* Determine if this is a hidden module (has __ in odocl path) *)
+  (* Determine if this is a hidden module (has __ in obj_name) *)
   let hidden =
-    let odocl_path = Path.Build.to_string odocl_file in
-    String.contains_double_underscore odocl_path
+    let obj_name = Module.obj_name module_ in
+    let obj_name_str = Module_name.Unique.to_string obj_name in
+    String.contains_double_underscore obj_name_str
   in
 
   { kind
