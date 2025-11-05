@@ -761,24 +761,40 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
             | [ m; _hash ] -> Some (Module_name.of_string m)
             | _ -> None)
         in
-        (* Find .odoc files for dependencies in the same library by looking up the
-           artifact for each dependency. This correctly handles wrapped module names. *)
+        (* Find .odoc files for dependencies in the same library by matching the exact
+           module name from odoc compile-deps against artifact filenames.
+
+           odoc compile-deps returns the true module names as they appear in .cmt files:
+           - For local wrapped modules: "Odoc_xref2__Subst" (wrapped name)
+           - For external modules: "Subst" (from compiler), "Stdlib__List", etc.
+
+           We match by checking if the dependency name appears in the artifact's odoc filename,
+           which correctly distinguishes between our "Odoc_xref2__Subst" and the compiler's "Subst". *)
+        let current_artifact_basename =
+          Path.Build.basename artifact.odoc_file |> Filename.remove_extension
+        in
         let dep_odoc_files =
           List.filter_map dep_modules ~f:(fun dep_module ->
-            if Module_name.equal dep_module module_name then
-              None  (* Skip self-dependencies *)
-            else if Module_name.Set.mem artifact.lib_modules dep_module then
-              (* Module is in our library - look up its artifact to get the correct odoc file path.
-                 This handles wrapped modules correctly (e.g., Types -> odoc_document__Types.odoc) *)
-              List.find_map lib_artifacts ~f:(fun dep_artifact ->
-                match dep_artifact.kind with
-                | Module { module_name = dep_mod_name; _ }
-                  when Module_name.equal dep_mod_name dep_module ->
-                  Some (Path.build dep_artifact.odoc_file)
-                | _ -> None)
+            let dep_module_str = Module_name.to_string dep_module in
+            let dep_module_lower = String.lowercase_ascii dep_module_str in
+            (* Skip self-dependencies *)
+            if String.equal (String.lowercase_ascii current_artifact_basename) dep_module_lower then
+              None
             else
-              (* Module is from another library - skip it, handled by lib_deps *)
-              None)
+              (* Look for an artifact whose .odoc filename matches this dependency name.
+                 For "Odoc_xref2__Subst", we'll find "odoc_xref2__Subst.odoc".
+                 For compiler's "Subst", we won't find a match (no such artifact). *)
+              List.find_map lib_artifacts ~f:(fun dep_artifact ->
+                let artifact_basename =
+                  Path.Build.basename dep_artifact.odoc_file
+                  |> Filename.remove_extension
+                in
+                (* Match case-insensitively since filenames use lowercase *)
+                if String.equal
+                     (String.lowercase_ascii artifact_basename)
+                     dep_module_lower
+                then Some (Path.build dep_artifact.odoc_file)
+                else None))
         in
         Dune_engine.Dep.Set.of_files dep_odoc_files |> Action_builder.deps
       )
