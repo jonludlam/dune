@@ -710,7 +710,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
 
    For Module artifacts, we use `odoc compile-deps` to determine intra-library module dependencies.
    For Page artifacts (mld files), we compile directly without module dependencies. *)
-let compile_artifact sctx ~artifact =
+let compile_artifact sctx ~artifact ~lib_artifacts =
   let ctx = Super_context.context sctx in
   let compile_dir = Context.build_dir ctx in
 
@@ -761,20 +761,21 @@ let compile_artifact sctx ~artifact =
             | [ m; _hash ] -> Some (Module_name.of_string m)
             | _ -> None)
         in
-        (* Find .odoc files for dependencies in the same library.
-           Only include modules that are in artifact.lib_modules. *)
+        (* Find .odoc files for dependencies in the same library by looking up the
+           artifact for each dependency. This correctly handles wrapped module names. *)
         let dep_odoc_files =
           List.filter_map dep_modules ~f:(fun dep_module ->
             if Module_name.equal dep_module module_name then
               None  (* Skip self-dependencies *)
             else if Module_name.Set.mem artifact.lib_modules dep_module then
-              (* Module is in our library - use same output_dir *)
-              let dep_module_str = Module_name.to_string dep_module in
-              let dep_module_lower = String.uncapitalize_ascii dep_module_str in
-              let dep_odoc =
-                Path.Build.relative artifact.output_dir (dep_module_lower ^ ".odoc")
-              in
-              Some (Path.build dep_odoc)
+              (* Module is in our library - look up its artifact to get the correct odoc file path.
+                 This handles wrapped modules correctly (e.g., Types -> odoc_document__Types.odoc) *)
+              List.find_map lib_artifacts ~f:(fun dep_artifact ->
+                match dep_artifact.kind with
+                | Module { module_name = dep_mod_name; _ }
+                  when Module_name.equal dep_mod_name dep_module ->
+                  Some (Path.build dep_artifact.odoc_file)
+                | _ -> None)
             else
               (* Module is from another library - skip it, handled by lib_deps *)
               None)
@@ -1584,7 +1585,7 @@ let compile_library_artifacts sctx _ctx ~pkg_name:_ ~lib_name ~lib_artifacts : P
        not on other .odoc files. We rely on odoc's -I paths to find dependencies. *)
     let* () =
       Memo.parallel_iter lib_artifacts ~f:(fun artifact ->
-        compile_artifact sctx ~artifact)
+        compile_artifact sctx ~artifact ~lib_artifacts)
     in
 
     (* Set up .odoc-all alias for this library.
@@ -1782,7 +1783,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                           (List.length lib_artifacts) ];
 
               (* Compile all artifacts *)
-              let* () = Memo.parallel_iter lib_artifacts ~f:(fun artifact -> compile_artifact sctx ~artifact) in
+              let* () = Memo.parallel_iter lib_artifacts ~f:(fun artifact -> compile_artifact sctx ~artifact ~lib_artifacts) in
 
               (* Create library .odoc-all alias with all odoc files *)
               let all_odoc_files = List.map lib_artifacts ~f:(fun a -> Path.build a.odoc_file) in
