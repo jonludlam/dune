@@ -1983,23 +1983,34 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
         in
         Resolve.read_memo closure)
     in
-    closures
-    |> List.concat
-    |> Lib.Set.of_list
-    |> Lib.Set.to_list
+    let libs_from_closure =
+      closures
+      |> List.concat
+      |> Lib.Set.of_list
+      |> Lib.Set.to_list
+    in
+    (* Explicitly add stdlib if it exists, since Lib.closure may not include it *)
+    match stdlib_opt with
+    | Some stdlib -> stdlib :: libs_from_closure
+    | None -> libs_from_closure
   in
 
   (* Convert to targets: Lib for local libraries, Pkg for installed ones *)
+  let* pkg_discovery = Package_discovery.create ~context:ctx in
   let* all_targets =
     Memo.List.filter_map all_dep_libs ~f:(fun lib ->
       match Lib.Local.of_lib lib with
       | Some local -> Memo.return (Some (Lib local))
       | None ->
-        (* Installed library - need to map to its package *)
-        let info = Lib.info lib in
-        match Lib_info.package info with
+        (* Installed library - use Package_discovery to find its package *)
+        let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
+        match lib_pkg_opt with
         | Some pkg_name -> Memo.return (Some (Pkg pkg_name))
-        | None -> Memo.return None)
+        | None ->
+          let lib_name = Lib.name lib in
+          Log.info [ Pp.textf "odoc v3: Library %s has no package in Package_discovery - skipping"
+                      (Lib_name.to_string lib_name) ];
+          Memo.return None)
   in
 
   (* Add the package itself and deduplicate *)
@@ -2116,23 +2127,34 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
           in
           Resolve.read_memo closure)
       in
-      closures
-      |> List.concat
-      |> Lib.Set.of_list
-      |> Lib.Set.to_list
+      let libs_from_closure =
+        closures
+        |> List.concat
+        |> Lib.Set.of_list
+        |> Lib.Set.to_list
+      in
+      (* Explicitly add stdlib if it exists, since Lib.closure may not include it *)
+      match stdlib_opt with
+      | Some stdlib -> stdlib :: libs_from_closure
+      | None -> libs_from_closure
     in
 
     (* Convert to targets: Lib for local libraries, Pkg for installed ones *)
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
     let* all_targets =
       Memo.List.filter_map all_dep_libs ~f:(fun lib ->
         match Lib.Local.of_lib lib with
         | Some local -> Memo.return (Some (Lib local))
         | None ->
-          (* Installed library - need to map to its package *)
-          let info = Lib.info lib in
-          match Lib_info.package info with
+          (* Installed library - use Package_discovery to find its package *)
+          let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
+          match lib_pkg_opt with
           | Some pkg_name -> Memo.return (Some (Pkg pkg_name))
-          | None -> Memo.return None)
+          | None ->
+            let lib_name = Lib.name lib in
+            Log.info [ Pp.textf "odoc v3: Library %s has no package in Package_discovery - skipping"
+                        (Lib_name.to_string lib_name) ];
+            Memo.return None)
     in
 
     (* Deduplicate targets *)
