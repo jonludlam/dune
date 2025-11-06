@@ -801,35 +801,45 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
   in
 
   (* Compute library dependencies from the artifact's target *)
-  let* requires = match artifact.target with
-    | Lib lib -> Lib.requires (Lib.Local.to_lib lib)
-    | Pkg _ -> Memo.return (Resolve.return [])  (* Package-level artifacts have no library dependencies *)
-  in
-
-  (* Get stdlib and package_discovery for include flags *)
+  (* Get stdlib for dependency resolution *)
   let* stdlib_opt = stdlib_lib (Context.name ctx) in
-  let* pkg_discovery = Package_discovery.create ~context:ctx in
 
-  (* Add stdlib to requires for dependency resolution, but NOT if we're compiling stdlib itself.
-     Check if this artifact is part of stdlib by comparing library names. *)
+  (* Check if this artifact is part of stdlib *)
   let is_stdlib_artifact =
     match stdlib_opt with
     | Some stdlib -> Lib_name.equal (Lib.name stdlib) artifact.lib_name
     | None -> false
   in
 
-  let requires_with_stdlib =
-    match stdlib_opt with
-    | Some stdlib when not is_stdlib_artifact ->
-      (* Add stdlib as a dependency, but not for stdlib's own modules *)
-      Resolve.map requires ~f:(fun libs -> stdlib :: libs)
-    | _ -> requires
+  (* Get TRANSITIVE closure of dependencies (not just direct requires) *)
+  let* requires_closure = match artifact.target with
+    | Lib lib ->
+      let lib_t = Lib.Local.to_lib lib in
+      (* Include stdlib in the closure unless we're compiling stdlib itself *)
+      let libs_to_close =
+        if is_stdlib_artifact then [lib_t]
+        else lib_t :: Option.to_list stdlib_opt
+      in
+      Lib.closure libs_to_close ~linking:false
+    | Pkg _ -> Memo.return (Resolve.return [])  (* Package-level artifacts have no library dependencies *)
   in
+
+  (* Filter out the library itself from the closure *)
+  let requires = match artifact.target with
+    | Lib lib ->
+      let lib_t = Lib.Local.to_lib lib in
+      Resolve.map requires_closure ~f:(fun all_libs ->
+        List.filter all_libs ~f:(fun dep_lib ->
+          not (Lib_name.equal (Lib.name dep_lib) (Lib.name lib_t))))
+    | Pkg _ -> requires_closure
+  in
+
+  let* pkg_discovery = Package_discovery.create ~context:ctx in
 
   (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases)
      IMPORTANT: Pass None for pkg during compilation to avoid creating a dependency cycle
      on our own package's .odoc-all alias. The package alias is only needed during linking. *)
-  let lib_deps = Dep.deps ctx None requires_with_stdlib in
+  let lib_deps = Dep.deps ctx None requires in
 
   let run_odoc =
     let open Action_builder.With_targets.O in
@@ -845,8 +855,8 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
         ~flags_for:(Some artifact.odoc_file)
         [ (* Include paths for all dependency libraries including stdlib.
              Pass None for pkg to avoid adding our own package directory to -I paths.
-             Use requires_with_stdlib so stdlib is included in the dependencies. *)
-          odoc_include_flags ctx None ~stdlib_opt requires_with_stdlib pkg_discovery
+             Use requires which already includes the transitive closure. *)
+          odoc_include_flags ctx None ~stdlib_opt requires pkg_discovery
         ; Command.Args.A "--output-dir"
         ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
@@ -1783,17 +1793,34 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
   Log.info [ Pp.textf "odoc v3: grouped into %d lib groups for %s"
               (Lib_name.Map.cardinal artifacts_by_lib) pkg_or_lib_name ];
 
+  (* Ensure all lib_subdirs are represented in artifacts_by_lib, even if they have no artifacts *)
+  let all_lib_names =
+    List.map lib_subdirs ~f:Lib_name.of_string
+    |> Lib_name.Set.of_list
+  in
+  let artifacts_by_lib_complete =
+    Lib_name.Set.fold all_lib_names ~init:artifacts_by_lib ~f:(fun lib_name acc ->
+      if Lib_name.Map.mem acc lib_name then acc
+      else Lib_name.Map.set acc lib_name [])
+  in
+
+  Log.info [ Pp.textf "odoc v3: complete lib map has %d entries (including empty) for %s"
+              (Lib_name.Map.cardinal artifacts_by_lib_complete) pkg_or_lib_name ];
+
   (* Determine which operation to perform based on path_prefix *)
   let rules = match path_prefix with
     | "_odoc" ->
       (* Compilation *)
       Rules.collect_unit (fun () ->
         let* lib_alias_dirs =
-          Lib_name.Map.to_list artifacts_by_lib
+          Lib_name.Map.to_list artifacts_by_lib_complete
           |> Memo.List.map ~f:(fun (lib_name, lib_artifacts) ->
-            if List.is_empty lib_artifacts then
-              Memo.return (lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name)
-            else (
+            if List.is_empty lib_artifacts then (
+              Log.info [ Pp.textf "odoc v3: _odoc handler for lib_name=%s: no artifacts, creating empty .odoc-all alias"
+                          (Lib_name.to_string lib_name) ];
+              (* Create empty .odoc-all alias for libraries with no modules (like stdlib-shims) *)
+              create_lib_alias ctx ~path_prefix ~pkg_or_lib_name ~lib_name ~file_paths:[]
+            ) else (
               Log.info [ Pp.textf "odoc v3: _odoc handler for lib_name=%s: %d artifacts"
                           (Lib_name.to_string lib_name)
                           (List.length lib_artifacts) ];
@@ -1812,11 +1839,16 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
     | "_odocls" ->
       (* Linking *)
       Rules.collect_unit (fun () ->
-        Lib_name.Map.to_list artifacts_by_lib
+        Lib_name.Map.to_list artifacts_by_lib_complete
         |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
-          if List.is_empty lib_artifacts then
-            Memo.return ()
-          else (
+          if List.is_empty lib_artifacts then (
+            Log.info [ Pp.textf "odoc v3: _odocls handler for lib_name=%s: no artifacts, creating empty .odoc-all alias"
+                        (Lib_name.to_string lib_name) ];
+            (* Create empty .odoc-all alias for libraries with no modules *)
+            let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
+            let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
+            Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths [])
+          ) else (
             (* Filter to only visible artifacts for linking *)
             let visible_artifacts = List.filter lib_artifacts ~f:(fun a -> not a.hidden) in
 
@@ -1870,7 +1902,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
         ) in
 
         (* Also create library-level aliases for each library *)
-        Lib_name.Map.to_list artifacts_by_lib
+        Lib_name.Map.to_list artifacts_by_lib_complete
         |> Memo.parallel_iter ~f:(fun (_lib_name, lib_artifacts) ->
           let visible_lib_artifacts = List.filter lib_artifacts ~f:(fun a -> not a.hidden) in
           if List.is_empty visible_lib_artifacts then
@@ -1937,10 +1969,55 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
     let dir = Path.Build.append_source (Context.build_dir ctx) pkg_dir in
     Output_format.alias output ~dir
   in
-  let* libs =
-    Context.name ctx |> libs_of_pkg ~pkg:name >>| List.map ~f:(fun lib -> Lib lib)
+  let* local_libs =
+    Context.name ctx |> libs_of_pkg ~pkg:name
   in
-  Pkg name :: libs
+
+  (* Collect the transitive closure of all dependencies including stdlib *)
+  let* stdlib_opt = stdlib_lib (Context.name ctx) in
+  let* all_dep_libs =
+    let+ closures =
+      Memo.List.map local_libs ~f:(fun lib ->
+        let* closure =
+          Lib.closure (Lib.Local.to_lib lib :: Option.to_list stdlib_opt) ~linking:false
+        in
+        Resolve.read_memo closure)
+    in
+    closures
+    |> List.concat
+    |> Lib.Set.of_list
+    |> Lib.Set.to_list
+  in
+
+  (* Convert to targets: Lib for local libraries, Pkg for installed ones *)
+  let* all_targets =
+    Memo.List.filter_map all_dep_libs ~f:(fun lib ->
+      match Lib.Local.of_lib lib with
+      | Some local -> Memo.return (Some (Lib local))
+      | None ->
+        (* Installed library - need to map to its package *)
+        let info = Lib.info lib in
+        match Lib_info.package info with
+        | Some pkg_name -> Memo.return (Some (Pkg pkg_name))
+        | None -> Memo.return None)
+  in
+
+  (* Add the package itself and deduplicate *)
+  let all_targets_with_pkg = Pkg name :: all_targets in
+  let unique_targets =
+    List.sort_uniq all_targets_with_pkg ~compare:(fun t1 t2 ->
+      match t1, t2 with
+      | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
+      | Lib l1, Lib l2 ->
+        (* Compare libraries by their names *)
+        let name1 = Lib.name (Lib.Local.to_lib l1) in
+        let name2 = Lib.name (Lib.Local.to_lib l2) in
+        Lib_name.compare name1 name2
+      | Pkg _, Lib _ -> Ordering.Lt
+      | Lib _, Pkg _ -> Ordering.Gt)
+  in
+
+  unique_targets
   |> List.map ~f:(Dep.format_alias output ctx)
   |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)
   |> Action_builder.deps
@@ -2027,10 +2104,57 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
         (Local (Library.to_lib_id ~src_dir l))
       >>| Option.value_exn
     in
-    let lib = Lib (Lib.Local.of_lib_exn lib) in
-    Rules.Produce.Alias.add_deps
-      (Alias.make ~dir Alias0.private_doc)
-      (lib |> Dep.format_alias Html ctx |> Dune_engine.Dep.alias |> Action_builder.dep)
+    let local_lib = Lib.Local.of_lib_exn lib in
+
+    (* Collect the transitive closure of all dependencies including stdlib *)
+    let* stdlib_opt = stdlib_lib (Context.name ctx) in
+    let* all_dep_libs =
+      let+ closures =
+        Memo.List.map [local_lib] ~f:(fun lib ->
+          let* closure =
+            Lib.closure (Lib.Local.to_lib lib :: Option.to_list stdlib_opt) ~linking:false
+          in
+          Resolve.read_memo closure)
+      in
+      closures
+      |> List.concat
+      |> Lib.Set.of_list
+      |> Lib.Set.to_list
+    in
+
+    (* Convert to targets: Lib for local libraries, Pkg for installed ones *)
+    let* all_targets =
+      Memo.List.filter_map all_dep_libs ~f:(fun lib ->
+        match Lib.Local.of_lib lib with
+        | Some local -> Memo.return (Some (Lib local))
+        | None ->
+          (* Installed library - need to map to its package *)
+          let info = Lib.info lib in
+          match Lib_info.package info with
+          | Some pkg_name -> Memo.return (Some (Pkg pkg_name))
+          | None -> Memo.return None)
+    in
+
+    (* Deduplicate targets *)
+    let unique_targets =
+      List.sort_uniq all_targets ~compare:(fun t1 t2 ->
+        match t1, t2 with
+        | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
+        | Lib l1, Lib l2 ->
+          (* Compare libraries by their names *)
+          let name1 = Lib.name (Lib.Local.to_lib l1) in
+          let name2 = Lib.name (Lib.Local.to_lib l2) in
+          Lib_name.compare name1 name2
+        | Pkg _, Lib _ -> Ordering.Lt
+        | Lib _, Pkg _ -> Ordering.Gt)
+    in
+
+    (* Add dependencies on all targets' HTML aliases *)
+    unique_targets
+    |> List.map ~f:(Dep.format_alias Html ctx)
+    |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)
+    |> Action_builder.deps
+    |> Rules.Produce.Alias.add_deps (Alias.make ~dir Alias0.private_doc)
 ;;
 
 let has_rules ?(directory_targets = Path.Build.Map.empty) f =
