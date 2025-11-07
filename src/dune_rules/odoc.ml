@@ -2107,11 +2107,23 @@ let package_mlds =
 (* setup_package_odoc_rules removed - unused old function *)
 
 let gen_project_rules sctx project =
+  let* mask =
+    let+ mask = Dune_load.mask () in
+    Option.map ~f:Package.Name.Map.keys mask
+  in
   Dune_project.packages project
   |> Dune_lang.Package_name.Map.to_seq
   |> Memo.parallel_iter_seq ~f:(fun (_, (pkg : Package.t)) ->
-    (* setup @doc to build the correct html for the package *)
-    setup_package_aliases sctx pkg)
+    (* Check if this package is in the mask (honors -p flag) *)
+    let should_build = match mask with
+      | None -> true
+      | Some mask_pkgs -> List.mem ~equal:Package.Name.equal mask_pkgs (Package.name pkg)
+    in
+    if should_build then
+      (* setup @doc to build the correct html for the package *)
+      setup_package_aliases sctx pkg
+    else
+      Memo.return ())
 ;;
 
 let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
