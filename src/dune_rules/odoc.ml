@@ -69,6 +69,13 @@ let pkg_or_lnu lib =
   | None -> lib_unique_name lib
 ;;
 
+(* Get the unique ID for a library - this is the package name if available,
+   otherwise the library's unique name (which includes project scope for private libs).
+   This is used for odoc's --unique-id flag. *)
+let lib_unique_id_string (lib : Lib.t) =
+  pkg_or_lnu lib
+;;
+
 type target =
   | Lib of Lib.Local.t
   | Pkg of Package.Name.t
@@ -861,6 +868,14 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
         ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
         ; Command.Args.A artifact.parent_id
+        ; (* Add --unique-id flag for library artifacts to help with debugging *)
+          (match artifact.target with
+           | Lib lib ->
+             let lib_t = Lib.Local.to_lib lib in
+             Command.Args.As ["--unique-id"; lib_unique_id_string lib_t]
+           | Pkg _ ->
+             (* Package-level artifacts don't have a library unique ID *)
+             Command.Args.S [])
         ; Command.Args.Dep source_file
         ])
   in
