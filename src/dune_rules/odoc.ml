@@ -1969,70 +1969,81 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
     let dir = Path.Build.append_source (Context.build_dir ctx) pkg_dir in
     Output_format.alias output ~dir
   in
-  let* local_libs =
-    Context.name ctx |> libs_of_pkg ~pkg:name
-  in
+  (* Wrap the entire transitive closure computation in Action_builder.
+     This ensures Lib.closure only executes when @doc is actually built. *)
+  let deps_action =
+    let open Action_builder.O in
+    let* dep_set =
+      Action_builder.of_memo (
+        let open Memo.O in
+        let* local_libs = Context.name ctx |> libs_of_pkg ~pkg:name in
 
-  (* Collect the transitive closure of all dependencies including stdlib *)
-  let* stdlib_opt = stdlib_lib (Context.name ctx) in
-  let* all_dep_libs =
-    let+ closures =
-      Memo.List.map local_libs ~f:(fun lib ->
-        let* closure =
-          Lib.closure (Lib.Local.to_lib lib :: Option.to_list stdlib_opt) ~linking:false
+        (* Collect the transitive closure of all dependencies including stdlib *)
+        let* stdlib_opt = stdlib_lib (Context.name ctx) in
+        let* all_dep_libs =
+          let+ closures =
+            Memo.List.map local_libs ~f:(fun lib ->
+              let* closure =
+                Lib.closure (Lib.Local.to_lib lib :: Option.to_list stdlib_opt) ~linking:false
+              in
+              Resolve.read_memo closure)
+          in
+          let libs_from_closure =
+            closures
+            |> List.concat
+            |> Lib.Set.of_list
+            |> Lib.Set.to_list
+          in
+          (* Explicitly add stdlib if it exists, since Lib.closure may not include it *)
+          match stdlib_opt with
+          | Some stdlib -> stdlib :: libs_from_closure
+          | None -> libs_from_closure
         in
-        Resolve.read_memo closure)
+
+        (* Convert to targets: Lib for local libraries, Pkg for installed ones *)
+        let* pkg_discovery = Package_discovery.create ~context:ctx in
+        let* all_targets =
+          Memo.List.filter_map all_dep_libs ~f:(fun lib ->
+            match Lib.Local.of_lib lib with
+            | Some local -> Memo.return (Some (Lib local))
+            | None ->
+              (* Installed library - use Package_discovery to find its package *)
+              let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
+              match lib_pkg_opt with
+              | Some pkg_name -> Memo.return (Some (Pkg pkg_name))
+              | None ->
+                let lib_name = Lib.name lib in
+                Log.info [ Pp.textf "odoc v3: Library %s has no package in Package_discovery - skipping"
+                            (Lib_name.to_string lib_name) ];
+                Memo.return None)
+        in
+
+        (* Add the package itself and deduplicate *)
+        let all_targets_with_pkg = Pkg name :: all_targets in
+        let unique_targets =
+          List.sort_uniq all_targets_with_pkg ~compare:(fun t1 t2 ->
+            match t1, t2 with
+            | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
+            | Lib l1, Lib l2 ->
+              (* Compare libraries by their names *)
+              let name1 = Lib.name (Lib.Local.to_lib l1) in
+              let name2 = Lib.name (Lib.Local.to_lib l2) in
+              Lib_name.compare name1 name2
+            | Pkg _, Lib _ -> Ordering.Lt
+            | Lib _, Pkg _ -> Ordering.Gt)
+        in
+
+        Memo.return (
+          unique_targets
+          |> List.map ~f:(Dep.format_alias output ctx)
+          |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)
+        )
+      )
     in
-    let libs_from_closure =
-      closures
-      |> List.concat
-      |> Lib.Set.of_list
-      |> Lib.Set.to_list
-    in
-    (* Explicitly add stdlib if it exists, since Lib.closure may not include it *)
-    match stdlib_opt with
-    | Some stdlib -> stdlib :: libs_from_closure
-    | None -> libs_from_closure
+    Action_builder.deps dep_set
   in
 
-  (* Convert to targets: Lib for local libraries, Pkg for installed ones *)
-  let* pkg_discovery = Package_discovery.create ~context:ctx in
-  let* all_targets =
-    Memo.List.filter_map all_dep_libs ~f:(fun lib ->
-      match Lib.Local.of_lib lib with
-      | Some local -> Memo.return (Some (Lib local))
-      | None ->
-        (* Installed library - use Package_discovery to find its package *)
-        let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
-        match lib_pkg_opt with
-        | Some pkg_name -> Memo.return (Some (Pkg pkg_name))
-        | None ->
-          let lib_name = Lib.name lib in
-          Log.info [ Pp.textf "odoc v3: Library %s has no package in Package_discovery - skipping"
-                      (Lib_name.to_string lib_name) ];
-          Memo.return None)
-  in
-
-  (* Add the package itself and deduplicate *)
-  let all_targets_with_pkg = Pkg name :: all_targets in
-  let unique_targets =
-    List.sort_uniq all_targets_with_pkg ~compare:(fun t1 t2 ->
-      match t1, t2 with
-      | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
-      | Lib l1, Lib l2 ->
-        (* Compare libraries by their names *)
-        let name1 = Lib.name (Lib.Local.to_lib l1) in
-        let name2 = Lib.name (Lib.Local.to_lib l2) in
-        Lib_name.compare name1 name2
-      | Pkg _, Lib _ -> Ordering.Lt
-      | Lib _, Pkg _ -> Ordering.Gt)
-  in
-
-  unique_targets
-  |> List.map ~f:(Dep.format_alias output ctx)
-  |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)
-  |> Action_builder.deps
-  |> Rules.Produce.Alias.add_deps alias
+  Rules.Produce.Alias.add_deps alias deps_action
 ;;
 
 let setup_package_aliases sctx (pkg : Package.t) =
@@ -2117,66 +2128,78 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
     in
     let local_lib = Lib.Local.of_lib_exn lib in
 
-    (* Collect the transitive closure of all dependencies including stdlib *)
-    let* stdlib_opt = stdlib_lib (Context.name ctx) in
-    let* all_dep_libs =
-      let+ closures =
-        Memo.List.map [local_lib] ~f:(fun lib ->
-          let* closure =
-            Lib.closure (Lib.Local.to_lib lib :: Option.to_list stdlib_opt) ~linking:false
+    (* Wrap the transitive closure computation in Action_builder for lazy evaluation *)
+    let deps_action =
+      let open Action_builder.O in
+      let* dep_set =
+        Action_builder.of_memo (
+          let open Memo.O in
+          (* Collect the transitive closure of all dependencies including stdlib *)
+          let* stdlib_opt = stdlib_lib (Context.name ctx) in
+          let* all_dep_libs =
+            let+ closures =
+              Memo.List.map [local_lib] ~f:(fun lib ->
+                let* closure =
+                  Lib.closure (Lib.Local.to_lib lib :: Option.to_list stdlib_opt) ~linking:false
+                in
+                Resolve.read_memo closure)
+            in
+            let libs_from_closure =
+              closures
+              |> List.concat
+              |> Lib.Set.of_list
+              |> Lib.Set.to_list
+            in
+            (* Explicitly add stdlib if it exists, since Lib.closure may not include it *)
+            match stdlib_opt with
+            | Some stdlib -> stdlib :: libs_from_closure
+            | None -> libs_from_closure
           in
-          Resolve.read_memo closure)
+
+          (* Convert to targets: Lib for local libraries, Pkg for installed ones *)
+          let* pkg_discovery = Package_discovery.create ~context:ctx in
+          let* all_targets =
+            Memo.List.filter_map all_dep_libs ~f:(fun lib ->
+              match Lib.Local.of_lib lib with
+              | Some local -> Memo.return (Some (Lib local))
+              | None ->
+                (* Installed library - use Package_discovery to find its package *)
+                let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
+                match lib_pkg_opt with
+                | Some pkg_name -> Memo.return (Some (Pkg pkg_name))
+                | None ->
+                  let lib_name = Lib.name lib in
+                  Log.info [ Pp.textf "odoc v3: Library %s has no package in Package_discovery - skipping"
+                              (Lib_name.to_string lib_name) ];
+                  Memo.return None)
+          in
+
+          (* Deduplicate targets *)
+          let unique_targets =
+            List.sort_uniq all_targets ~compare:(fun t1 t2 ->
+              match t1, t2 with
+              | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
+              | Lib l1, Lib l2 ->
+                (* Compare libraries by their names *)
+                let name1 = Lib.name (Lib.Local.to_lib l1) in
+                let name2 = Lib.name (Lib.Local.to_lib l2) in
+                Lib_name.compare name1 name2
+              | Pkg _, Lib _ -> Ordering.Lt
+              | Lib _, Pkg _ -> Ordering.Gt)
+          in
+
+          (* Return the dep set *)
+          Memo.return (
+            unique_targets
+            |> List.map ~f:(Dep.format_alias Html ctx)
+            |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)
+          )
+        )
       in
-      let libs_from_closure =
-        closures
-        |> List.concat
-        |> Lib.Set.of_list
-        |> Lib.Set.to_list
-      in
-      (* Explicitly add stdlib if it exists, since Lib.closure may not include it *)
-      match stdlib_opt with
-      | Some stdlib -> stdlib :: libs_from_closure
-      | None -> libs_from_closure
+      Action_builder.deps dep_set
     in
 
-    (* Convert to targets: Lib for local libraries, Pkg for installed ones *)
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-    let* all_targets =
-      Memo.List.filter_map all_dep_libs ~f:(fun lib ->
-        match Lib.Local.of_lib lib with
-        | Some local -> Memo.return (Some (Lib local))
-        | None ->
-          (* Installed library - use Package_discovery to find its package *)
-          let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
-          match lib_pkg_opt with
-          | Some pkg_name -> Memo.return (Some (Pkg pkg_name))
-          | None ->
-            let lib_name = Lib.name lib in
-            Log.info [ Pp.textf "odoc v3: Library %s has no package in Package_discovery - skipping"
-                        (Lib_name.to_string lib_name) ];
-            Memo.return None)
-    in
-
-    (* Deduplicate targets *)
-    let unique_targets =
-      List.sort_uniq all_targets ~compare:(fun t1 t2 ->
-        match t1, t2 with
-        | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
-        | Lib l1, Lib l2 ->
-          (* Compare libraries by their names *)
-          let name1 = Lib.name (Lib.Local.to_lib l1) in
-          let name2 = Lib.name (Lib.Local.to_lib l2) in
-          Lib_name.compare name1 name2
-        | Pkg _, Lib _ -> Ordering.Lt
-        | Lib _, Pkg _ -> Ordering.Gt)
-    in
-
-    (* Add dependencies on all targets' HTML aliases *)
-    unique_targets
-    |> List.map ~f:(Dep.format_alias Html ctx)
-    |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)
-    |> Action_builder.deps
-    |> Rules.Produce.Alias.add_deps (Alias.make ~dir Alias0.private_doc)
+    Rules.Produce.Alias.add_deps (Alias.make ~dir Alias0.private_doc) deps_action
 ;;
 
 let has_rules ?(directory_targets = Path.Build.Map.empty) f =
