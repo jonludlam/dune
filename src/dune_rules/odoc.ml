@@ -868,11 +868,13 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
         ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
         ; Command.Args.A artifact.parent_id
-        ; (* Add --unique-id flag for library artifacts to help with debugging *)
+        ; (* Add --unique-id and --warnings-tag flags for library artifacts.
+             Both use the package name to identify which package the module belongs to. *)
           (match artifact.target with
            | Lib lib ->
              let lib_t = Lib.Local.to_lib lib in
-             Command.Args.As ["--unique-id"; lib_unique_id_string lib_t]
+             let pkg_name = lib_unique_id_string lib_t in
+             Command.Args.As ["--unique-id"; pkg_name; "--warnings-tag"; pkg_name]
            | Pkg _ ->
              (* Package-level artifacts don't have a library unique ID *)
              Command.Args.S [])
@@ -904,6 +906,18 @@ let generate_html_artifact sctx ~artifact ~search_db =
       if Path.Build.equal html_dir html_root then None else Some html_dir
     in
 
+    (* Add --warnings-tag flag for library artifacts to identify which package the HTML belongs to *)
+    let warnings_tag_args =
+      match artifact.target with
+      | Lib lib ->
+        let lib_t = Lib.Local.to_lib lib in
+        let pkg_name = lib_unique_id_string lib_t in
+        Command.Args.S [Command.Args.A "--warnings-tag"; Command.Args.A pkg_name]
+      | Pkg _ ->
+        (* Package-level artifacts don't have a library warnings tag *)
+        Command.Args.S []
+    in
+
     let run_odoc =
       run_odoc
         sctx
@@ -918,6 +932,7 @@ let generate_html_artifact sctx ~artifact ~search_db =
         ; Path (Path.build odoc_support_path)
         ; A "--theme-uri"
         ; Path (Path.build odoc_support_path)
+        ; warnings_tag_args
         ; Dep (Path.build artifact.odocl_file)
         ; Output_format.args out
         ; (match html_dir_opt with
