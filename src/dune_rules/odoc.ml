@@ -690,6 +690,22 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
   let deps = Dep.deps ctx pkg requires in
   let* stdlib_opt = stdlib_lib (Context.name ctx) in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
+
+  (* Get all packages in the workspace to pass as --warnings-tags *)
+  let* packages = Dune_load.packages () in
+  let all_pkg_names =
+    Package.Name.Map.keys packages
+    |> List.map ~f:Package.Name.to_string
+  in
+
+  (* Build --warnings-tags arguments for all packages *)
+  let warnings_tags_args =
+    Command.Args.S (
+      List.concat_map all_pkg_names ~f:(fun pkg_name ->
+        [Command.Args.A "--warnings-tags"; Command.Args.A pkg_name])
+    )
+  in
+
   let run_odoc =
     run_odoc
       sctx
@@ -700,6 +716,13 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
       [ odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery
       ; odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery
       ; odoc_pkg_flags ctx requires pkg_discovery ~current_pkg:odoc_file.pkg
+      ; (* Add --current-package flag when we have a package *)
+        (match odoc_file.pkg with
+         | Some pkg_name ->
+           Command.Args.As ["--current-package"; Package.Name.to_string pkg_name]
+         | None -> Command.Args.S [])
+      ; A "--enable-missing-root-warning"
+      ; warnings_tags_args
       ; A "-o"
       ; Target odoc_file.odocl_file
       ; Dep (Path.build odoc_file.odoc_file)
@@ -868,6 +891,7 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
         ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
         ; Command.Args.A artifact.parent_id
+        ; Command.Args.A "--enable-missing-root-warning"
         ; (* Add --unique-id and --warnings-tag flags for library artifacts.
              Both use the package name to identify which package the module belongs to. *)
           (match artifact.target with
@@ -906,18 +930,6 @@ let generate_html_artifact sctx ~artifact ~search_db =
       if Path.Build.equal html_dir html_root then None else Some html_dir
     in
 
-    (* Add --warnings-tag flag for library artifacts to identify which package the HTML belongs to *)
-    let warnings_tag_args =
-      match artifact.target with
-      | Lib lib ->
-        let lib_t = Lib.Local.to_lib lib in
-        let pkg_name = lib_unique_id_string lib_t in
-        Command.Args.S [Command.Args.A "--warnings-tag"; Command.Args.A pkg_name]
-      | Pkg _ ->
-        (* Package-level artifacts don't have a library warnings tag *)
-        Command.Args.S []
-    in
-
     let run_odoc =
       run_odoc
         sctx
@@ -932,7 +944,6 @@ let generate_html_artifact sctx ~artifact ~search_db =
         ; Path (Path.build odoc_support_path)
         ; A "--theme-uri"
         ; Path (Path.build odoc_support_path)
-        ; warnings_tag_args
         ; Dep (Path.build artifact.odocl_file)
         ; Output_format.args out
         ; (match html_dir_opt with
