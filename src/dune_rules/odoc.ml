@@ -674,6 +674,17 @@ let odoc_pkg_flags ctx requires pkg_discovery ~current_pkg =
          Package.Name.Map.set acc pkg odoc_path)
      in
 
+     (* Also add the current package itself if present - odoc requires --current-package
+        to have a corresponding -P flag *)
+     let all_pkg_paths =
+       match current_pkg with
+       | None -> all_pkg_paths
+       | Some pkg ->
+         let pkg_name_str = Package.Name.to_string pkg in
+         let odoc_path = Paths.root ctx ++ "_odoc" ++ pkg_name_str in
+         Package.Name.Map.set all_pkg_paths pkg odoc_path
+     in
+
      let pkg_args =
        Package.Name.Map.to_list_map all_pkg_paths ~f:(fun pkg path ->
          let pkg_name_str = Package.Name.to_string pkg in

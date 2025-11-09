@@ -1,0 +1,32 @@
+{
+  "name": "dune-action-plugin",
+  "version": "3.20.2",
+  "files": [
+    "src/dune-action-plugin/dune_action_plugin__.ml.html",
+    "src/dune-action-plugin/import.ml.html",
+    "src/dune-action-plugin/sexpable_intf.ml.html",
+    "src/dune-action-plugin/path.ml.html",
+    "src/dune-action-plugin/dune_action_plugin.ml.html",
+    "src/dune-action-plugin/protocol.ml.html", "src/index.html",
+    "dune-action-plugin/Dune_action_plugin/V1/Path/O/index.html",
+    "dune-action-plugin/Dune_action_plugin/V1/Path/index.html",
+    "dune-action-plugin/Dune_action_plugin/V1/O/index.html",
+    "dune-action-plugin/Dune_action_plugin/V1/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Run_arguments/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Context/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Response/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Greeting/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Dependency/Map/Multi/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Dependency/Map/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Dependency/Set/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Dependency/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/Error/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Protocol/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/Execution_error/index.html",
+    "dune-action-plugin/Dune_action_plugin/Private/index.html",
+    "dune-action-plugin/Dune_action_plugin/index.html",
+    "dune-action-plugin/index.html", "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

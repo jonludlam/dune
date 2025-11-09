@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: proc.ml (stdune.src.stdune)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">stdune</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; stdune &#x00BB; proc.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>proc.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">stdune</a><ul><li>Library <code>stdune</code><ul><li><a href="../../stdune/Stdune/index.html">Stdune</a></li></ul></li><li><a href="../index.html">Sources</a><ul><li>stdune<ul><li><a href="ansi_color.ml.html">ansi_color.ml</a></li><li><a href="appendable_list.ml.html">appendable_list.ml</a></li><li><a href="applicative.ml.html">applicative.ml</a></li><li><a href="applicative_intf.ml.html">applicative_intf.ml</a></li><li><a href="array.ml.html">array.ml</a></li><li><a href="bin.ml.html">bin.ml</a></li><li><a href="bit_set.ml.html">bit_set.ml</a></li><li><a href="bool.ml.html">bool.ml</a></li><li><a href="bytes.ml.html">bytes.ml</a></li><li><a href="bytes_unit.ml.html">bytes_unit.ml</a></li><li><a href="caller_id.ml.html">caller_id.ml</a></li><li><a href="char.ml.html">char.ml</a></li><li><a href="code_error.ml.html">code_error.ml</a></li><li><a href="compact_position.ml.html">compact_position.ml</a></li><li><a href="comparable.ml.html">comparable.ml</a></li><li><a href="comparable_intf.ml.html">comparable_intf.ml</a></li><li><a href="comparator.ml.html">comparator.ml</a></li><li><a href="dev_null.ml.html">dev_null.ml</a></li><li><a href="dune_either.ml.html">dune_either.ml</a></li><li><a href="dune_filesystem_stubs.ml.html">dune_filesystem_stubs.ml</a></li><li><a href="either.ml.html">either.ml</a></li><li><a href="env.ml.html">env.ml</a></li><li><a href="env_path.ml.html">env_path.ml</a></li><li><a href="escape.ml.html">escape.ml</a></li><li><a href="exn.ml.html">exn.ml</a></li><li><a href="exn_with_backtrace.ml.html">exn_with_backtrace.ml</a></li><li><a href="fdecl.ml.html">fdecl.ml</a></li><li><a href="filename.ml.html">filename.ml</a></li><li><a href="filename_set.ml.html">filename_set.ml</a></li><li><a href="float.ml.html">float.ml</a></li><li><a href="format.ml.html">format.ml</a></li><li><a href="fpath.ml.html">fpath.ml</a></li><li><a href="hashable.ml.html">hashable.ml</a></li><li><a href="hashtbl.ml.html">hashtbl.ml</a></li><li><a href="hashtbl_intf.ml.html">hashtbl_intf.ml</a></li><li><a href="id.ml.html">id.ml</a></li><li><a href="int.ml.html">int.ml</a></li><li><a href="io.ml.html">io.ml</a></li><li><a href="io_intf.ml.html">io_intf.ml</a></li><li><a href="lazy.ml.html">lazy.ml</a></li><li><a href="lexbuf.ml.html">lexbuf.ml</a></li><li><a href="list.ml.html">list.ml</a></li><li><a href="loc.ml.html">loc.ml</a></li><li><a href="loc0.ml.html">loc0.ml</a></li><li><a href="map.ml.html">map.ml</a></li><li><a href="map_intf.ml.html">map_intf.ml</a></li><li><a href="monad.ml.html">monad.ml</a></li><li><a href="monad_intf.ml.html">monad_intf.ml</a></li><li><a href="monoid.ml.html">monoid.ml</a></li><li><a href="monoid_intf.ml.html">monoid_intf.ml</a></li><li><a href="nonempty_list.ml.html">nonempty_list.ml</a></li><li><a href="nothing.ml.html">nothing.ml</a></li><li><a href="option.ml.html">option.ml</a></li><li><a href="or_exn.ml.html">or_exn.ml</a></li><li><a href="path.ml.html">path.ml</a></li><li><a href="path_intf.ml.html">path_intf.ml</a></li><li><a href="per_item.ml.html">per_item.ml</a></li><li><a href="per_item_intf.ml.html">per_item_intf.ml</a></li><li><a href="pid.ml.html">pid.ml</a></li><li><a href="platform.ml.html">platform.ml</a></li><li><a href="poly.ml.html">poly.ml</a></li><li><a href="predicate.ml.html">predicate.ml</a></li><li><a href="#" class="current_unit">proc.ml</a></li><li><a href="queue.ml.html">queue.ml</a></li><li><a href="result.ml.html">result.ml</a></li><li><a href="scanf.ml.html">scanf.ml</a></li><li><a href="seq.ml.html">seq.ml</a></li><li><a href="set.ml.html">set.ml</a></li><li><a href="set_intf.ml.html">set_intf.ml</a></li><li><a href="sexp.ml.html">sexp.ml</a></li><li><a href="signal.ml.html">signal.ml</a></li><li><a href="staged.ml.html">staged.ml</a></li><li><a href="state.ml.html">state.ml</a></li><li><a href="stdune.ml.html">stdune.ml</a></li><li><a href="stdune__.ml.html">stdune__.ml</a></li><li><a href="string.ml.html">string.ml</a></li><li><a href="string_builder.ml.html">string_builder.ml</a></li><li><a href="string_split.ml.html">string_split.ml</a></li><li><a href="sys.ml.html">sys.ml</a></li><li><a href="table.ml.html">table.ml</a></li><li><a href="temp.ml.html">temp.ml</a></li><li><a href="top_closure.ml.html">top_closure.ml</a></li><li><a href="top_closure_intf.ml.html">top_closure_intf.ml</a></li><li><a href="tuple.ml.html">tuple.ml</a></li><li><a href="type_eq.ml.html">type_eq.ml</a></li><li><a href="unit.ml.html">unit.ml</a></li><li><a href="univ_map.ml.html">univ_map.ml</a></li><li><a href="univ_map_intf.ml.html">univ_map_intf.ml</a></li><li><a href="user_error.ml.html">user_error.ml</a></li><li><a href="user_message.ml.html">user_message.ml</a></li><li><a href="user_warning.ml.html">user_warning.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+<a id="L21" class="source_line" href="#L21">21</a>
+<a id="L22" class="source_line" href="#L22">22</a>
+<a id="L23" class="source_line" href="#L23">23</a>
+<a id="L24" class="source_line" href="#L24">24</a>
+<a id="L25" class="source_line" href="#L25">25</a>
+<a id="L26" class="source_line" href="#L26">26</a>
+<a id="L27" class="source_line" href="#L27">27</a>
+<a id="L28" class="source_line" href="#L28">28</a>
+<a id="L29" class="source_line" href="#L29">29</a>
+<a id="L30" class="source_line" href="#L30">30</a>
+<a id="L31" class="source_line" href="#L31">31</a>
+<a id="L32" class="source_line" href="#L32">32</a>
+<a id="L33" class="source_line" href="#L33">33</a>
+<a id="L34" class="source_line" href="#L34">34</a>
+<a id="L35" class="source_line" href="#L35">35</a>
+<a id="L36" class="source_line" href="#L36">36</a>
+<a id="L37" class="source_line" href="#L37">37</a>
+<a id="L38" class="source_line" href="#L38">38</a>
+<a id="L39" class="source_line" href="#L39">39</a>
+<a id="L40" class="source_line" href="#L40">40</a>
+<a id="L41" class="source_line" href="#L41">41</a>
+<a id="L42" class="source_line" href="#L42">42</a>
+<a id="L43" class="source_line" href="#L43">43</a>
+<a id="L44" class="source_line" href="#L44">44</a>
+<a id="L45" class="source_line" href="#L45">45</a>
+<a id="L46" class="source_line" href="#L46">46</a>
+<a id="L47" class="source_line" href="#L47">47</a>
+<a id="L48" class="source_line" href="#L48">48</a>
+<a id="L49" class="source_line" href="#L49">49</a>
+<a id="L50" class="source_line" href="#L50">50</a>
+<a id="L51" class="source_line" href="#L51">51</a>
+<a id="L52" class="source_line" href="#L52">52</a>
+<a id="L53" class="source_line" href="#L53">53</a>
+<a id="L54" class="source_line" href="#L54">54</a>
+<a id="L55" class="source_line" href="#L55">55</a>
+<a id="L56" class="source_line" href="#L56">56</a>
+<a id="L57" class="source_line" href="#L57">57</a>
+<a id="L58" class="source_line" href="#L58">58</a>
+<a id="L59" class="source_line" href="#L59">59</a>
+<a id="L60" class="source_line" href="#L60">60</a>
+<a id="L61" class="source_line" href="#L61">61</a>
+<a id="L62" class="source_line" href="#L62">62</a>
+<a id="L63" class="source_line" href="#L63">63</a>
+<a id="L64" class="source_line" href="#L64">64</a>
+<a id="L65" class="source_line" href="#L65">65</a>
+<a id="L66" class="source_line" href="#L66">66</a>
+<a id="L67" class="source_line" href="#L67">67</a>
+<a id="L68" class="source_line" href="#L68">68</a>
+<a id="L69" class="source_line" href="#L69">69</a>
+<a id="L70" class="source_line" href="#L70">70</a>
+<a id="L71" class="source_line" href="#L71">71</a>
+<a id="L72" class="source_line" href="#L72">72</a>
+<a id="L73" class="source_line" href="#L73">73</a>
+<a id="L74" class="source_line" href="#L74">74</a>
+</code><code class="source_code"><span><span class="COMMENT">(* [execve] doesn't exist on Windows, so instead we do a
+   [Unix.create_process_env] followed by [Unix.waitpid] and finally [sys_exit].
+   We use [sys_exit] rather than [exit] so that [at_exit] functions are not
+   invoked. We don't want [at_exit] functions to be invoked to match the
+   behaviour of [Unix.execve] on Unix. *)</span><span class="EOL">
+</span><span id="val-sys_exit"><span class="EXTERNAL">external</span> <span class="LIDENT">sys_exit</span> <span class="COLON">:</span> <span class="LIDENT">int</span> <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="EQUAL">=</span> <span class="STRING">&quot;caml_sys_exit&quot;</span></span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-restore_cwd_and_execve"><span class="LIDENT">restore_cwd_and_execve</span></span> <span id="local_prog_1"><span class="LIDENT">prog</span></span> <span id="local_argv_2"><span class="LIDENT">argv</span></span> <span class="TILDE">~</span><span id="local_env_3"><span class="LIDENT">env</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_env_4"><span class="LIDENT">env</span></span> <span class="EQUAL">=</span> <a href="env.ml.html#val-to_unix"><span class="UIDENT">Env</span><span class="DOT">.</span><span class="LIDENT">to_unix</span></a> <a href="#local_env_3"><span class="LIDENT">env</span></a> <span class="INFIXOP0">|&gt;</span> <a href="../../../ocaml-compiler/src/stdlib/array.ml.html#val-of_list"><span class="UIDENT">Array</span><span class="DOT">.</span><span class="LIDENT">of_list</span></a> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_argv_5"><span class="LIDENT">argv</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/array.ml.html#val-of_list"><span class="UIDENT">Array</span><span class="DOT">.</span><span class="LIDENT">of_list</span></a> <span class="LPAREN">(</span><a href="#local_prog_1"><span class="LIDENT">prog</span></a> <span class="COLONCOLON">::</span> <a href="#local_argv_2"><span class="LIDENT">argv</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="COMMENT">(* run at_exit before changing the working directory *)</span><span class="EOL">
+</span>  <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-do_at_exit"><span class="UIDENT">Stdlib</span><span class="DOT">.</span><span class="LIDENT">do_at_exit</span></a> <span class="LPAREN">(</span><span class="RPAREN">)</span><span class="SEMI">;</span><span class="EOL">
+</span>  <a href="../../../ocaml-compiler/src/stdlib/sys.ml.html#val-chdir"><span class="UIDENT">Sys</span><span class="DOT">.</span><span class="LIDENT">chdir</span></a> <span class="LPAREN">(</span><a href="path.ml.html#module-External.val-to_string"><span class="UIDENT">Path</span><span class="DOT">.</span><span class="UIDENT">External</span><span class="DOT">.</span><span class="LIDENT">to_string</span></a> <a href="path.ml.html#module-External.val-initial_cwd"><span class="UIDENT">Path</span><span class="DOT">.</span><span class="UIDENT">External</span><span class="DOT">.</span><span class="LIDENT">initial_cwd</span></a><span class="RPAREN">)</span><span class="SEMI">;</span><span class="EOL">
+</span>  <span class="IF">if</span> <a href="../../../ocaml-compiler/src/stdlib/sys.ml.html#val-win32"><span class="UIDENT">Sys</span><span class="DOT">.</span><span class="LIDENT">win32</span></a> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(||)"><span class="BARBAR">||</span></a> <a href="platform.ml.html#module-OS.val-value"><span class="UIDENT">Platform</span><span class="DOT">.</span><span class="UIDENT">OS</span><span class="DOT">.</span><span class="LIDENT">value</span></a> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(=)"><span class="EQUAL">=</span></a> <span class="UIDENT">Platform</span><span class="DOT">.</span><span class="UIDENT">OS</span><span class="DOT">.</span><span class="UIDENT">Haiku</span><span class="EOL">
+</span>  <span class="THEN">then</span> <span class="LPAREN">(</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_pid_6"><span class="LIDENT">pid</span></span> <span class="EQUAL">=</span> <span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">create_process_env</span> <a href="#local_prog_1"><span class="LIDENT">prog</span></a> <a href="#local_argv_5"><span class="LIDENT">argv</span></a> <a href="#local_env_4"><span class="LIDENT">env</span></a> <span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">stdin</span> <span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">stdout</span> <span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">stderr</span> <span class="IN">in</span><span class="EOL">
+</span>    <span class="MATCH">match</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-snd"><span class="LIDENT">snd</span></a> <span class="LPAREN">(</span><span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">waitpid</span> <span class="LBRACKET">[</span><span class="RBRACKET">]</span> <a href="#local_pid_6"><span class="LIDENT">pid</span></a><span class="RPAREN">)</span> <span class="WITH">with</span><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">WEXITED</span> <span id="local_n_7"><span class="LIDENT">n</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">sys_exit</span> <a href="#local_n_7"><span class="LIDENT">n</span></a><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">WSIGNALED</span> <span class="UNDERSCORE">_</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">sys_exit</span> <span class="INT">255</span><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">WSTOPPED</span> <span class="UNDERSCORE">_</span> <span class="MINUSGREATER">-&gt;</span> <span class="ASSERT">assert</span> <span class="FALSE">false</span><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="ELSE">else</span> <span class="LPAREN">(</span><span class="EOL">
+</span>    <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-ignore"><span class="LIDENT">ignore</span></a> <span class="LPAREN">(</span><span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">sigprocmask</span> <span class="UIDENT">SIG_SETMASK</span> <span class="LBRACKET">[</span><span class="RBRACKET">]</span> <span class="COLON">:</span> <span class="LIDENT">int</span> <span class="LIDENT">list</span><span class="RPAREN">)</span><span class="SEMI">;</span><span class="EOL">
+</span>    <span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">execve</span> <a href="#local_prog_1"><span class="LIDENT">prog</span></a> <a href="#local_argv_5"><span class="LIDENT">argv</span></a> <a href="#local_env_4"><span class="LIDENT">env</span></a><span class="RPAREN">)</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span id="module-Resource_usage"><span class="MODULE">module</span> <span class="UIDENT">Resource_usage</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>  <span id="module-Resource_usage.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <span id="def_21"><span class="LIDENT">user_cpu_time</span> <span class="COLON">:</span> <span class="LIDENT">float</span><span class="EOL">
+</span>    <span class="SEMI">;</span></span> <span id="def_20"><span class="LIDENT">system_cpu_time</span> <span class="COLON">:</span> <span class="LIDENT">float</span></span><span class="EOL">
+</span>    <span class="RBRACE">}</span></span><span class="EOL">
+</span><span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span><span id="module-Times"><span class="MODULE">module</span> <span class="UIDENT">Times</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>  <span id="module-Times.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <span id="def_22"><span class="LIDENT">elapsed_time</span> <span class="COLON">:</span> <span class="LIDENT">float</span><span class="EOL">
+</span>    <span class="SEMI">;</span></span> <span id="def_18"><span class="LIDENT">resource_usage</span> <span class="COLON">:</span> <span class="UIDENT">Resource_usage</span><span class="DOT">.</span><span class="LIDENT">t</span> <span class="LIDENT">option</span></span><span class="EOL">
+</span>    <span class="RBRACE">}</span></span><span class="EOL">
+</span><span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span><span id="module-Process_info"><span class="MODULE">module</span> <span class="UIDENT">Process_info</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>  <span id="module-Process_info.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <span id="def_24"><span class="LIDENT">pid</span> <span class="COLON">:</span> <a href="pid.ml.html#type-t"><span class="UIDENT">Pid</span><span class="DOT">.</span><span class="LIDENT">t</span></a><span class="EOL">
+</span>    <span class="SEMI">;</span></span> <span id="def_23"><span class="LIDENT">status</span> <span class="COLON">:</span> <span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">process_status</span><span class="EOL">
+</span>    <span class="SEMI">;</span></span> <span id="def_17"><span class="LIDENT">end_time</span> <span class="COLON">:</span> <span class="LIDENT">float</span><span class="EOL">
+</span>    <span class="SEMI">;</span></span> <span id="def_19"><span class="LIDENT">resource_usage</span> <span class="COLON">:</span> <span class="UIDENT">Resource_usage</span><span class="DOT">.</span><span class="LIDENT">t</span> <span class="LIDENT">option</span></span><span class="EOL">
+</span>    <span class="RBRACE">}</span></span><span class="EOL">
+</span><span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span><span id="val-stub_wait4"><span class="EXTERNAL">external</span> <span class="LIDENT">stub_wait4</span><span class="EOL">
+</span>  <span class="COLON">:</span>  <span class="LIDENT">int</span><span class="EOL">
+</span>  <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">wait_flag</span> <span class="LIDENT">list</span><span class="EOL">
+</span>  <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">int</span> <span class="STAR">*</span> <span class="UIDENT">Unix</span><span class="DOT">.</span><span class="LIDENT">process_status</span> <span class="STAR">*</span> <span class="LIDENT">float</span> <span class="STAR">*</span> <span class="UIDENT">Resource_usage</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>  <span class="EQUAL">=</span> <span class="STRING">&quot;dune_wait4&quot;</span></span><span class="EOL">
+</span><span class="EOL">
+</span><span id="type-wait"><span class="TYPE">type</span> <span class="LIDENT">wait</span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span id="type-wait.constructor-Any"><span class="BAR">|</span> <span class="UIDENT">Any</span></span><span class="EOL">
+</span>  <span id="type-wait.constructor-Pid"><span class="BAR">|</span> <span class="UIDENT">Pid</span> <span class="OF">of</span> <a href="pid.ml.html#type-t"><span class="UIDENT">Pid</span><span class="DOT">.</span><span class="LIDENT">t</span></a></span></span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-wait"><span class="LIDENT">wait</span></span> <span id="local_wait_8"><span class="LIDENT">wait</span></span> <span id="local_flags_9"><span class="LIDENT">flags</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="IF">if</span> <a href="../../../ocaml-compiler/src/stdlib/sys.ml.html#val-win32"><span class="UIDENT">Sys</span><span class="DOT">.</span><span class="LIDENT">win32</span></a><span class="EOL">
+</span>  <span class="THEN">then</span> <a href="code_error.ml.html#val-raise"><span class="UIDENT">Code_error</span><span class="DOT">.</span><span class="LIDENT">raise</span></a> <span class="STRING">&quot;wait4 not available on windows&quot;</span> <span class="LBRACKET">[</span><span class="RBRACKET">]</span><span class="EOL">
+</span>  <span class="ELSE">else</span> <span class="LPAREN">(</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_pid_10"><span class="LIDENT">pid</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>      <span class="MATCH">match</span> <a href="#local_wait_8"><span class="LIDENT">wait</span></a> <span class="WITH">with</span><span class="EOL">
+</span>      <span class="BAR">|</span> <span class="UIDENT">Any</span> <span class="MINUSGREATER">-&gt;</span> <span class="MINUS">-</span><span class="INT">1</span><span class="EOL">
+</span>      <span class="BAR">|</span> <span class="UIDENT">Pid</span> <span id="local_pid_11"><span class="LIDENT">pid</span></span> <span class="MINUSGREATER">-&gt;</span> <a href="pid.ml.html#val-to_int"><span class="UIDENT">Pid</span><span class="DOT">.</span><span class="LIDENT">to_int</span></a> <a href="#local_pid_11"><span class="LIDENT">pid</span></a><span class="EOL">
+</span>    <span class="IN">in</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="def_16"><span id="local_pid_12"><span class="LIDENT">pid</span></span><span class="COMMA">,</span> <span id="local_status_13"><span class="LIDENT">status</span></span><span class="COMMA">,</span> <span id="local_end_time_14"><span class="LIDENT">end_time</span></span><span class="COMMA">,</span> <span id="local_resource_usage_15"><span class="LIDENT">resource_usage</span></span></span> <span class="EQUAL">=</span> <span class="LIDENT">stub_wait4</span> <a href="#local_pid_10"><span class="LIDENT">pid</span></a> <a href="#local_flags_9"><span class="LIDENT">flags</span></a> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <span class="UIDENT">Process_info</span><span class="DOT">.</span><span class="LIDENT">pid</span> <span class="EQUAL">=</span> <a href="pid.ml.html#val-of_int"><span class="UIDENT">Pid</span><span class="DOT">.</span><span class="LIDENT">of_int</span></a> <a href="#local_pid_12"><span class="LIDENT">pid</span></a><span class="EOL">
+</span>    <span class="SEMI">;</span> <a href="#local_status_13"><span class="LIDENT">status</span></a><span class="EOL">
+</span>    <span class="SEMI">;</span> <a href="#local_end_time_14"><span class="LIDENT">end_time</span></a><span class="EOL">
+</span>    <span class="SEMI">;</span> <span class="LIDENT">resource_usage</span> <span class="EQUAL">=</span> <span class="UIDENT">Some</span> <a href="#local_resource_usage_15"><span class="LIDENT">resource_usage</span></a><span class="EOL">
+</span>    <span class="RBRACE">}</span><span class="RPAREN">)</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span></span></code></pre></body></html>

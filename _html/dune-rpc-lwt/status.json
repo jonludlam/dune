@@ -1,0 +1,18 @@
+{
+  "name": "dune-rpc-lwt",
+  "version": "3.20.2",
+  "files": [
+    "src/dune-rpc-lwt/dune_rpc_lwt.ml.html", "src/index.html",
+    "dune-rpc-lwt/Dune_rpc_lwt/V1/Where/index.html",
+    "dune-rpc-lwt/Dune_rpc_lwt/V1/Client/Handler/index.html",
+    "dune-rpc-lwt/Dune_rpc_lwt/V1/Client/Versioned/index.html",
+    "dune-rpc-lwt/Dune_rpc_lwt/V1/Client/Stream/index.html",
+    "dune-rpc-lwt/Dune_rpc_lwt/V1/Client/Batch/index.html",
+    "dune-rpc-lwt/Dune_rpc_lwt/V1/Client/index.html",
+    "dune-rpc-lwt/Dune_rpc_lwt/V1/index.html",
+    "dune-rpc-lwt/Dune_rpc_lwt/index.html", "dune-rpc-lwt/index.html",
+    "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

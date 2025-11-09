@@ -1,0 +1,21 @@
+{
+  "name": "dune-configurator",
+  "version": "3.19.1",
+  "files": [
+    "src/dune-configurator/configurator__.ml.html",
+    "src/dune-configurator/configurator.ml.html",
+    "src/dune-configurator/v1.ml.html",
+    "src/dune-configurator/extract_obj.ml.html", "src/index.html",
+    "dune-configurator/Configurator/V1/C_define/Value/index.html",
+    "dune-configurator/Configurator/V1/C_define/Type/index.html",
+    "dune-configurator/Configurator/V1/C_define/index.html",
+    "dune-configurator/Configurator/V1/Flags/index.html",
+    "dune-configurator/Configurator/V1/Pkg_config/index.html",
+    "dune-configurator/Configurator/V1/Process/index.html",
+    "dune-configurator/Configurator/V1/index.html",
+    "dune-configurator/Configurator/index.html",
+    "dune-configurator/index.html", "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

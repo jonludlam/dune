@@ -1,0 +1,16 @@
+{
+  "name": "dune-build-info",
+  "version": "3.19.1",
+  "files": [
+    "src/dune-build-info/build_info__.ml.html",
+    "src/dune-build-info/build_info.ml.html", "src/index.html",
+    "dune-build-info/Build_info/V1/Statically_linked_library/index.html",
+    "dune-build-info/Build_info/V1/Version/index.html",
+    "dune-build-info/Build_info/V1/Statically_linked_libraries/index.html",
+    "dune-build-info/Build_info/V1/index.html",
+    "dune-build-info/Build_info/index.html", "dune-build-info/index.html",
+    "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

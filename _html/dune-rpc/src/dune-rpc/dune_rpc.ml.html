@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: dune_rpc.ml (dune-rpc.src.dune-rpc)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">dune-rpc</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; dune-rpc &#x00BB; dune_rpc.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>dune_rpc.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">dune-rpc</a><ul><li>Library <code>dune-rpc</code><ul><li><a href="../../dune-rpc/Dune_rpc/index.html">Dune_rpc</a></li></ul></li><li>Library <code>dune-rpc.private</code><ul><li><a href="../../dune-rpc.private/Dune_rpc_private/index.html">Dune_rpc_private</a></li></ul></li><li><a href="../index.html">Sources</a><ul><li>dune-rpc<ul><li><a href="#" class="current_unit">dune_rpc.ml</a></li></ul></li><li>dune-rpc.private<ul><li><a href="../dune-rpc.private/conv.ml.html">conv.ml</a></li><li><a href="../dune-rpc.private/dbus_address.ml.html">dbus_address.ml</a></li><li><a href="../dune-rpc.private/diagnostics_v1.ml.html">diagnostics_v1.ml</a></li><li><a href="../dune-rpc.private/dune_rpc_private.ml.html">dune_rpc_private.ml</a></li><li><a href="../dune-rpc.private/dune_rpc_private__.ml.html">dune_rpc_private__.ml</a></li><li><a href="../dune-rpc.private/exported_types.ml.html">exported_types.ml</a></li><li><a href="../dune-rpc.private/fiber_intf.ml.html">fiber_intf.ml</a></li><li><a href="../dune-rpc.private/import.ml.html">import.ml</a></li><li><a href="../dune-rpc.private/menu.ml.html">menu.ml</a></li><li><a href="../dune-rpc.private/procedures.ml.html">procedures.ml</a></li><li><a href="../dune-rpc.private/registry.ml.html">registry.ml</a></li><li><a href="../dune-rpc.private/sub.ml.html">sub.ml</a></li><li><a href="../dune-rpc.private/types.ml.html">types.ml</a></li><li><a href="../dune-rpc.private/versioned.ml.html">versioned.ml</a></li><li><a href="../dune-rpc.private/where.ml.html">where.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+<a id="L21" class="source_line" href="#L21">21</a>
+<a id="L22" class="source_line" href="#L22">22</a>
+<a id="L23" class="source_line" href="#L23">23</a>
+<a id="L24" class="source_line" href="#L24">24</a>
+<a id="L25" class="source_line" href="#L25">25</a>
+<a id="L26" class="source_line" href="#L26">26</a>
+<a id="L27" class="source_line" href="#L27">27</a>
+<a id="L28" class="source_line" href="#L28">28</a>
+<a id="L29" class="source_line" href="#L29">29</a>
+<a id="L30" class="source_line" href="#L30">30</a>
+<a id="L31" class="source_line" href="#L31">31</a>
+<a id="L32" class="source_line" href="#L32">32</a>
+<a id="L33" class="source_line" href="#L33">33</a>
+<a id="L34" class="source_line" href="#L34">34</a>
+<a id="L35" class="source_line" href="#L35">35</a>
+<a id="L36" class="source_line" href="#L36">36</a>
+<a id="L37" class="source_line" href="#L37">37</a>
+<a id="L38" class="source_line" href="#L38">38</a>
+<a id="L39" class="source_line" href="#L39">39</a>
+<a id="L40" class="source_line" href="#L40">40</a>
+<a id="L41" class="source_line" href="#L41">41</a>
+<a id="L42" class="source_line" href="#L42">42</a>
+<a id="L43" class="source_line" href="#L43">43</a>
+<a id="L44" class="source_line" href="#L44">44</a>
+<a id="L45" class="source_line" href="#L45">45</a>
+<a id="L46" class="source_line" href="#L46">46</a>
+<a id="L47" class="source_line" href="#L47">47</a>
+<a id="L48" class="source_line" href="#L48">48</a>
+<a id="L49" class="source_line" href="#L49">49</a>
+<a id="L50" class="source_line" href="#L50">50</a>
+<a id="L51" class="source_line" href="#L51">51</a>
+<a id="L52" class="source_line" href="#L52">52</a>
+<a id="L53" class="source_line" href="#L53">53</a>
+<a id="L54" class="source_line" href="#L54">54</a>
+<a id="L55" class="source_line" href="#L55">55</a>
+<a id="L56" class="source_line" href="#L56">56</a>
+<a id="L57" class="source_line" href="#L57">57</a>
+<a id="L58" class="source_line" href="#L58">58</a>
+<a id="L59" class="source_line" href="#L59">59</a>
+<a id="L60" class="source_line" href="#L60">60</a>
+<a id="L61" class="source_line" href="#L61">61</a>
+<a id="L62" class="source_line" href="#L62">62</a>
+<a id="L63" class="source_line" href="#L63">63</a>
+<a id="L64" class="source_line" href="#L64">64</a>
+<a id="L65" class="source_line" href="#L65">65</a>
+<a id="L66" class="source_line" href="#L66">66</a>
+<a id="L67" class="source_line" href="#L67">67</a>
+<a id="L68" class="source_line" href="#L68">68</a>
+<a id="L69" class="source_line" href="#L69">69</a>
+<a id="L70" class="source_line" href="#L70">70</a>
+<a id="L71" class="source_line" href="#L71">71</a>
+<a id="L72" class="source_line" href="#L72">72</a>
+<a id="L73" class="source_line" href="#L73">73</a>
+<a id="L74" class="source_line" href="#L74">74</a>
+<a id="L75" class="source_line" href="#L75">75</a>
+<a id="L76" class="source_line" href="#L76">76</a>
+<a id="L77" class="source_line" href="#L77">77</a>
+<a id="L78" class="source_line" href="#L78">78</a>
+<a id="L79" class="source_line" href="#L79">79</a>
+<a id="L80" class="source_line" href="#L80">80</a>
+<a id="L81" class="source_line" href="#L81">81</a>
+<a id="L82" class="source_line" href="#L82">82</a>
+<a id="L83" class="source_line" href="#L83">83</a>
+<a id="L84" class="source_line" href="#L84">84</a>
+<a id="L85" class="source_line" href="#L85">85</a>
+<a id="L86" class="source_line" href="#L86">86</a>
+<a id="L87" class="source_line" href="#L87">87</a>
+<a id="L88" class="source_line" href="#L88">88</a>
+<a id="L89" class="source_line" href="#L89">89</a>
+<a id="L90" class="source_line" href="#L90">90</a>
+<a id="L91" class="source_line" href="#L91">91</a>
+<a id="L92" class="source_line" href="#L92">92</a>
+<a id="L93" class="source_line" href="#L93">93</a>
+<a id="L94" class="source_line" href="#L94">94</a>
+<a id="L95" class="source_line" href="#L95">95</a>
+<a id="L96" class="source_line" href="#L96">96</a>
+<a id="L97" class="source_line" href="#L97">97</a>
+<a id="L98" class="source_line" href="#L98">98</a>
+</code><code class="source_code"><span><span id="module-V1"><span class="MODULE">module</span> <span class="UIDENT">V1</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>  <span class="OPEN">open</span> <a href="../dune-rpc.private/dune_rpc_private.ml.html"><span class="UIDENT">Dune_rpc_private</span></a><span class="EOL">
+</span>  <span id="module-V1.module-Id"><span class="MODULE">module</span> <span class="UIDENT">Id</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/types.ml.html"><span class="UIDENT">Id</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Response"><span class="MODULE">module</span> <span class="UIDENT">Response</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/types.ml.html"><span class="UIDENT">Response</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Version_error"><span class="MODULE">module</span> <span class="UIDENT">Version_error</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/versioned.ml.html#module-Version_error"><span class="UIDENT">Version_error</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Initialize"><span class="MODULE">module</span> <span class="UIDENT">Initialize</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/types.ml.html"><span class="UIDENT">Initialize</span><span class="DOT">.</span><span class="UIDENT">Request</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Call"><span class="MODULE">module</span> <span class="UIDENT">Call</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/types.ml.html"><span class="UIDENT">Call</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Loc"><span class="MODULE">module</span> <span class="UIDENT">Loc</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">Loc</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Target"><span class="MODULE">module</span> <span class="UIDENT">Target</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">Target</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Diagnostic"><span class="MODULE">module</span> <span class="UIDENT">Diagnostic</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">Diagnostic</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Path"><span class="MODULE">module</span> <span class="UIDENT">Path</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">Path</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Progress"><span class="MODULE">module</span> <span class="UIDENT">Progress</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">Progress</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Job"><span class="MODULE">module</span> <span class="UIDENT">Job</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">Job</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Message"><span class="MODULE">module</span> <span class="UIDENT">Message</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">Message</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Where"><span class="MODULE">module</span> <span class="UIDENT">Where</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/where.ml.html"><span class="UIDENT">Where</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Registry"><span class="MODULE">module</span> <span class="UIDENT">Registry</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/registry.ml.html"><span class="UIDENT">Registry</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-Ansi_color"><span class="MODULE">module</span> <span class="UIDENT">Ansi_color</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">Ansi_color</span></a></span><span class="EOL">
+</span>  <span id="module-V1.module-User_message"><span class="MODULE">module</span> <span class="UIDENT">User_message</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/exported_types.ml.html"><span class="UIDENT">User_message</span></a></span><span class="EOL">
+</span>  <span class="INCLUDE">include</span> <a href="../dune-rpc.private/dune_rpc_private.ml.html#module-Public"><span class="UIDENT">Public</span></a><span class="EOL">
+</span><span class="EOL">
+</span>  <span id="module-V1.module-Client"><span class="MODULE">module</span> <span class="UIDENT">Client</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>    <span id="module-V1.module-Client.module-type-S"><span class="MODULE">module</span> <span class="TYPE">type</span> <span class="UIDENT">S</span> <span class="EQUAL">=</span> <span class="SIG">sig</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span></span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.type-fiber"><span class="TYPE">type</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.type-chan"><span class="TYPE">type</span> <span class="LIDENT">chan</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.module-Handler"><span class="MODULE">module</span> <span class="UIDENT">Handler</span> <span class="COLON">:</span> <span class="SIG">sig</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Handler.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span></span><span class="EOL">
+</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Handler.val-create"><span class="VAL">val</span> <span class="LIDENT">create</span><span class="EOL">
+</span>          <span class="COLON">:</span>  <span class="OPTLABEL">?log:</span><span class="LPAREN">(</span><span class="UIDENT">Message</span><span class="DOT">.</span><span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">unit</span> <span class="LIDENT">fiber</span><span class="RPAREN">)</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <span class="OPTLABEL">?abort:</span><span class="LPAREN">(</span><span class="UIDENT">Message</span><span class="DOT">.</span><span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">unit</span> <span class="LIDENT">fiber</span><span class="RPAREN">)</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">unit</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">t</span></span><span class="EOL">
+</span>      <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.module-Versioned"><span class="MODULE">module</span> <span class="UIDENT">Versioned</span> <span class="COLON">:</span> <span class="SIG">sig</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Versioned.type-notification"><span class="TYPE">type</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="LIDENT">notification</span></span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Versioned.type-request"><span class="TYPE">type</span> <span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">a</span><span class="COMMA">,</span> <span class="QUOTE">'</span><span class="LIDENT">b</span><span class="RPAREN">)</span> <span class="LIDENT">request</span></span><span class="EOL">
+</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Versioned.val-prepare_request"><span class="VAL">val</span> <span class="LIDENT">prepare_request</span><span class="EOL">
+</span>          <span class="COLON">:</span>  <span class="LIDENT">t</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">a</span><span class="COMMA">,</span> <span class="QUOTE">'</span><span class="LIDENT">b</span><span class="RPAREN">)</span> <span class="UIDENT">Request</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#type-result"><span class="LPAREN">(</span><span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">a</span><span class="COMMA">,</span> <span class="QUOTE">'</span><span class="LIDENT">b</span><span class="RPAREN">)</span> <span class="LIDENT">request</span><span class="COMMA">,</span> <span class="UIDENT">Version_error</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="RPAREN">)</span> <span class="LIDENT">result</span></a> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Versioned.val-prepare_notification"><span class="VAL">val</span> <span class="LIDENT">prepare_notification</span><span class="EOL">
+</span>          <span class="COLON">:</span>  <span class="LIDENT">t</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="UIDENT">Notification</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#type-result"><span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="LIDENT">notification</span><span class="COMMA">,</span> <span class="UIDENT">Version_error</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="RPAREN">)</span> <span class="LIDENT">result</span></a> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span>      <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.val-request"><span class="VAL">val</span> <span class="LIDENT">request</span><span class="EOL">
+</span>        <span class="COLON">:</span>  <span class="OPTLABEL">?id:</span><span class="UIDENT">Id</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>        <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">t</span><span class="EOL">
+</span>        <span class="MINUSGREATER">-&gt;</span> <span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">a</span><span class="COMMA">,</span> <span class="QUOTE">'</span><span class="LIDENT">b</span><span class="RPAREN">)</span> <span class="UIDENT">Versioned</span><span class="DOT">.</span><span class="LIDENT">request</span><span class="EOL">
+</span>        <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span><span class="EOL">
+</span>        <span class="MINUSGREATER">-&gt;</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#type-result"><span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">b</span><span class="COMMA">,</span> <span class="UIDENT">Response</span><span class="DOT">.</span><span class="UIDENT">Error</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="RPAREN">)</span> <span class="LIDENT">result</span></a> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.val-notification"><span class="VAL">val</span> <span class="LIDENT">notification</span> <span class="COLON">:</span> <span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="UIDENT">Versioned</span><span class="DOT">.</span><span class="LIDENT">notification</span> <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">unit</span> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.val-disconnected"><span class="VAL">val</span> <span class="LIDENT">disconnected</span> <span class="COLON">:</span> <span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">unit</span> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.module-Stream"><span class="MODULE">module</span> <span class="UIDENT">Stream</span> <span class="COLON">:</span> <span class="SIG">sig</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Stream.type-t"><span class="TYPE">type</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="LIDENT">t</span></span><span class="EOL">
+</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Stream.val-cancel"><span class="VAL">val</span> <span class="LIDENT">cancel</span> <span class="COLON">:</span> <span class="UNDERSCORE">_</span> <span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">unit</span> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Stream.val-next"><span class="VAL">val</span> <span class="LIDENT">next</span> <span class="COLON">:</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="LIDENT">option</span> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span>      <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.val-poll"><span class="VAL">val</span> <span class="LIDENT">poll</span> <span class="COLON">:</span> <span class="OPTLABEL">?id:</span><span class="UIDENT">Id</span><span class="DOT">.</span><span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="UIDENT">Sub</span><span class="DOT">.</span><span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#type-result"><span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="UIDENT">Stream</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="COMMA">,</span> <span class="UIDENT">Version_error</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="RPAREN">)</span> <span class="LIDENT">result</span></a> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.module-Batch"><span class="MODULE">module</span> <span class="UIDENT">Batch</span> <span class="COLON">:</span> <span class="SIG">sig</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Batch.type-client"><span class="TYPE">type</span> <span class="LIDENT">client</span> <span class="COLONEQUAL">:=</span> <span class="LIDENT">t</span></span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Batch.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span></span><span class="EOL">
+</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Batch.val-create"><span class="VAL">val</span> <span class="LIDENT">create</span> <span class="COLON">:</span> <span class="LIDENT">client</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">t</span></span><span class="EOL">
+</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Batch.val-request"><span class="VAL">val</span> <span class="LIDENT">request</span><span class="EOL">
+</span>          <span class="COLON">:</span>  <span class="OPTLABEL">?id:</span><span class="UIDENT">Id</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">t</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">a</span><span class="COMMA">,</span> <span class="QUOTE">'</span><span class="LIDENT">b</span><span class="RPAREN">)</span> <span class="UIDENT">Versioned</span><span class="DOT">.</span><span class="LIDENT">request</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span><span class="EOL">
+</span>          <span class="MINUSGREATER">-&gt;</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#type-result"><span class="LPAREN">(</span><span class="QUOTE">'</span><span class="LIDENT">b</span><span class="COMMA">,</span> <span class="UIDENT">Response</span><span class="DOT">.</span><span class="UIDENT">Error</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="RPAREN">)</span> <span class="LIDENT">result</span></a> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Batch.val-notification"><span class="VAL">val</span> <span class="LIDENT">notification</span> <span class="COLON">:</span> <span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="UIDENT">Versioned</span><span class="DOT">.</span><span class="LIDENT">notification</span> <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">unit</span></span><span class="EOL">
+</span>        <span id="module-V1.module-Client.module-type-S.module-Batch.val-submit"><span class="VAL">val</span> <span class="LIDENT">submit</span> <span class="COLON">:</span> <span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">unit</span> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span>      <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="module-V1.module-Client.module-type-S.val-connect"><span class="VAL">val</span> <span class="LIDENT">connect</span><span class="EOL">
+</span>        <span class="COLON">:</span>  <span class="OPTLABEL">?handler:</span><span class="UIDENT">Handler</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>        <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">chan</span><span class="EOL">
+</span>        <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Initialize</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>        <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">f</span><span class="COLON">:</span><span class="LPAREN">(</span><span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="LIDENT">fiber</span><span class="RPAREN">)</span><span class="EOL">
+</span>        <span class="MINUSGREATER">-&gt;</span> <span class="QUOTE">'</span><span class="LIDENT">a</span> <span class="LIDENT">fiber</span></span><span class="EOL">
+</span>    <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>    <span id="module-V1.module-Client.module-Make"><span class="MODULE">module</span> <span class="UIDENT">Make</span> <span class="EQUAL">=</span> <a href="../dune-rpc.private/dune_rpc_private.ml.html#module-Client.module-Make"><span class="UIDENT">Client</span><span class="DOT">.</span><span class="UIDENT">Make</span></a></span><span class="EOL">
+</span>  <span class="END">end</span></span><span class="EOL">
+</span><span class="END">end</span></span><span class="EOL">
+</span></span></code></pre></body></html>

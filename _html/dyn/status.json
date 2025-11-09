@@ -1,0 +1,10 @@
+{
+  "name": "dyn",
+  "version": "3.19.1",
+  "files": [
+    "src/dyn/dyn.ml.html", "src/index.html", "dyn/Dyn/index.html",
+    "dyn/index.html", "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

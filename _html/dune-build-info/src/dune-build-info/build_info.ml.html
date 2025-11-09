@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: build_info.ml (dune-build-info.src.dune-build-info)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">dune-build-info</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; dune-build-info &#x00BB; build_info.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>build_info.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">dune-build-info</a><ul><li>Library <code>dune-build-info</code><ul><li><a href="../../dune-build-info/Build_info/index.html">Build_info</a></li></ul></li><li><a href="../index.html">Sources</a><ul><li>dune-build-info<ul><li><a href="#" class="current_unit">build_info.ml</a></li><li><a href="build_info__.ml.html">build_info__.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+<a id="L21" class="source_line" href="#L21">21</a>
+<a id="L22" class="source_line" href="#L22">22</a>
+<a id="L23" class="source_line" href="#L23">23</a>
+<a id="L24" class="source_line" href="#L24">24</a>
+<a id="L25" class="source_line" href="#L25">25</a>
+<a id="L26" class="source_line" href="#L26">26</a>
+</code><code class="source_code"><span><span id="module-V1"><span class="MODULE">module</span> <span class="UIDENT">V1</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>  <span id="module-V1.module-Version"><span class="MODULE">module</span> <span class="UIDENT">Version</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>    <span id="module-V1.module-Version.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <span class="LIDENT">string</span></span><span class="EOL">
+</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="module-V1.module-Version.val-to_string"><span class="LIDENT">to_string</span></span> <span id="local_x_1"><span class="LIDENT">x</span></span> <span class="EQUAL">=</span> <a href="#local_x_1"><span class="LIDENT">x</span></a><span class="EOL">
+</span>  <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>  <span id="module-V1.module-Statically_linked_library"><span class="MODULE">module</span> <span class="UIDENT">Statically_linked_library</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>    <span id="module-V1.module-Statically_linked_library.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <span class="LIDENT">string</span> <span class="STAR">*</span> <span class="LIDENT">string</span> <span class="LIDENT">option</span></span><span class="EOL">
+</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="module-V1.module-Statically_linked_library.val-name"><span class="LIDENT">name</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-fst"><span class="LIDENT">fst</span></a><span class="EOL">
+</span>    <span class="LET">let</span> <span id="module-V1.module-Statically_linked_library.val-version"><span class="LIDENT">version</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-snd"><span class="LIDENT">snd</span></a><span class="EOL">
+</span>  <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>  <span id="module-V1.module-Statically_linked_libraries"><span class="MODULE">module</span> <span class="UIDENT">Statically_linked_libraries</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="module-V1.module-Statically_linked_libraries.val-to_list"><span class="LIDENT">to_list</span></span> <span class="LPAREN">(</span><span class="RPAREN">)</span> <span class="EQUAL">=</span> <span class="UIDENT">Build_info_data</span><span class="DOT">.</span><span class="LIDENT">statically_linked_libraries</span><span class="EOL">
+</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="module-V1.module-Statically_linked_libraries.val-find"><span class="LIDENT">find</span></span> <span class="TILDE">~</span><span id="local_name_2"><span class="LIDENT">name</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>      <span class="MATCH">match</span> <a href="../../../ocaml-compiler/src/stdlib/list.ml.html#val-assoc"><span class="UIDENT">List</span><span class="DOT">.</span><span class="LIDENT">assoc</span></a> <a href="#local_name_2"><span class="LIDENT">name</span></a> <span class="LPAREN">(</span><span class="LIDENT">to_list</span> <span class="LPAREN">(</span><span class="RPAREN">)</span><span class="RPAREN">)</span> <span class="WITH">with</span><span class="EOL">
+</span>      <span class="BAR">|</span> <span class="EXCEPTION">exception</span> <span class="UIDENT">Not_found</span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">None</span><span class="EOL">
+</span>      <span class="BAR">|</span> <span id="local_version_3"><span class="LIDENT">version</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Some</span> <span class="LPAREN">(</span><a href="#local_name_2"><span class="LIDENT">name</span></a><span class="COMMA">,</span> <a href="#local_version_3"><span class="LIDENT">version</span></a><span class="RPAREN">)</span><span class="EOL">
+</span>    <span class="SEMISEMI">;;</span><span class="EOL">
+</span>  <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="module-V1.val-version"><span class="LIDENT">version</span></span> <span class="LPAREN">(</span><span class="RPAREN">)</span> <span class="EQUAL">=</span> <span class="UIDENT">Build_info_data</span><span class="DOT">.</span><span class="LIDENT">version</span><span class="EOL">
+</span><span class="END">end</span></span><span class="EOL">
+</span></span></code></pre></body></html>

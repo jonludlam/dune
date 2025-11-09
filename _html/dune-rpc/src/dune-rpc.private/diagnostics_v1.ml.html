@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: diagnostics_v1.ml (dune-rpc.src.dune-rpc.private)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">dune-rpc</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; dune-rpc.private &#x00BB; diagnostics_v1.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>diagnostics_v1.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">dune-rpc</a><ul><li>Library <code>dune-rpc</code><ul><li><a href="../../dune-rpc/Dune_rpc/index.html">Dune_rpc</a></li></ul></li><li>Library <code>dune-rpc.private</code><ul><li><a href="../../dune-rpc.private/Dune_rpc_private/index.html">Dune_rpc_private</a></li></ul></li><li><a href="../index.html">Sources</a><ul><li>dune-rpc<ul><li><a href="../dune-rpc/dune_rpc.ml.html">dune_rpc.ml</a></li></ul></li><li>dune-rpc.private<ul><li><a href="conv.ml.html">conv.ml</a></li><li><a href="dbus_address.ml.html">dbus_address.ml</a></li><li><a href="#" class="current_unit">diagnostics_v1.ml</a></li><li><a href="dune_rpc_private.ml.html">dune_rpc_private.ml</a></li><li><a href="dune_rpc_private__.ml.html">dune_rpc_private__.ml</a></li><li><a href="exported_types.ml.html">exported_types.ml</a></li><li><a href="fiber_intf.ml.html">fiber_intf.ml</a></li><li><a href="import.ml.html">import.ml</a></li><li><a href="menu.ml.html">menu.ml</a></li><li><a href="procedures.ml.html">procedures.ml</a></li><li><a href="registry.ml.html">registry.ml</a></li><li><a href="sub.ml.html">sub.ml</a></li><li><a href="types.ml.html">types.ml</a></li><li><a href="versioned.ml.html">versioned.ml</a></li><li><a href="where.ml.html">where.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+<a id="L21" class="source_line" href="#L21">21</a>
+<a id="L22" class="source_line" href="#L22">22</a>
+<a id="L23" class="source_line" href="#L23">23</a>
+<a id="L24" class="source_line" href="#L24">24</a>
+<a id="L25" class="source_line" href="#L25">25</a>
+<a id="L26" class="source_line" href="#L26">26</a>
+<a id="L27" class="source_line" href="#L27">27</a>
+<a id="L28" class="source_line" href="#L28">28</a>
+<a id="L29" class="source_line" href="#L29">29</a>
+<a id="L30" class="source_line" href="#L30">30</a>
+<a id="L31" class="source_line" href="#L31">31</a>
+<a id="L32" class="source_line" href="#L32">32</a>
+<a id="L33" class="source_line" href="#L33">33</a>
+<a id="L34" class="source_line" href="#L34">34</a>
+<a id="L35" class="source_line" href="#L35">35</a>
+<a id="L36" class="source_line" href="#L36">36</a>
+<a id="L37" class="source_line" href="#L37">37</a>
+<a id="L38" class="source_line" href="#L38">38</a>
+<a id="L39" class="source_line" href="#L39">39</a>
+<a id="L40" class="source_line" href="#L40">40</a>
+<a id="L41" class="source_line" href="#L41">41</a>
+<a id="L42" class="source_line" href="#L42">42</a>
+<a id="L43" class="source_line" href="#L43">43</a>
+<a id="L44" class="source_line" href="#L44">44</a>
+<a id="L45" class="source_line" href="#L45">45</a>
+<a id="L46" class="source_line" href="#L46">46</a>
+<a id="L47" class="source_line" href="#L47">47</a>
+<a id="L48" class="source_line" href="#L48">48</a>
+<a id="L49" class="source_line" href="#L49">49</a>
+<a id="L50" class="source_line" href="#L50">50</a>
+<a id="L51" class="source_line" href="#L51">51</a>
+<a id="L52" class="source_line" href="#L52">52</a>
+<a id="L53" class="source_line" href="#L53">53</a>
+<a id="L54" class="source_line" href="#L54">54</a>
+<a id="L55" class="source_line" href="#L55">55</a>
+<a id="L56" class="source_line" href="#L56">56</a>
+<a id="L57" class="source_line" href="#L57">57</a>
+<a id="L58" class="source_line" href="#L58">58</a>
+<a id="L59" class="source_line" href="#L59">59</a>
+<a id="L60" class="source_line" href="#L60">60</a>
+<a id="L61" class="source_line" href="#L61">61</a>
+<a id="L62" class="source_line" href="#L62">62</a>
+<a id="L63" class="source_line" href="#L63">63</a>
+<a id="L64" class="source_line" href="#L64">64</a>
+<a id="L65" class="source_line" href="#L65">65</a>
+<a id="L66" class="source_line" href="#L66">66</a>
+<a id="L67" class="source_line" href="#L67">67</a>
+<a id="L68" class="source_line" href="#L68">68</a>
+<a id="L69" class="source_line" href="#L69">69</a>
+<a id="L70" class="source_line" href="#L70">70</a>
+<a id="L71" class="source_line" href="#L71">71</a>
+<a id="L72" class="source_line" href="#L72">72</a>
+<a id="L73" class="source_line" href="#L73">73</a>
+<a id="L74" class="source_line" href="#L74">74</a>
+<a id="L75" class="source_line" href="#L75">75</a>
+<a id="L76" class="source_line" href="#L76">76</a>
+<a id="L77" class="source_line" href="#L77">77</a>
+<a id="L78" class="source_line" href="#L78">78</a>
+<a id="L79" class="source_line" href="#L79">79</a>
+<a id="L80" class="source_line" href="#L80">80</a>
+<a id="L81" class="source_line" href="#L81">81</a>
+<a id="L82" class="source_line" href="#L82">82</a>
+<a id="L83" class="source_line" href="#L83">83</a>
+<a id="L84" class="source_line" href="#L84">84</a>
+<a id="L85" class="source_line" href="#L85">85</a>
+<a id="L86" class="source_line" href="#L86">86</a>
+<a id="L87" class="source_line" href="#L87">87</a>
+<a id="L88" class="source_line" href="#L88">88</a>
+<a id="L89" class="source_line" href="#L89">89</a>
+<a id="L90" class="source_line" href="#L90">90</a>
+<a id="L91" class="source_line" href="#L91">91</a>
+<a id="L92" class="source_line" href="#L92">92</a>
+<a id="L93" class="source_line" href="#L93">93</a>
+<a id="L94" class="source_line" href="#L94">94</a>
+<a id="L95" class="source_line" href="#L95">95</a>
+<a id="L96" class="source_line" href="#L96">96</a>
+<a id="L97" class="source_line" href="#L97">97</a>
+<a id="L98" class="source_line" href="#L98">98</a>
+<a id="L99" class="source_line" href="#L99">99</a>
+<a id="L100" class="source_line" href="#L100">100</a>
+<a id="L101" class="source_line" href="#L101">101</a>
+<a id="L102" class="source_line" href="#L102">102</a>
+<a id="L103" class="source_line" href="#L103">103</a>
+<a id="L104" class="source_line" href="#L104">104</a>
+<a id="L105" class="source_line" href="#L105">105</a>
+<a id="L106" class="source_line" href="#L106">106</a>
+<a id="L107" class="source_line" href="#L107">107</a>
+<a id="L108" class="source_line" href="#L108">108</a>
+<a id="L109" class="source_line" href="#L109">109</a>
+<a id="L110" class="source_line" href="#L110">110</a>
+<a id="L111" class="source_line" href="#L111">111</a>
+<a id="L112" class="source_line" href="#L112">112</a>
+<a id="L113" class="source_line" href="#L113">113</a>
+<a id="L114" class="source_line" href="#L114">114</a>
+<a id="L115" class="source_line" href="#L115">115</a>
+<a id="L116" class="source_line" href="#L116">116</a>
+<a id="L117" class="source_line" href="#L117">117</a>
+<a id="L118" class="source_line" href="#L118">118</a>
+</code><code class="source_code"><span><span class="OPEN">open</span> <a href="import.ml.html"><span class="UIDENT">Import</span></a><span class="EOL">
+</span><span class="OPEN">open</span> <a href="exported_types.ml.html"><span class="UIDENT">Exported_types</span></a><span class="EOL">
+</span><span class="EOL">
+</span><span id="module-Related"><span class="MODULE">module</span> <span class="UIDENT">Related</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>  <span id="module-Related.type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <span id="def_50"><span class="LIDENT">message</span> <span class="COLON">:</span> <span class="LIDENT">unit</span> <span class="UIDENT">Pp</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>    <span class="SEMI">;</span></span> <span id="def_56"><span class="LIDENT">loc</span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Loc.type-t"><span class="UIDENT">Loc</span><span class="DOT">.</span><span class="LIDENT">t</span></a></span><span class="EOL">
+</span>    <span class="RBRACE">}</span></span><span class="EOL">
+</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="module-Related.val-sexp"><span class="LIDENT">sexp</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LET">let</span> <span class="OPEN">open</span> <a href="conv.ml.html"><span class="UIDENT">Conv</span></a> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_loc_1"><span class="LIDENT">loc</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;loc&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-required"><span class="LIDENT">required</span></a> <a href="exported_types.ml.html#module-Loc.val-sexp"><span class="UIDENT">Loc</span><span class="DOT">.</span><span class="LIDENT">sexp</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_message_2"><span class="LIDENT">message</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;message&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-required"><span class="LIDENT">required</span></a> <a href="exported_types.ml.html#val-sexp_pp_unit"><span class="LIDENT">sexp_pp_unit</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_to__3"><span class="LIDENT">to_</span></span> <span class="LPAREN">(</span><span id="local_loc_4"><span class="LIDENT">loc</span></span><span class="COMMA">,</span> <span id="local_message_5"><span class="LIDENT">message</span></span><span class="RPAREN">)</span> <span class="EQUAL">=</span> <span class="LBRACE">{</span> <a href="#local_loc_4"><span class="LIDENT">loc</span></a><span class="SEMI">;</span> <a href="#local_message_5"><span class="LIDENT">message</span></a> <span class="RBRACE">}</span> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_from_6"><span class="LIDENT">from</span></span> <span class="LBRACE">{</span> <span id="local_loc_8"><span class="LIDENT">loc</span></span><span class="SEMI">;</span> <span id="local_message_7"><span class="LIDENT">message</span></span> <span class="RBRACE">}</span> <span class="EQUAL">=</span> <a href="#local_loc_8"><span class="LIDENT">loc</span></a><span class="COMMA">,</span> <a href="#local_message_7"><span class="LIDENT">message</span></a> <span class="IN">in</span><span class="EOL">
+</span>    <a href="conv.ml.html#val-iso"><span class="LIDENT">iso</span></a> <span class="LPAREN">(</span><a href="conv.ml.html#val-record"><span class="LIDENT">record</span></a> <span class="LPAREN">(</span><a href="conv.ml.html#val-both"><span class="LIDENT">both</span></a> <a href="#local_loc_1"><span class="LIDENT">loc</span></a> <a href="#local_message_2"><span class="LIDENT">message</span></a><span class="RPAREN">)</span><span class="RPAREN">)</span> <a href="#local_to__3"><span class="LIDENT">to_</span></a> <a href="#local_from_6"><span class="LIDENT">from</span></a><span class="EOL">
+</span>  <span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="module-Related.val-to_diagnostic_related"><span class="LIDENT">to_diagnostic_related</span></span> <span id="local_t_9"><span class="LIDENT">t</span></span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Diagnostic.module-Related.type-t"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Related</span><span class="DOT">.</span><span class="LIDENT">t</span></a> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <span class="LIDENT">message</span> <span class="EQUAL">=</span> <a href="#local_t_9"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">message</span> <span class="INFIXOP0">|&gt;</span> <span class="UIDENT">Pp</span><span class="DOT">.</span><span class="LIDENT">map_tags</span> <span class="LABEL">~f:</span><span class="LPAREN">(</span><span class="FUN">fun</span> <span class="UNDERSCORE">_</span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">User_message</span><span class="DOT">.</span><span class="UIDENT">Style</span><span class="DOT">.</span><span class="UIDENT">Details</span><span class="RPAREN">)</span><span class="EOL">
+</span>    <span class="SEMI">;</span> <span class="LIDENT">loc</span> <span class="EQUAL">=</span> <a href="#local_t_9"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">loc</span><span class="EOL">
+</span>    <span class="RBRACE">}</span><span class="EOL">
+</span>  <span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="module-Related.val-of_diagnostic_related"><span class="LIDENT">of_diagnostic_related</span></span> <span class="LPAREN">(</span><span id="local_t_10"><span class="LIDENT">t</span></span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Diagnostic.module-Related.type-t"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Related</span><span class="DOT">.</span><span class="LIDENT">t</span></a><span class="RPAREN">)</span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <span class="LIDENT">message</span> <span class="EQUAL">=</span> <a href="#local_t_10"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">message</span> <span class="INFIXOP0">|&gt;</span> <span class="UIDENT">Pp</span><span class="DOT">.</span><span class="LIDENT">map_tags</span> <span class="LABEL">~f:</span><span class="LPAREN">(</span><span class="FUN">fun</span> <span class="UNDERSCORE">_</span> <span class="MINUSGREATER">-&gt;</span> <span class="LPAREN">(</span><span class="RPAREN">)</span><span class="RPAREN">)</span><span class="SEMI">;</span> <span class="LIDENT">loc</span> <span class="EQUAL">=</span> <a href="#local_t_10"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">loc</span> <span class="RBRACE">}</span><span class="EOL">
+</span>  <span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span><span id="type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LBRACE">{</span> <span id="def_54"><span class="LIDENT">targets</span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Target.type-t"><span class="UIDENT">Target</span><span class="DOT">.</span><span class="LIDENT">t</span></a> <span class="LIDENT">list</span><span class="EOL">
+</span>  <span class="SEMI">;</span></span> <span id="def_58"><span class="LIDENT">id</span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Diagnostic.module-Id.type-t"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Id</span><span class="DOT">.</span><span class="LIDENT">t</span></a><span class="EOL">
+</span>  <span class="SEMI">;</span></span> <span id="def_52"><span class="LIDENT">message</span> <span class="COLON">:</span> <span class="LIDENT">unit</span> <span class="UIDENT">Pp</span><span class="DOT">.</span><span class="LIDENT">t</span><span class="EOL">
+</span>  <span class="SEMI">;</span></span> <span id="def_51"><span class="LIDENT">loc</span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Loc.type-t"><span class="UIDENT">Loc</span><span class="DOT">.</span><span class="LIDENT">t</span></a> <span class="LIDENT">option</span><span class="EOL">
+</span>  <span class="SEMI">;</span></span> <span id="def_57"><span class="LIDENT">severity</span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Diagnostic.type-severity"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="LIDENT">severity</span></a> <span class="LIDENT">option</span><span class="EOL">
+</span>  <span class="SEMI">;</span></span> <span id="def_59"><span class="LIDENT">promotion</span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Diagnostic.module-Promotion.type-t"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Promotion</span><span class="DOT">.</span><span class="LIDENT">t</span></a> <span class="LIDENT">list</span><span class="EOL">
+</span>  <span class="SEMI">;</span></span> <span id="def_53"><span class="LIDENT">directory</span> <span class="COLON">:</span> <span class="LIDENT">string</span> <span class="LIDENT">option</span><span class="EOL">
+</span>  <span class="SEMI">;</span></span> <span id="def_55"><span class="LIDENT">related</span> <span class="COLON">:</span> <span class="UIDENT">Related</span><span class="DOT">.</span><span class="LIDENT">t</span> <span class="LIDENT">list</span></span><span class="EOL">
+</span>  <span class="RBRACE">}</span></span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-sexp_severity"><span class="LIDENT">sexp_severity</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LET">let</span> <span class="OPEN">open</span> <a href="conv.ml.html"><span class="UIDENT">Conv</span></a> <span class="IN">in</span><span class="EOL">
+</span>  <a href="conv.ml.html#val-enum"><span class="LIDENT">enum</span></a> <span class="LBRACKET">[</span> <span class="STRING">&quot;error&quot;</span><span class="COMMA">,</span> <span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Error</span><span class="SEMI">;</span> <span class="STRING">&quot;warning&quot;</span><span class="COMMA">,</span> <span class="UIDENT">Warning</span> <span class="RBRACKET">]</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-sexp"><span class="LIDENT">sexp</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LET">let</span> <span class="OPEN">open</span> <a href="conv.ml.html"><span class="UIDENT">Conv</span></a> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_from_11"><span class="LIDENT">from</span></span> <span class="LBRACE">{</span> <span id="local_targets_12"><span class="LIDENT">targets</span></span><span class="SEMI">;</span> <span id="local_message_14"><span class="LIDENT">message</span></span><span class="SEMI">;</span> <span id="local_loc_15"><span class="LIDENT">loc</span></span><span class="SEMI">;</span> <span id="local_severity_16"><span class="LIDENT">severity</span></span><span class="SEMI">;</span> <span id="local_promotion_17"><span class="LIDENT">promotion</span></span><span class="SEMI">;</span> <span id="local_directory_18"><span class="LIDENT">directory</span></span><span class="SEMI">;</span> <span id="local_id_13"><span class="LIDENT">id</span></span><span class="SEMI">;</span> <span id="local_related_19"><span class="LIDENT">related</span></span> <span class="RBRACE">}</span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <a href="#local_targets_12"><span class="LIDENT">targets</span></a><span class="COMMA">,</span> <a href="#local_message_14"><span class="LIDENT">message</span></a><span class="COMMA">,</span> <a href="#local_loc_15"><span class="LIDENT">loc</span></a><span class="COMMA">,</span> <a href="#local_severity_16"><span class="LIDENT">severity</span></a><span class="COMMA">,</span> <a href="#local_promotion_17"><span class="LIDENT">promotion</span></a><span class="COMMA">,</span> <a href="#local_directory_18"><span class="LIDENT">directory</span></a><span class="COMMA">,</span> <a href="#local_id_13"><span class="LIDENT">id</span></a><span class="COMMA">,</span> <a href="#local_related_19"><span class="LIDENT">related</span></a><span class="EOL">
+</span>  <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_to__20"><span class="LIDENT">to_</span></span> <span class="LPAREN">(</span><span id="local_targets_21"><span class="LIDENT">targets</span></span><span class="COMMA">,</span> <span id="local_message_22"><span class="LIDENT">message</span></span><span class="COMMA">,</span> <span id="local_loc_23"><span class="LIDENT">loc</span></span><span class="COMMA">,</span> <span id="local_severity_24"><span class="LIDENT">severity</span></span><span class="COMMA">,</span> <span id="local_promotion_25"><span class="LIDENT">promotion</span></span><span class="COMMA">,</span> <span id="local_directory_26"><span class="LIDENT">directory</span></span><span class="COMMA">,</span> <span id="local_id_27"><span class="LIDENT">id</span></span><span class="COMMA">,</span> <span id="local_related_28"><span class="LIDENT">related</span></span><span class="RPAREN">)</span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <a href="#local_targets_21"><span class="LIDENT">targets</span></a><span class="SEMI">;</span> <a href="#local_message_22"><span class="LIDENT">message</span></a><span class="SEMI">;</span> <a href="#local_loc_23"><span class="LIDENT">loc</span></a><span class="SEMI">;</span> <a href="#local_severity_24"><span class="LIDENT">severity</span></a><span class="SEMI">;</span> <a href="#local_promotion_25"><span class="LIDENT">promotion</span></a><span class="SEMI">;</span> <a href="#local_directory_26"><span class="LIDENT">directory</span></a><span class="SEMI">;</span> <a href="#local_id_27"><span class="LIDENT">id</span></a><span class="SEMI">;</span> <a href="#local_related_28"><span class="LIDENT">related</span></a> <span class="RBRACE">}</span><span class="EOL">
+</span>  <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_loc_29"><span class="LIDENT">loc</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;loc&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-optional"><span class="LIDENT">optional</span></a> <a href="exported_types.ml.html#module-Loc.val-sexp"><span class="UIDENT">Loc</span><span class="DOT">.</span><span class="LIDENT">sexp</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_message_30"><span class="LIDENT">message</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;message&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-required"><span class="LIDENT">required</span></a> <a href="exported_types.ml.html#val-sexp_pp_unit"><span class="LIDENT">sexp_pp_unit</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_targets_31"><span class="LIDENT">targets</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;targets&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-required"><span class="LIDENT">required</span></a> <span class="LPAREN">(</span><a href="conv.ml.html#val-list"><span class="LIDENT">list</span></a> <a href="exported_types.ml.html#module-Target.val-sexp"><span class="UIDENT">Target</span><span class="DOT">.</span><span class="LIDENT">sexp</span></a><span class="RPAREN">)</span><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_severity_32"><span class="LIDENT">severity</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;severity&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-optional"><span class="LIDENT">optional</span></a> <span class="LIDENT">sexp_severity</span><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_directory_33"><span class="LIDENT">directory</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;directory&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-optional"><span class="LIDENT">optional</span></a> <a href="conv.ml.html#val-string"><span class="LIDENT">string</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_promotion_34"><span class="LIDENT">promotion</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;promotion&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-required"><span class="LIDENT">required</span></a> <span class="LPAREN">(</span><a href="conv.ml.html#val-list"><span class="LIDENT">list</span></a> <a href="exported_types.ml.html#module-Diagnostic.module-Promotion.val-sexp"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Promotion</span><span class="DOT">.</span><span class="LIDENT">sexp</span></a><span class="RPAREN">)</span><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_id_35"><span class="LIDENT">id</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;id&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-required"><span class="LIDENT">required</span></a> <a href="exported_types.ml.html#module-Diagnostic.module-Id.val-sexp"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Id</span><span class="DOT">.</span><span class="LIDENT">sexp</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_related_36"><span class="LIDENT">related</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-field"><span class="LIDENT">field</span></a> <span class="STRING">&quot;related&quot;</span> <span class="LPAREN">(</span><a href="conv.ml.html#val-required"><span class="LIDENT">required</span></a> <span class="LPAREN">(</span><a href="conv.ml.html#val-list"><span class="LIDENT">list</span></a> <span class="UIDENT">Related</span><span class="DOT">.</span><span class="LIDENT">sexp</span><span class="RPAREN">)</span><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>  <a href="conv.ml.html#val-iso"><span class="LIDENT">iso</span></a><span class="EOL">
+</span>    <span class="LPAREN">(</span><a href="conv.ml.html#val-record"><span class="LIDENT">record</span></a> <span class="LPAREN">(</span><a href="conv.ml.html#val-eight"><span class="LIDENT">eight</span></a> <a href="#local_targets_31"><span class="LIDENT">targets</span></a> <a href="#local_message_30"><span class="LIDENT">message</span></a> <a href="#local_loc_29"><span class="LIDENT">loc</span></a> <a href="#local_severity_32"><span class="LIDENT">severity</span></a> <a href="#local_promotion_34"><span class="LIDENT">promotion</span></a> <a href="#local_directory_33"><span class="LIDENT">directory</span></a> <a href="#local_id_35"><span class="LIDENT">id</span></a> <a href="#local_related_36"><span class="LIDENT">related</span></a><span class="RPAREN">)</span><span class="RPAREN">)</span><span class="EOL">
+</span>    <a href="#local_to__20"><span class="LIDENT">to_</span></a><span class="EOL">
+</span>    <a href="#local_from_11"><span class="LIDENT">from</span></a><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-to_diagnostic"><span class="LIDENT">to_diagnostic</span></span> <span id="local_t_37"><span class="LIDENT">t</span></span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Diagnostic.type-t"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="LIDENT">t</span></a> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LBRACE">{</span> <span class="LIDENT">targets</span> <span class="EQUAL">=</span> <a href="#local_t_37"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">targets</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">message</span> <span class="EQUAL">=</span> <a href="#local_t_37"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">message</span> <span class="INFIXOP0">|&gt;</span> <span class="UIDENT">Pp</span><span class="DOT">.</span><span class="LIDENT">map_tags</span> <span class="LABEL">~f:</span><span class="LPAREN">(</span><span class="FUN">fun</span> <span class="UNDERSCORE">_</span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">User_message</span><span class="DOT">.</span><span class="UIDENT">Style</span><span class="DOT">.</span><span class="UIDENT">Details</span><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">loc</span> <span class="EQUAL">=</span> <a href="#local_t_37"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">loc</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">severity</span> <span class="EQUAL">=</span> <a href="#local_t_37"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">severity</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">promotion</span> <span class="EQUAL">=</span> <a href="#local_t_37"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">promotion</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">directory</span> <span class="EQUAL">=</span> <a href="#local_t_37"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">directory</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">id</span> <span class="EQUAL">=</span> <a href="#local_t_37"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">id</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">related</span> <span class="EQUAL">=</span> <a href="#local_t_37"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">related</span> <span class="INFIXOP0">|&gt;</span> <a href="../../../stdune/src/stdune/list.ml.html#val-map"><span class="UIDENT">List</span><span class="DOT">.</span><span class="LIDENT">map</span></a> <span class="LABEL">~f:</span><span class="UIDENT">Related</span><span class="DOT">.</span><span class="LIDENT">to_diagnostic_related</span><span class="EOL">
+</span>  <span class="RBRACE">}</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-of_diagnostic"><span class="LIDENT">of_diagnostic</span></span> <span class="LPAREN">(</span><span id="local_t_38"><span class="LIDENT">t</span></span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Diagnostic.type-t"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="LIDENT">t</span></a><span class="RPAREN">)</span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LBRACE">{</span> <span class="LIDENT">targets</span> <span class="EQUAL">=</span> <a href="#local_t_38"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">targets</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">message</span> <span class="EQUAL">=</span> <a href="#local_t_38"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">message</span> <span class="INFIXOP0">|&gt;</span> <span class="UIDENT">Pp</span><span class="DOT">.</span><span class="LIDENT">map_tags</span> <span class="LABEL">~f:</span><span class="LPAREN">(</span><span class="FUN">fun</span> <span class="UNDERSCORE">_</span> <span class="MINUSGREATER">-&gt;</span> <span class="LPAREN">(</span><span class="RPAREN">)</span><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">loc</span> <span class="EQUAL">=</span> <a href="#local_t_38"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">loc</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">severity</span> <span class="EQUAL">=</span> <a href="#local_t_38"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">severity</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">promotion</span> <span class="EQUAL">=</span> <a href="#local_t_38"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">promotion</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">directory</span> <span class="EQUAL">=</span> <a href="#local_t_38"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">directory</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">id</span> <span class="EQUAL">=</span> <a href="#local_t_38"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">id</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="LIDENT">related</span> <span class="EQUAL">=</span> <a href="#local_t_38"><span class="LIDENT">t</span></a><span class="DOT">.</span><span class="LIDENT">related</span> <span class="INFIXOP0">|&gt;</span> <a href="../../../stdune/src/stdune/list.ml.html#val-map"><span class="UIDENT">List</span><span class="DOT">.</span><span class="LIDENT">map</span></a> <span class="LABEL">~f:</span><span class="UIDENT">Related</span><span class="DOT">.</span><span class="LIDENT">of_diagnostic_related</span><span class="EOL">
+</span>  <span class="RBRACE">}</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span id="module-Event"><span class="MODULE">module</span> <span class="UIDENT">Event</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>  <span id="module-Event.type-t"><span class="TYPE">type</span> <span class="NONREC">nonrec</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span id="module-Event.type-t.constructor-Add"><span class="BAR">|</span> <span class="UIDENT">Add</span> <span class="OF">of</span> <span class="LIDENT">t</span></span><span class="EOL">
+</span>    <span id="module-Event.type-t.constructor-Remove"><span class="BAR">|</span> <span class="UIDENT">Remove</span> <span class="OF">of</span> <span class="LIDENT">t</span></span></span><span class="EOL">
+</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="module-Event.val-sexp"><span class="LIDENT">sexp</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_diagnostic_39"><span class="LIDENT">diagnostic</span></span> <span class="EQUAL">=</span> <span class="LIDENT">sexp</span> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LET">let</span> <span class="OPEN">open</span> <a href="conv.ml.html"><span class="UIDENT">Conv</span></a> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_add_40"><span class="LIDENT">add</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-constr"><span class="LIDENT">constr</span></a> <span class="STRING">&quot;Add&quot;</span> <a href="#local_diagnostic_39"><span class="LIDENT">diagnostic</span></a> <span class="LPAREN">(</span><span class="FUN">fun</span> <span id="local_a_41"><span class="LIDENT">a</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Add</span> <a href="#local_a_41"><span class="LIDENT">a</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LET">let</span> <span id="local_remove_42"><span class="LIDENT">remove</span></span> <span class="EQUAL">=</span> <a href="conv.ml.html#val-constr"><span class="LIDENT">constr</span></a> <span class="STRING">&quot;Remove&quot;</span> <a href="#local_diagnostic_39"><span class="LIDENT">diagnostic</span></a> <span class="LPAREN">(</span><span class="FUN">fun</span> <span id="local_a_43"><span class="LIDENT">a</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Remove</span> <a href="#local_a_43"><span class="LIDENT">a</span></a><span class="RPAREN">)</span> <span class="IN">in</span><span class="EOL">
+</span>    <a href="conv.ml.html#val-sum"><span class="LIDENT">sum</span></a><span class="EOL">
+</span>      <span class="LBRACKET">[</span> <a href="conv.ml.html#val-econstr"><span class="LIDENT">econstr</span></a> <a href="#local_add_40"><span class="LIDENT">add</span></a><span class="SEMI">;</span> <a href="conv.ml.html#val-econstr"><span class="LIDENT">econstr</span></a> <a href="#local_remove_42"><span class="LIDENT">remove</span></a> <span class="RBRACKET">]</span><span class="EOL">
+</span>      <span class="LPAREN">(</span><span class="FUNCTION">function</span><span class="EOL">
+</span>        <span class="BAR">|</span> <span class="UIDENT">Add</span> <span id="local_t_44"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <a href="conv.ml.html#val-case"><span class="LIDENT">case</span></a> <a href="#local_t_44"><span class="LIDENT">t</span></a> <a href="#local_add_40"><span class="LIDENT">add</span></a><span class="EOL">
+</span>        <span class="BAR">|</span> <span class="UIDENT">Remove</span> <span id="local_t_45"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <a href="conv.ml.html#val-case"><span class="LIDENT">case</span></a> <a href="#local_t_45"><span class="LIDENT">t</span></a> <a href="#local_remove_42"><span class="LIDENT">remove</span></a><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="module-Event.val-to_event"><span class="LIDENT">to_event</span></span> <span class="COLON">:</span> <span class="LIDENT">t</span> <span class="MINUSGREATER">-&gt;</span> <a href="exported_types.ml.html#module-Diagnostic.module-Event.type-t"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Event</span><span class="DOT">.</span><span class="LIDENT">t</span></a> <span class="EQUAL">=</span> <span class="FUNCTION">function</span><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">Add</span> <span id="local_t_46"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Add</span> <span class="LPAREN">(</span><span class="LIDENT">to_diagnostic</span> <a href="#local_t_46"><span class="LIDENT">t</span></a><span class="RPAREN">)</span><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">Remove</span> <span id="local_t_47"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Remove</span> <span class="LPAREN">(</span><span class="LIDENT">to_diagnostic</span> <a href="#local_t_47"><span class="LIDENT">t</span></a><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="module-Event.val-of_event"><span class="LIDENT">of_event</span></span> <span class="COLON">:</span> <a href="exported_types.ml.html#module-Diagnostic.module-Event.type-t"><span class="UIDENT">Diagnostic</span><span class="DOT">.</span><span class="UIDENT">Event</span><span class="DOT">.</span><span class="LIDENT">t</span></a> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <span class="FUNCTION">function</span><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">Add</span> <span id="local_t_48"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Add</span> <span class="LPAREN">(</span><span class="LIDENT">of_diagnostic</span> <a href="#local_t_48"><span class="LIDENT">t</span></a><span class="RPAREN">)</span><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">Remove</span> <span id="local_t_49"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Remove</span> <span class="LPAREN">(</span><span class="LIDENT">of_diagnostic</span> <a href="#local_t_49"><span class="LIDENT">t</span></a><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="END">end</span></span><span class="EOL">
+</span></span></code></pre></body></html>

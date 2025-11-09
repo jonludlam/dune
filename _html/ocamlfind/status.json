@@ -1,0 +1,10 @@
+{
+  "name": "ocamlfind",
+  "version": "1.9.8",
+  "files": [
+    "findlib.dynload/index.html", "findlib.internal/index.html",
+    "findlib.top/index.html", "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: linker.ml (dune-site.src.dune-site.toplevel)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">dune-site</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; dune-site.toplevel &#x00BB; linker.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>linker.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">dune-site</a><ul><li>Library <code>dune-site</code><ul><li><a href="../../dune-site/Dune_site/index.html">Dune_site</a></li></ul></li><li>Library <code>dune-site.dynlink</code></li><li>Library <code>dune-site.linker</code></li><li>Library <code>dune-site.plugins</code><ul><li><a href="../../dune-site.plugins/Dune_site_plugins/index.html">Dune_site_plugins</a></li></ul></li><li>Library <code>dune-site.private</code><ul><li><a href="../../dune-site.private/Dune_site_private/index.html">Dune_site_private</a></li></ul></li><li>Library <code>dune-site.toplevel</code></li><li><a href="../index.html">Sources</a><ul><li>dune-site<ul><li><a href="../dune-site/dune_site.ml.html">dune_site.ml</a></li><li><a href="../dune-site/dune_site__.ml.html">dune_site__.ml</a></li><li><a href="../dune-site/helpers.ml.html">helpers.ml</a></li></ul></li><li>dune-site.dynlink<ul><li><a href="../dune-site.dynlink/dune_site_backend__dune_site_dynlink_linker__.ml.html">dune_site_backend__dune_site_dynlink_linker__.ml</a></li><li><a href="../dune-site.dynlink/linker.ml.html">linker.ml</a></li></ul></li><li>dune-site.plugins<ul><li><a href="../dune-site.plugins/dune_site_plugins.ml.html">dune_site_plugins.ml</a></li><li><a href="../dune-site.plugins/dune_site_plugins__.ml.html">dune_site_plugins__.ml</a></li><li><a href="../dune-site.plugins/meta_parser.ml.html">meta_parser.ml</a></li><li><a href="../dune-site.plugins/plugins.ml.html">plugins.ml</a></li></ul></li><li>dune-site.private<ul><li><a href="../dune-site.private/dune_site_private.ml.html">dune_site_private.ml</a></li></ul></li><li>dune-site.toplevel<ul><li><a href="dune_site_backend__dune_site_toplevel_linker__.ml.html">dune_site_backend__dune_site_toplevel_linker__.ml</a></li><li><a href="#" class="current_unit">linker.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+</code><code class="source_code"><span><span class="COMMENT">(*
+   Prior to OCaml 4.13.0, [load_file] was in the Topdirs module.
+   Beginning with OCaml 4.13.0, load_file is in the Toploop module.
+   In order to be able to compile with OCaml versions either
+   before or after, open both modules and let the compiler
+   find [load_file] where it is defined.
+*)</span><span class="EOL">
+</span><span class="OPEN">open</span> <span class="UIDENT">Topdirs</span> <span class="LBRACKETATAT">[@@</span><span class="LIDENT">ocaml</span><span class="DOT">.</span><span class="LIDENT">warning</span> <span class="STRING">&quot;-33&quot;</span><span class="RBRACKET">]</span><span class="EOL">
+</span><span class="OPEN">open</span> <span class="UIDENT">Toploop</span> <span class="LBRACKETATAT">[@@</span><span class="LIDENT">ocaml</span><span class="DOT">.</span><span class="LIDENT">warning</span> <span class="STRING">&quot;-33&quot;</span><span class="RBRACKET">]</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-load"><span class="LIDENT">load</span></span> <span id="local_filename_1"><span class="LIDENT">filename</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_buf_2"><span class="LIDENT">buf</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/buffer.ml.html#val-create"><span class="UIDENT">Buffer</span><span class="DOT">.</span><span class="LIDENT">create</span></a> <span class="INT">16</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_ppf_3"><span class="LIDENT">ppf</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/format.ml.html#val-formatter_of_buffer"><span class="UIDENT">Format</span><span class="DOT">.</span><span class="LIDENT">formatter_of_buffer</span></a> <a href="#local_buf_2"><span class="LIDENT">buf</span></a> <span class="IN">in</span><span class="EOL">
+</span>  <span class="MATCH">match</span> <span class="LIDENT">load_file</span> <a href="#local_ppf_3"><span class="LIDENT">ppf</span></a> <a href="#local_filename_1"><span class="LIDENT">filename</span></a> <span class="WITH">with</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="TRUE">true</span> <span class="MINUSGREATER">-&gt;</span> <span class="LPAREN">(</span><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="FALSE">false</span> <span class="MINUSGREATER">-&gt;</span><span class="EOL">
+</span>    <a href="../../../ocaml-compiler/src/stdlib/format.ml.html#val-pp_print_flush"><span class="UIDENT">Format</span><span class="DOT">.</span><span class="LIDENT">pp_print_flush</span></a> <a href="#local_ppf_3"><span class="LIDENT">ppf</span></a> <span class="LPAREN">(</span><span class="RPAREN">)</span><span class="SEMI">;</span><span class="EOL">
+</span>    <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-failwith"><span class="failwith">failwith</span></a><span class="EOL">
+</span>    <span class="INFIXOP1">@@</span> <a href="../../../ocaml-compiler/src/stdlib/format.ml.html#val-asprintf"><span class="UIDENT">Format</span><span class="DOT">.</span><span class="LIDENT">asprintf</span></a> <span class="STRING">&quot;Failed to load file `%s': %s&quot;</span> <a href="#local_filename_1"><span class="LIDENT">filename</span></a> <span class="LPAREN">(</span><a href="../../../ocaml-compiler/src/stdlib/buffer.ml.html#val-contents"><span class="UIDENT">Buffer</span><span class="DOT">.</span><span class="LIDENT">contents</span></a> <a href="#local_buf_2"><span class="LIDENT">buf</span></a><span class="RPAREN">)</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span></span></code></pre></body></html>

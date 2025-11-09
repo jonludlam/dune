@@ -1,0 +1,10 @@
+{
+  "name": "xdg",
+  "version": "3.19.1",
+  "files": [
+    "src/xdg/xdg.ml.html", "src/index.html", "xdg/Xdg/index.html",
+    "xdg/index.html", "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: color_map.ml (dune-private-libs.src.dune-private-libs.dune_re)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">dune-private-libs</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; dune-private-libs.dune_re &#x00BB; color_map.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>color_map.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">dune-private-libs</a><ul><li>Library <code>dune-private-libs.dune-section</code><ul><li><a href="../../dune-private-libs.dune-section/Dune_section/index.html">Dune_section</a></li></ul></li><li>Library <code>dune-private-libs.dune_re</code><ul><li><a href="../../dune-private-libs.dune_re/Dune_re/index.html">Dune_re</a></li></ul></li><li>Library <code>dune-private-libs.meta_parser</code><ul><li><a href="../../dune-private-libs.meta_parser/Dune_meta_parser/index.html">Dune_meta_parser</a></li></ul></li><li><a href="../index.html">Sources</a><ul><li>dune-private-libs.dune-section<ul><li><a href="../dune-private-libs.dune-section/dune_section.ml.html">dune_section.ml</a></li></ul></li><li>dune-private-libs.dune_re<ul><li><a href="automata.ml.html">automata.ml</a></li><li><a href="category.ml.html">category.ml</a></li><li><a href="#" class="current_unit">color_map.ml</a></li><li><a href="core.ml.html">core.ml</a></li><li><a href="cset.ml.html">cset.ml</a></li><li><a href="dune_re.ml.html">dune_re.ml</a></li><li><a href="dune_re__.ml.html">dune_re__.ml</a></li><li><a href="emacs.ml.html">emacs.ml</a></li><li><a href="fmt.ml.html">fmt.ml</a></li><li><a href="glob.ml.html">glob.ml</a></li><li><a href="group.ml.html">group.ml</a></li><li><a href="pcre.ml.html">pcre.ml</a></li><li><a href="perl.ml.html">perl.ml</a></li><li><a href="pmark.ml.html">pmark.ml</a></li><li><a href="posix.ml.html">posix.ml</a></li><li><a href="re.ml.html">re.ml</a></li><li><a href="str.ml.html">str.ml</a></li></ul></li><li>dune-private-libs.meta_parser<ul><li><a href="../dune-private-libs.meta_parser/dune_meta_parser.ml.html">dune_meta_parser.ml</a></li><li><a href="../dune-private-libs.meta_parser/meta_lexer.ml.html">meta_lexer.ml</a></li><li><a href="../dune-private-libs.meta_parser/meta_parser.ml.html">meta_parser.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+<a id="L21" class="source_line" href="#L21">21</a>
+<a id="L22" class="source_line" href="#L22">22</a>
+<a id="L23" class="source_line" href="#L23">23</a>
+<a id="L24" class="source_line" href="#L24">24</a>
+<a id="L25" class="source_line" href="#L25">25</a>
+<a id="L26" class="source_line" href="#L26">26</a>
+<a id="L27" class="source_line" href="#L27">27</a>
+<a id="L28" class="source_line" href="#L28">28</a>
+<a id="L29" class="source_line" href="#L29">29</a>
+<a id="L30" class="source_line" href="#L30">30</a>
+<a id="L31" class="source_line" href="#L31">31</a>
+<a id="L32" class="source_line" href="#L32">32</a>
+<a id="L33" class="source_line" href="#L33">33</a>
+<a id="L34" class="source_line" href="#L34">34</a>
+</code><code class="source_code"><span><span class="COMMENT">(* In reality, this can really be represented as a bool array.
+
+   The representation is best thought of as a list of all chars along with a
+   flag:
+
+   (a, 0), (b, 1), (c, 0), (d, 0), ...
+
+   characters belonging to the same color are represented by sequnces of
+   characters with the flag set to 0.
+*)</span><span class="EOL">
+</span><span class="EOL">
+</span><span id="type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#type-t"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">t</span></a></span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-make"><span class="LIDENT">make</span></span> <span class="LPAREN">(</span><span class="RPAREN">)</span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-make"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">make</span></a> <span class="INT">257</span> <span class="CHAR">'\000'</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-flatten"><span class="LIDENT">flatten</span></span> <span id="local_cm_1"><span class="LIDENT">cm</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_c_2"><span class="LIDENT">c</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-create"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">create</span></a> <span class="INT">256</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_color_repr_3"><span class="LIDENT">color_repr</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-create"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">create</span></a> <span class="INT">256</span> <span class="IN">in</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_v_4"><span class="LIDENT">v</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-ref"><span class="LIDENT">ref</span></a> <span class="INT">0</span> <span class="IN">in</span><span class="EOL">
+</span>  <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-set"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">set</span></a> <a href="#local_c_2"><span class="LIDENT">c</span></a> <span class="INT">0</span> <span class="CHAR">'\000'</span><span class="SEMI">;</span><span class="EOL">
+</span>  <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-set"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">set</span></a> <a href="#local_color_repr_3"><span class="LIDENT">color_repr</span></a> <span class="INT">0</span> <span class="CHAR">'\000'</span><span class="SEMI">;</span><span class="EOL">
+</span>  <span class="FOR">for</span> <span class="LIDENT">i</span> <span class="EQUAL">=</span> <span class="INT">1</span> <span class="TO">to</span> <span class="INT">255</span> <span class="DO">do</span><span class="EOL">
+</span>    <span class="IF">if</span> <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-get"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">get</span></a> <a href="#local_cm_1"><span class="LIDENT">cm</span></a> <span class="LIDENT">i</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(&lt;&gt;)"><span class="INFIXOP0">&lt;&gt;</span></a> <span class="CHAR">'\000'</span> <span class="THEN">then</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-incr"><span class="LIDENT">incr</span></a> <a href="#local_v_4"><span class="LIDENT">v</span></a><span class="SEMI">;</span><span class="EOL">
+</span>    <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-set"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">set</span></a> <a href="#local_c_2"><span class="LIDENT">c</span></a> <span class="LIDENT">i</span> <span class="LPAREN">(</span><a href="../../../ocaml-compiler/src/stdlib/char.ml.html#val-chr"><span class="UIDENT">Char</span><span class="DOT">.</span><span class="LIDENT">chr</span></a> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(!)"><span class="BANG">!</span></a><a href="#local_v_4"><span class="LIDENT">v</span></a><span class="RPAREN">)</span><span class="SEMI">;</span><span class="EOL">
+</span>    <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-set"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">set</span></a> <a href="#local_color_repr_3"><span class="LIDENT">color_repr</span></a> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(!)"><span class="BANG">!</span></a><a href="#local_v_4"><span class="LIDENT">v</span></a> <span class="LPAREN">(</span><a href="../../../ocaml-compiler/src/stdlib/char.ml.html#val-chr"><span class="UIDENT">Char</span><span class="DOT">.</span><span class="LIDENT">chr</span></a> <span class="LIDENT">i</span><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="DONE">done</span><span class="SEMI">;</span><span class="EOL">
+</span>  <span class="LPAREN">(</span><a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-unsafe_to_string"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">unsafe_to_string</span></a> <a href="#local_c_2"><span class="LIDENT">c</span></a><span class="COMMA">,</span> <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-sub_string"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">sub_string</span></a> <a href="#local_color_repr_3"><span class="LIDENT">color_repr</span></a> <span class="INT">0</span> <span class="LPAREN">(</span><a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(!)"><span class="BANG">!</span></a><a href="#local_v_4"><span class="LIDENT">v</span></a> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(+)"><span class="PLUS">+</span></a> <span class="INT">1</span><span class="RPAREN">)</span><span class="COMMA">,</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(!)"><span class="BANG">!</span></a><a href="#local_v_4"><span class="LIDENT">v</span></a> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(+)"><span class="PLUS">+</span></a> <span class="INT">1</span><span class="RPAREN">)</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="COMMENT">(* mark all the endpoints of the intervals of the char set with the 1 byte *)</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-split"><span class="LIDENT">split</span></span> <span id="local_s_5"><span class="LIDENT">s</span></span> <span id="local_cm_6"><span class="LIDENT">cm</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <a href="cset.ml.html#val-iter"><span class="UIDENT">Cset</span><span class="DOT">.</span><span class="LIDENT">iter</span></a> <a href="#local_s_5"><span class="LIDENT">s</span></a> <span class="LABEL">~f:</span><span class="LPAREN">(</span><span class="FUN">fun</span> <span id="local_i_7"><span class="LIDENT">i</span></span> <span id="local_j_8"><span class="LIDENT">j</span></span> <span class="MINUSGREATER">-&gt;</span><span class="EOL">
+</span>      <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-set"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">set</span></a> <a href="#local_cm_6"><span class="LIDENT">cm</span></a> <a href="#local_i_7"><span class="LIDENT">i</span></a> <span class="CHAR">'\001'</span><span class="SEMI">;</span><span class="EOL">
+</span>      <a href="../../../ocaml-compiler/src/stdlib/bytes.ml.html#val-set"><span class="UIDENT">Bytes</span><span class="DOT">.</span><span class="LIDENT">set</span></a> <a href="#local_cm_6"><span class="LIDENT">cm</span></a> <span class="LPAREN">(</span><a href="#local_j_8"><span class="LIDENT">j</span></a> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(+)"><span class="PLUS">+</span></a> <span class="INT">1</span><span class="RPAREN">)</span> <span class="CHAR">'\001'</span><span class="SEMI">;</span><span class="EOL">
+</span>    <span class="RPAREN">)</span><span class="EOL">
+</span></span></code></pre></body></html>

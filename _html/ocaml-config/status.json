@@ -1,0 +1,7 @@
+{
+  "name": "ocaml-config",
+  "version": "3",
+  "files": [ "index.html" ],
+  "failed": false,
+  "redirections": []
+}

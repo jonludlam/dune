@@ -1,0 +1,12 @@
+{
+  "name": "dune-glob",
+  "version": "3.19.1",
+  "files": [
+    "src/dune-glob/dune_glob.ml.html", "src/dune-glob/dune_glob__.ml.html",
+    "src/dune-glob/lexer.ml.html", "src/dune-glob/glob.ml.html",
+    "src/index.html", "dune-glob/Dune_glob/V1/index.html",
+    "dune-glob/Dune_glob/index.html", "dune-glob/index.html", "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

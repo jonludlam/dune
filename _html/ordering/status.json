@@ -1,0 +1,11 @@
+{
+  "name": "ordering",
+  "version": "3.19.1",
+  "files": [
+    "src/ordering/ordering.ml.html", "src/index.html",
+    "ordering/Ordering/O/index.html", "ordering/Ordering/index.html",
+    "ordering/index.html", "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

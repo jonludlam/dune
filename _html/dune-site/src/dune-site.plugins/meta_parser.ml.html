@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: meta_parser.ml (dune-site.src.dune-site.plugins)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">dune-site</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; dune-site.plugins &#x00BB; meta_parser.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>meta_parser.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">dune-site</a><ul><li>Library <code>dune-site</code><ul><li><a href="../../dune-site/Dune_site/index.html">Dune_site</a></li></ul></li><li>Library <code>dune-site.dynlink</code></li><li>Library <code>dune-site.linker</code></li><li>Library <code>dune-site.plugins</code><ul><li><a href="../../dune-site.plugins/Dune_site_plugins/index.html">Dune_site_plugins</a></li></ul></li><li>Library <code>dune-site.private</code><ul><li><a href="../../dune-site.private/Dune_site_private/index.html">Dune_site_private</a></li></ul></li><li>Library <code>dune-site.toplevel</code></li><li><a href="../index.html">Sources</a><ul><li>dune-site<ul><li><a href="../dune-site/dune_site.ml.html">dune_site.ml</a></li><li><a href="../dune-site/dune_site__.ml.html">dune_site__.ml</a></li><li><a href="../dune-site/helpers.ml.html">helpers.ml</a></li></ul></li><li>dune-site.dynlink<ul><li><a href="../dune-site.dynlink/dune_site_backend__dune_site_dynlink_linker__.ml.html">dune_site_backend__dune_site_dynlink_linker__.ml</a></li><li><a href="../dune-site.dynlink/linker.ml.html">linker.ml</a></li></ul></li><li>dune-site.plugins<ul><li><a href="dune_site_plugins.ml.html">dune_site_plugins.ml</a></li><li><a href="dune_site_plugins__.ml.html">dune_site_plugins__.ml</a></li><li><a href="#" class="current_unit">meta_parser.ml</a></li><li><a href="plugins.ml.html">plugins.ml</a></li></ul></li><li>dune-site.private<ul><li><a href="../dune-site.private/dune_site_private.ml.html">dune_site_private.ml</a></li></ul></li><li>dune-site.toplevel<ul><li><a href="../dune-site.toplevel/dune_site_backend__dune_site_toplevel_linker__.ml.html">dune_site_backend__dune_site_toplevel_linker__.ml</a></li><li><a href="../dune-site.toplevel/linker.ml.html">linker.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+<a id="L21" class="source_line" href="#L21">21</a>
+<a id="L22" class="source_line" href="#L22">22</a>
+<a id="L23" class="source_line" href="#L23">23</a>
+<a id="L24" class="source_line" href="#L24">24</a>
+<a id="L25" class="source_line" href="#L25">25</a>
+<a id="L26" class="source_line" href="#L26">26</a>
+<a id="L27" class="source_line" href="#L27">27</a>
+<a id="L28" class="source_line" href="#L28">28</a>
+<a id="L29" class="source_line" href="#L29">29</a>
+<a id="L30" class="source_line" href="#L30">30</a>
+<a id="L31" class="source_line" href="#L31">31</a>
+<a id="L32" class="source_line" href="#L32">32</a>
+<a id="L33" class="source_line" href="#L33">33</a>
+<a id="L34" class="source_line" href="#L34">34</a>
+<a id="L35" class="source_line" href="#L35">35</a>
+</code><code class="source_code"><span><span id="module-Meta_parser"><span class="MODULE">module</span> <span class="UIDENT">Meta_parser</span> <span class="EQUAL">=</span> <a href="../../../dune-private-libs/src/dune-private-libs.meta_parser/meta_parser.ml.html#module-Make"><span class="UIDENT">Dune_meta_parser</span><span class="DOT">.</span><span class="UIDENT">Meta_parser</span><span class="DOT">.</span><span class="UIDENT">Make</span></a> <span class="LPAREN">(</span><span class="STRUCT">struct</span><span class="EOL">
+</span>    <span id="local_Loc_1"><span class="MODULE">module</span> <span class="UIDENT">Loc</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>      <span id="def_17"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <span class="LIDENT">unit</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span class="LET">let</span> <span id="local_of_lexbuf_2"><span class="LIDENT">of_lexbuf</span></span> <span class="UNDERSCORE">_</span> <span class="EQUAL">=</span> <span class="LPAREN">(</span><span class="RPAREN">)</span><span class="EOL">
+</span>    <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>    <span id="local_Lib_name_3"><span class="MODULE">module</span> <span class="UIDENT">Lib_name</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>      <span id="def_16"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <span class="LIDENT">string</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span class="LET">let</span> <span id="local_parse_string_exn_4"><span class="LIDENT">parse_string_exn</span></span> <span class="LPAREN">(</span><span class="UNDERSCORE">_</span><span class="COMMA">,</span> <span id="local_n_5"><span class="LIDENT">n</span></span><span class="RPAREN">)</span> <span class="EQUAL">=</span> <a href="#local_n_5"><span class="LIDENT">n</span></a><span class="EOL">
+</span>    <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>    <span id="local_Pp_6"><span class="MODULE">module</span> <span class="UIDENT">Pp</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>      <span id="def_19"><span class="TYPE">type</span> <span class="QUOTE">'</span><span class="LIDENT">tag</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <span class="LIDENT">string</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span class="LET">let</span> <span id="local_text_7"><span class="LIDENT">text</span></span> <span id="local_s_8"><span class="LIDENT">s</span></span> <span class="EQUAL">=</span> <a href="#local_s_8"><span class="LIDENT">s</span></a><span class="EOL">
+</span>    <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>    <span id="local_User_message_9"><span class="MODULE">module</span> <span class="UIDENT">User_message</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>      <span id="local_Style_10"><span class="MODULE">module</span> <span class="UIDENT">Style</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>        <span id="def_18"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <span class="LIDENT">unit</span></span><span class="EOL">
+</span>      <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>      <span id="local_Annots_11"><span class="MODULE">module</span> <span class="UIDENT">Annots</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>        <span id="def_15"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span> <span class="LIDENT">unit</span></span><span class="EOL">
+</span>      <span class="END">end</span></span><span class="EOL">
+</span>    <span class="END">end</span></span><span class="EOL">
+</span><span class="EOL">
+</span>    <span id="local_User_error_12"><span class="MODULE">module</span> <span class="UIDENT">User_error</span> <span class="EQUAL">=</span> <span class="STRUCT">struct</span><span class="EOL">
+</span>      <span class="LET">let</span> <span id="local_raise_13"><span class="LIDENT">raise</span></span> <span class="OPTLABEL">?loc:</span><span class="UNDERSCORE">_</span> <span class="OPTLABEL">?hints:</span><span class="UNDERSCORE">_</span> <span class="OPTLABEL">?annots:</span><span class="UNDERSCORE">_</span> <span id="local_texts_14"><span class="LIDENT">texts</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-invalid_arg"><span class="LIDENT">invalid_arg</span></a> <span class="LPAREN">(</span><a href="../../../ocaml-compiler/src/stdlib/string.ml.html#val-concat"><span class="UIDENT">String</span><span class="DOT">.</span><span class="LIDENT">concat</span></a> <span class="STRING">&quot; &quot;</span> <a href="#local_texts_14"><span class="LIDENT">texts</span></a><span class="RPAREN">)</span><span class="EOL">
+</span>    <span class="END">end</span></span><span class="EOL">
+</span>  <span class="END">end</span><span class="RPAREN">)</span></span><span class="EOL">
+</span><span class="EOL">
+</span><span class="INCLUDE">include</span> <span class="UIDENT">Meta_parser</span><span class="EOL">
+</span></span></code></pre></body></html>

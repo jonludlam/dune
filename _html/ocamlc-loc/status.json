@@ -1,0 +1,11 @@
+{
+  "name": "ocamlc-loc",
+  "version": "3.20.2",
+  "files": [
+    "src/ocamlc-loc/lexer.ml.html", "src/ocamlc-loc/ocamlc_loc__.ml.html",
+    "src/ocamlc-loc/ocamlc_loc.ml.html", "src/index.html",
+    "ocamlc-loc/Ocamlc_loc/index.html", "ocamlc-loc/index.html", "index.html"
+  ],
+  "failed": false,
+  "redirections": []
+}

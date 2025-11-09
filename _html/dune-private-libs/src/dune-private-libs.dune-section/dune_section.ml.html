@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: dune_section.ml (dune-private-libs.src.dune-private-libs.dune-section)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">dune-private-libs</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; dune-private-libs.dune-section &#x00BB; dune_section.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>dune_section.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">dune-private-libs</a><ul><li>Library <code>dune-private-libs.dune-section</code><ul><li><a href="../../dune-private-libs.dune-section/Dune_section/index.html">Dune_section</a></li></ul></li><li>Library <code>dune-private-libs.dune_re</code><ul><li><a href="../../dune-private-libs.dune_re/Dune_re/index.html">Dune_re</a></li></ul></li><li>Library <code>dune-private-libs.meta_parser</code><ul><li><a href="../../dune-private-libs.meta_parser/Dune_meta_parser/index.html">Dune_meta_parser</a></li></ul></li><li><a href="../index.html">Sources</a><ul><li>dune-private-libs.dune-section<ul><li><a href="#" class="current_unit">dune_section.ml</a></li></ul></li><li>dune-private-libs.dune_re<ul><li><a href="../dune-private-libs.dune_re/automata.ml.html">automata.ml</a></li><li><a href="../dune-private-libs.dune_re/category.ml.html">category.ml</a></li><li><a href="../dune-private-libs.dune_re/color_map.ml.html">color_map.ml</a></li><li><a href="../dune-private-libs.dune_re/core.ml.html">core.ml</a></li><li><a href="../dune-private-libs.dune_re/cset.ml.html">cset.ml</a></li><li><a href="../dune-private-libs.dune_re/dune_re.ml.html">dune_re.ml</a></li><li><a href="../dune-private-libs.dune_re/dune_re__.ml.html">dune_re__.ml</a></li><li><a href="../dune-private-libs.dune_re/emacs.ml.html">emacs.ml</a></li><li><a href="../dune-private-libs.dune_re/fmt.ml.html">fmt.ml</a></li><li><a href="../dune-private-libs.dune_re/glob.ml.html">glob.ml</a></li><li><a href="../dune-private-libs.dune_re/group.ml.html">group.ml</a></li><li><a href="../dune-private-libs.dune_re/pcre.ml.html">pcre.ml</a></li><li><a href="../dune-private-libs.dune_re/perl.ml.html">perl.ml</a></li><li><a href="../dune-private-libs.dune_re/pmark.ml.html">pmark.ml</a></li><li><a href="../dune-private-libs.dune_re/posix.ml.html">posix.ml</a></li><li><a href="../dune-private-libs.dune_re/re.ml.html">re.ml</a></li><li><a href="../dune-private-libs.dune_re/str.ml.html">str.ml</a></li></ul></li><li>dune-private-libs.meta_parser<ul><li><a href="../dune-private-libs.meta_parser/dune_meta_parser.ml.html">dune_meta_parser.ml</a></li><li><a href="../dune-private-libs.meta_parser/meta_lexer.ml.html">meta_lexer.ml</a></li><li><a href="../dune-private-libs.meta_parser/meta_parser.ml.html">meta_parser.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+<a id="L21" class="source_line" href="#L21">21</a>
+<a id="L22" class="source_line" href="#L22">22</a>
+<a id="L23" class="source_line" href="#L23">23</a>
+<a id="L24" class="source_line" href="#L24">24</a>
+<a id="L25" class="source_line" href="#L25">25</a>
+<a id="L26" class="source_line" href="#L26">26</a>
+<a id="L27" class="source_line" href="#L27">27</a>
+<a id="L28" class="source_line" href="#L28">28</a>
+<a id="L29" class="source_line" href="#L29">29</a>
+<a id="L30" class="source_line" href="#L30">30</a>
+<a id="L31" class="source_line" href="#L31">31</a>
+<a id="L32" class="source_line" href="#L32">32</a>
+<a id="L33" class="source_line" href="#L33">33</a>
+<a id="L34" class="source_line" href="#L34">34</a>
+<a id="L35" class="source_line" href="#L35">35</a>
+<a id="L36" class="source_line" href="#L36">36</a>
+<a id="L37" class="source_line" href="#L37">37</a>
+<a id="L38" class="source_line" href="#L38">38</a>
+<a id="L39" class="source_line" href="#L39">39</a>
+<a id="L40" class="source_line" href="#L40">40</a>
+<a id="L41" class="source_line" href="#L41">41</a>
+<a id="L42" class="source_line" href="#L42">42</a>
+</code><code class="source_code"><span><span id="type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span id="type-t.constructor-Lib"><span class="BAR">|</span> <span class="UIDENT">Lib</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Lib_root"><span class="BAR">|</span> <span class="UIDENT">Lib_root</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Libexec"><span class="BAR">|</span> <span class="UIDENT">Libexec</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Libexec_root"><span class="BAR">|</span> <span class="UIDENT">Libexec_root</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Bin"><span class="BAR">|</span> <span class="UIDENT">Bin</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Sbin"><span class="BAR">|</span> <span class="UIDENT">Sbin</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Toplevel"><span class="BAR">|</span> <span class="UIDENT">Toplevel</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Share"><span class="BAR">|</span> <span class="UIDENT">Share</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Share_root"><span class="BAR">|</span> <span class="UIDENT">Share_root</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Etc"><span class="BAR">|</span> <span class="UIDENT">Etc</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Doc"><span class="BAR">|</span> <span class="UIDENT">Doc</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Stublibs"><span class="BAR">|</span> <span class="UIDENT">Stublibs</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Man"><span class="BAR">|</span> <span class="UIDENT">Man</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Misc"><span class="BAR">|</span> <span class="UIDENT">Misc</span></span></span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-all"><span class="LIDENT">all</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LBRACKET">[</span> <span class="UIDENT">Lib</span><span class="COMMA">,</span> <span class="STRING">&quot;lib&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Lib_root</span><span class="COMMA">,</span> <span class="STRING">&quot;lib_root&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Libexec</span><span class="COMMA">,</span> <span class="STRING">&quot;libexec&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Libexec_root</span><span class="COMMA">,</span> <span class="STRING">&quot;libexec_root&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Bin</span><span class="COMMA">,</span> <span class="STRING">&quot;bin&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Sbin</span><span class="COMMA">,</span> <span class="STRING">&quot;sbin&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Toplevel</span><span class="COMMA">,</span> <span class="STRING">&quot;toplevel&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Share</span><span class="COMMA">,</span> <span class="STRING">&quot;share&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Share_root</span><span class="COMMA">,</span> <span class="STRING">&quot;share_root&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Etc</span><span class="COMMA">,</span> <span class="STRING">&quot;etc&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Doc</span><span class="COMMA">,</span> <span class="STRING">&quot;doc&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Stublibs</span><span class="COMMA">,</span> <span class="STRING">&quot;stublibs&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Man</span><span class="COMMA">,</span> <span class="STRING">&quot;man&quot;</span><span class="EOL">
+</span>  <span class="SEMI">;</span> <span class="UIDENT">Misc</span><span class="COMMA">,</span> <span class="STRING">&quot;misc&quot;</span><span class="EOL">
+</span>  <span class="RBRACKET">]</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-to_string"><span class="LIDENT">to_string</span></span> <span id="local_t_1"><span class="LIDENT">t</span></span> <span class="EQUAL">=</span> <a href="../../../ocaml-compiler/src/stdlib/list.ml.html#val-assoc"><span class="UIDENT">List</span><span class="DOT">.</span><span class="LIDENT">assoc</span></a> <a href="#local_t_1"><span class="LIDENT">t</span></a> <span class="LIDENT">all</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span class="REC">rec</span> <span id="val-{of_string}1/shadowed/(dune-private-libs-src-dune-private-libs.dune-section-dune_section.ml)"><span class="LIDENT">of_string</span></span> <span id="local_x_2"><span class="LIDENT">x</span></span> <span class="EQUAL">=</span> <span class="FUNCTION">function</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="LBRACKET">[</span><span class="RBRACKET">]</span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">None</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="LPAREN">(</span><span id="local_s_3"><span class="LIDENT">s</span></span><span class="COMMA">,</span> <span id="local_x'_4"><span class="LIDENT">x'</span></span><span class="RPAREN">)</span> <span class="COLONCOLON">::</span> <span id="local_xs_5"><span class="LIDENT">xs</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="IF">if</span> <a href="#local_x'_4"><span class="LIDENT">x'</span></a> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-(=)"><span class="EQUAL">=</span></a> <a href="#local_x_2"><span class="LIDENT">x</span></a> <span class="THEN">then</span> <span class="UIDENT">Some</span> <a href="#local_s_3"><span class="LIDENT">s</span></a> <span class="ELSE">else</span> <span class="LIDENT">of_string</span> <a href="#local_x_2"><span class="LIDENT">x</span></a> <a href="#local_xs_5"><span class="LIDENT">xs</span></a><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-of_string"><span class="LIDENT">of_string</span></span> <span id="local_x_6"><span class="LIDENT">x</span></span> <span class="EQUAL">=</span> <span class="LIDENT">of_string</span> <a href="#local_x_6"><span class="LIDENT">x</span></a> <span class="LIDENT">all</span><span class="EOL">
+</span></span></code></pre></body></html>

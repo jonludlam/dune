@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Source: glob.ml (dune-glob.src.dune-glob)</title><meta charset="utf-8"/><link rel="stylesheet" href="../../../odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head><body class="odoc-src"><nav class="odoc-nav"><a href="../index.html">Up</a> – <a href="../../../index.html">Package index</a> &#x00BB; <a href="../../index.html">dune-glob</a> &#x00BB; <a href="../index.html">Sources</a> &#x00BB; dune-glob &#x00BB; glob.ml</nav><header class="odoc-preamble"><h1>Source file <code><span>glob.ml</span></code></h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-global-toc"><ul><li><a href="../../index.html">dune-glob</a><ul><li>Library <code>dune-glob</code><ul><li><a href="../../dune-glob/Dune_glob/index.html">Dune_glob</a></li></ul></li><li><a href="../index.html">Sources</a><ul><li>dune-glob<ul><li><a href="dune_glob.ml.html">dune_glob.ml</a></li><li><a href="dune_glob__.ml.html">dune_glob__.ml</a></li><li><a href="#" class="current_unit">glob.ml</a></li><li><a href="lexer.ml.html">lexer.ml</a></li></ul></li></ul></li></ul></li></ul></nav></div><pre class="source_container"><code class="source_line_column"><a id="L1" class="source_line" href="#L1">1</a>
+<a id="L2" class="source_line" href="#L2">2</a>
+<a id="L3" class="source_line" href="#L3">3</a>
+<a id="L4" class="source_line" href="#L4">4</a>
+<a id="L5" class="source_line" href="#L5">5</a>
+<a id="L6" class="source_line" href="#L6">6</a>
+<a id="L7" class="source_line" href="#L7">7</a>
+<a id="L8" class="source_line" href="#L8">8</a>
+<a id="L9" class="source_line" href="#L9">9</a>
+<a id="L10" class="source_line" href="#L10">10</a>
+<a id="L11" class="source_line" href="#L11">11</a>
+<a id="L12" class="source_line" href="#L12">12</a>
+<a id="L13" class="source_line" href="#L13">13</a>
+<a id="L14" class="source_line" href="#L14">14</a>
+<a id="L15" class="source_line" href="#L15">15</a>
+<a id="L16" class="source_line" href="#L16">16</a>
+<a id="L17" class="source_line" href="#L17">17</a>
+<a id="L18" class="source_line" href="#L18">18</a>
+<a id="L19" class="source_line" href="#L19">19</a>
+<a id="L20" class="source_line" href="#L20">20</a>
+<a id="L21" class="source_line" href="#L21">21</a>
+<a id="L22" class="source_line" href="#L22">22</a>
+<a id="L23" class="source_line" href="#L23">23</a>
+<a id="L24" class="source_line" href="#L24">24</a>
+<a id="L25" class="source_line" href="#L25">25</a>
+<a id="L26" class="source_line" href="#L26">26</a>
+<a id="L27" class="source_line" href="#L27">27</a>
+<a id="L28" class="source_line" href="#L28">28</a>
+<a id="L29" class="source_line" href="#L29">29</a>
+<a id="L30" class="source_line" href="#L30">30</a>
+<a id="L31" class="source_line" href="#L31">31</a>
+<a id="L32" class="source_line" href="#L32">32</a>
+<a id="L33" class="source_line" href="#L33">33</a>
+<a id="L34" class="source_line" href="#L34">34</a>
+<a id="L35" class="source_line" href="#L35">35</a>
+<a id="L36" class="source_line" href="#L36">36</a>
+<a id="L37" class="source_line" href="#L37">37</a>
+<a id="L38" class="source_line" href="#L38">38</a>
+<a id="L39" class="source_line" href="#L39">39</a>
+<a id="L40" class="source_line" href="#L40">40</a>
+<a id="L41" class="source_line" href="#L41">41</a>
+<a id="L42" class="source_line" href="#L42">42</a>
+<a id="L43" class="source_line" href="#L43">43</a>
+<a id="L44" class="source_line" href="#L44">44</a>
+<a id="L45" class="source_line" href="#L45">45</a>
+<a id="L46" class="source_line" href="#L46">46</a>
+<a id="L47" class="source_line" href="#L47">47</a>
+<a id="L48" class="source_line" href="#L48">48</a>
+<a id="L49" class="source_line" href="#L49">49</a>
+<a id="L50" class="source_line" href="#L50">50</a>
+<a id="L51" class="source_line" href="#L51">51</a>
+<a id="L52" class="source_line" href="#L52">52</a>
+<a id="L53" class="source_line" href="#L53">53</a>
+<a id="L54" class="source_line" href="#L54">54</a>
+<a id="L55" class="source_line" href="#L55">55</a>
+<a id="L56" class="source_line" href="#L56">56</a>
+<a id="L57" class="source_line" href="#L57">57</a>
+<a id="L58" class="source_line" href="#L58">58</a>
+<a id="L59" class="source_line" href="#L59">59</a>
+<a id="L60" class="source_line" href="#L60">60</a>
+<a id="L61" class="source_line" href="#L61">61</a>
+<a id="L62" class="source_line" href="#L62">62</a>
+<a id="L63" class="source_line" href="#L63">63</a>
+<a id="L64" class="source_line" href="#L64">64</a>
+<a id="L65" class="source_line" href="#L65">65</a>
+<a id="L66" class="source_line" href="#L66">66</a>
+<a id="L67" class="source_line" href="#L67">67</a>
+<a id="L68" class="source_line" href="#L68">68</a>
+<a id="L69" class="source_line" href="#L69">69</a>
+<a id="L70" class="source_line" href="#L70">70</a>
+<a id="L71" class="source_line" href="#L71">71</a>
+<a id="L72" class="source_line" href="#L72">72</a>
+<a id="L73" class="source_line" href="#L73">73</a>
+<a id="L74" class="source_line" href="#L74">74</a>
+<a id="L75" class="source_line" href="#L75">75</a>
+<a id="L76" class="source_line" href="#L76">76</a>
+</code><code class="source_code"><span><span class="OPEN">open</span> <a href="../../../stdune/src/stdune/stdune.ml.html"><span class="UIDENT">Stdune</span></a><span class="EOL">
+</span><span id="module-Re"><span class="MODULE">module</span> <span class="UIDENT">Re</span> <span class="EQUAL">=</span> <a href="../../../dune-private-libs/src/dune-private-libs.dune_re/dune_re.ml.html"><span class="UIDENT">Dune_re</span></a></span><span class="EOL">
+</span><span class="EOL">
+</span><span id="type-t"><span class="TYPE">type</span> <span class="LIDENT">t</span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span id="type-t.constructor-Re"><span class="BAR">|</span> <span class="UIDENT">Re</span> <span class="OF">of</span><span class="EOL">
+</span>      <span class="LBRACE">{</span> <span id="def_27"><span class="LIDENT">re</span> <span class="COLON">:</span> <span class="UIDENT">Re</span><span class="DOT">.</span><span class="LIDENT">re</span><span class="EOL">
+</span>      <span class="SEMI">;</span></span> <span id="def_28"><span class="LIDENT">repr</span> <span class="COLON">:</span> <span class="LIDENT">string</span></span><span class="EOL">
+</span>      <span class="RBRACE">}</span></span><span class="EOL">
+</span>  <span id="type-t.constructor-Literal"><span class="BAR">|</span> <span class="UIDENT">Literal</span> <span class="OF">of</span> <span class="LIDENT">string</span></span></span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-test"><span class="LIDENT">test</span></span> <span id="local_t_1"><span class="LIDENT">t</span></span> <span id="local_s_2"><span class="LIDENT">s</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="MATCH">match</span> <a href="#local_t_1"><span class="LIDENT">t</span></a> <span class="WITH">with</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="UIDENT">Literal</span> <span id="local_t_3"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <a href="../../../stdune/src/stdune/string.ml.html#val-equal"><span class="UIDENT">String</span><span class="DOT">.</span><span class="LIDENT">equal</span></a> <a href="#local_t_3"><span class="LIDENT">t</span></a> <a href="#local_s_2"><span class="LIDENT">s</span></a><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="UIDENT">Re</span> <span class="LBRACE">{</span> <span id="local_re_4"><span class="LIDENT">re</span></span><span class="SEMI">;</span> <span class="LIDENT">repr</span> <span class="EQUAL">=</span> <span class="UNDERSCORE">_</span> <span class="RBRACE">}</span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Re</span><span class="DOT">.</span><span class="LIDENT">execp</span> <a href="#local_re_4"><span class="LIDENT">re</span></a> <a href="#local_s_2"><span class="LIDENT">s</span></a><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-empty"><span class="LIDENT">empty</span></span> <span class="EQUAL">=</span> <span class="UIDENT">Re</span> <span class="LBRACE">{</span> <span class="LIDENT">re</span> <span class="EQUAL">=</span> <span class="UIDENT">Re</span><span class="DOT">.</span><span class="LIDENT">compile</span> <span class="UIDENT">Re</span><span class="DOT">.</span><span class="LIDENT">empty</span><span class="SEMI">;</span> <span class="LIDENT">repr</span> <span class="EQUAL">=</span> <span class="STRING">&quot;\000&quot;</span> <span class="RBRACE">}</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-universal"><span class="LIDENT">universal</span></span> <span class="EQUAL">=</span> <span class="UIDENT">Re</span> <span class="LBRACE">{</span> <span class="LIDENT">re</span> <span class="EQUAL">=</span> <span class="UIDENT">Re</span><span class="DOT">.</span><span class="LIDENT">compile</span> <span class="LPAREN">(</span><span class="UIDENT">Re</span><span class="DOT">.</span><span class="LIDENT">rep</span> <span class="UIDENT">Re</span><span class="DOT">.</span><span class="LIDENT">any</span><span class="RPAREN">)</span><span class="SEMI">;</span> <span class="LIDENT">repr</span> <span class="EQUAL">=</span> <span class="STRING">&quot;**&quot;</span> <span class="RBRACE">}</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-of_string_result"><span class="LIDENT">of_string_result</span></span> <span id="local_repr_5"><span class="LIDENT">repr</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <a href="lexer.ml.html#val-parse_string"><span class="UIDENT">Lexer</span><span class="DOT">.</span><span class="LIDENT">parse_string</span></a> <a href="#local_repr_5"><span class="LIDENT">repr</span></a><span class="EOL">
+</span>  <span class="INFIXOP0">|&gt;</span> <a href="../../../stdune/src/stdune/result.ml.html#val-map"><span class="UIDENT">Result</span><span class="DOT">.</span><span class="LIDENT">map</span></a> <span class="LABEL">~f:</span><span class="LPAREN">(</span><span class="FUNCTION">function</span><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">Lexer</span><span class="DOT">.</span><span class="UIDENT">Literal</span> <span id="local_s_6"><span class="LIDENT">s</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Literal</span> <a href="#local_s_6"><span class="LIDENT">s</span></a><span class="EOL">
+</span>    <span class="BAR">|</span> <span class="UIDENT">Re</span> <span id="local_re_7"><span class="LIDENT">re</span></span> <span class="MINUSGREATER">-&gt;</span> <span class="UIDENT">Re</span> <span class="LBRACE">{</span> <span class="LIDENT">re</span> <span class="EQUAL">=</span> <span class="UIDENT">Re</span><span class="DOT">.</span><span class="LIDENT">compile</span> <a href="#local_re_7"><span class="LIDENT">re</span></a><span class="SEMI">;</span> <a href="#local_repr_5"><span class="LIDENT">repr</span></a> <span class="RBRACE">}</span><span class="RPAREN">)</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-of_string"><span class="LIDENT">of_string</span></span> <span id="local_repr_8"><span class="LIDENT">repr</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="MATCH">match</span> <span class="LIDENT">of_string_result</span> <a href="#local_repr_8"><span class="LIDENT">repr</span></a> <span class="WITH">with</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="UIDENT">Error</span> <span class="LPAREN">(</span><span class="UNDERSCORE">_</span><span class="COMMA">,</span> <span id="local_msg_9"><span class="LIDENT">msg</span></span><span class="RPAREN">)</span> <span class="MINUSGREATER">-&gt;</span> <a href="../../../ocaml-compiler/src/stdlib/stdlib.ml.html#val-invalid_arg"><span class="LIDENT">invalid_arg</span></a> <span class="LPAREN">(</span><a href="../../../ocaml-compiler/src/stdlib/printf.ml.html#val-sprintf"><span class="UIDENT">Printf</span><span class="DOT">.</span><span class="LIDENT">sprintf</span></a> <span class="STRING">&quot;invalid glob: :%s&quot;</span> <a href="#local_msg_9"><span class="LIDENT">msg</span></a><span class="RPAREN">)</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="UIDENT">Ok</span> <span id="local_t_10"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <a href="#local_t_10"><span class="LIDENT">t</span></a><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-to_string"><span class="LIDENT">to_string</span></span> <span id="local_t_11"><span class="LIDENT">t</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="MATCH">match</span> <a href="#local_t_11"><span class="LIDENT">t</span></a> <span class="WITH">with</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="UIDENT">Re</span> <span class="LBRACE">{</span> <span id="local_repr_12"><span class="LIDENT">repr</span></span><span class="SEMI">;</span> <span class="LIDENT">re</span> <span class="EQUAL">=</span> <span class="UNDERSCORE">_</span> <span class="RBRACE">}</span> <span class="MINUSGREATER">-&gt;</span> <a href="#local_repr_12"><span class="LIDENT">repr</span></a><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="UIDENT">Literal</span> <span id="local_s_13"><span class="LIDENT">s</span></span> <span class="MINUSGREATER">-&gt;</span> <a href="#local_s_13"><span class="LIDENT">s</span></a><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-to_dyn"><span class="LIDENT">to_dyn</span></span> <span id="local_t_14"><span class="LIDENT">t</span></span> <span class="EQUAL">=</span> <a href="../../../dyn/src/dyn/dyn.ml.html#val-variant"><span class="UIDENT">Dyn</span><span class="DOT">.</span><span class="LIDENT">variant</span></a> <span class="STRING">&quot;Glob&quot;</span> <span class="LBRACKET">[</span> <a href="../../../dyn/src/dyn/dyn.ml.html#val-string"><span class="UIDENT">Dyn</span><span class="DOT">.</span><span class="LIDENT">string</span></a> <span class="LPAREN">(</span><span class="LIDENT">to_string</span> <a href="#local_t_14"><span class="LIDENT">t</span></a><span class="RPAREN">)</span> <span class="RBRACKET">]</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-of_string_exn"><span class="LIDENT">of_string_exn</span></span> <span id="local_loc_15"><span class="LIDENT">loc</span></span> <span id="local_repr_16"><span class="LIDENT">repr</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="MATCH">match</span> <span class="LIDENT">of_string_result</span> <a href="#local_repr_16"><span class="LIDENT">repr</span></a> <span class="WITH">with</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="UIDENT">Error</span> <span class="LPAREN">(</span><span class="UNDERSCORE">_</span><span class="COMMA">,</span> <span id="local_msg_17"><span class="LIDENT">msg</span></span><span class="RPAREN">)</span> <span class="MINUSGREATER">-&gt;</span> <a href="../../../stdune/src/stdune/user_error.ml.html#val-raise"><span class="UIDENT">User_error</span><span class="DOT">.</span><span class="LIDENT">raise</span></a> <span class="TILDE">~</span><a href="#local_loc_15"><span class="LIDENT">loc</span></a> <span class="LBRACKET">[</span> <span class="UIDENT">Pp</span><span class="DOT">.</span><span class="LIDENT">textf</span> <span class="STRING">&quot;invalid glob: %s&quot;</span> <a href="#local_msg_17"><span class="LIDENT">msg</span></a> <span class="RBRACKET">]</span><span class="EOL">
+</span>  <span class="BAR">|</span> <span class="UIDENT">Ok</span> <span id="local_t_18"><span class="LIDENT">t</span></span> <span class="MINUSGREATER">-&gt;</span> <a href="#local_t_18"><span class="LIDENT">t</span></a><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-compare"><span class="LIDENT">compare</span></span> <span id="local_x_19"><span class="LIDENT">x</span></span> <span id="local_y_20"><span class="LIDENT">y</span></span> <span class="EQUAL">=</span> <a href="../../../stdune/src/stdune/string.ml.html#val-compare"><span class="UIDENT">String</span><span class="DOT">.</span><span class="LIDENT">compare</span></a> <span class="LPAREN">(</span><span class="LIDENT">to_string</span> <a href="#local_x_19"><span class="LIDENT">x</span></a><span class="RPAREN">)</span> <span class="LPAREN">(</span><span class="LIDENT">to_string</span> <a href="#local_y_20"><span class="LIDENT">y</span></a><span class="RPAREN">)</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-hash"><span class="LIDENT">hash</span></span> <span id="local_t_21"><span class="LIDENT">t</span></span> <span class="EQUAL">=</span> <a href="../../../stdune/src/stdune/string.ml.html#val-hash"><span class="UIDENT">String</span><span class="DOT">.</span><span class="LIDENT">hash</span></a> <span class="LPAREN">(</span><span class="LIDENT">to_string</span> <a href="#local_t_21"><span class="LIDENT">t</span></a><span class="RPAREN">)</span><span class="EOL">
+</span><span class="EOL">
+</span><span class="LET">let</span> <span id="val-matching_extensions"><span class="LIDENT">matching_extensions</span></span> <span id="local_extensions_22"><span class="LIDENT">extensions</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>  <span class="LET">let</span> <span id="local_re_23"><span class="LIDENT">re</span></span> <span class="EQUAL">=</span><span class="EOL">
+</span>    <span class="LET">let</span> <span class="OPEN">open</span> <span class="UIDENT">Re</span> <span class="IN">in</span><span class="EOL">
+</span>    <span class="LBRACKET">[</span> <span class="LIDENT">rep</span> <span class="LIDENT">any</span><span class="EOL">
+</span>    <span class="SEMI">;</span> <span class="LIDENT">char</span> <span class="CHAR">'.'</span><span class="EOL">
+</span>    <span class="SEMI">;</span> <a href="../../../stdune/src/stdune/list.ml.html#val-map"><span class="UIDENT">List</span><span class="DOT">.</span><span class="LIDENT">map</span></a> <a href="#local_extensions_22"><span class="LIDENT">extensions</span></a> <span class="LABEL">~f:</span><span class="LPAREN">(</span><span class="FUN">fun</span> <span id="local_s_24"><span class="LIDENT">s</span></span> <span class="MINUSGREATER">-&gt;</span><span class="EOL">
+</span>        <span class="MATCH">match</span> <span class="LIDENT">of_string</span> <a href="#local_s_24"><span class="LIDENT">s</span></a> <span class="WITH">with</span><span class="EOL">
+</span>        <span class="BAR">|</span> <span class="UIDENT">Literal</span> <span class="UNDERSCORE">_</span> <span class="MINUSGREATER">-&gt;</span> <span class="LIDENT">str</span> <a href="#local_s_24"><span class="LIDENT">s</span></a><span class="EOL">
+</span>        <span class="BAR">|</span> <span class="UIDENT">Re</span> <span class="UNDERSCORE">_</span> <span class="MINUSGREATER">-&gt;</span><span class="EOL">
+</span>          <span class="COMMENT">(* we cannot allow anything that can be parsed as a regex
+             here b/c we want the string representation to match [of_string]
+          *)</span><span class="EOL">
+</span>          <a href="../../../stdune/src/stdune/code_error.ml.html#val-raise"><span class="UIDENT">Code_error</span><span class="DOT">.</span><span class="LIDENT">raise</span></a> <span class="STRING">&quot;invalid extension&quot;</span> <span class="LBRACKET">[</span> <span class="STRING">&quot;s&quot;</span><span class="COMMA">,</span> <a href="../../../dyn/src/dyn/dyn.ml.html#val-string"><span class="UIDENT">Dyn</span><span class="DOT">.</span><span class="LIDENT">string</span></a> <a href="#local_s_24"><span class="LIDENT">s</span></a> <span class="RBRACKET">]</span><span class="RPAREN">)</span><span class="EOL">
+</span>      <span class="INFIXOP0">|&gt;</span> <span class="LIDENT">alt</span><span class="EOL">
+</span>    <span class="RBRACKET">]</span><span class="EOL">
+</span>    <span class="INFIXOP0">|&gt;</span> <span class="LIDENT">seq</span><span class="EOL">
+</span>    <span class="INFIXOP0">|&gt;</span> <span class="LIDENT">compile</span><span class="EOL">
+</span>  <span class="IN">in</span><span class="EOL">
+</span>  <span class="UIDENT">Re</span><span class="EOL">
+</span>    <span class="LBRACE">{</span> <a href="#local_re_23"><span class="LIDENT">re</span></a><span class="EOL">
+</span>    <span class="SEMI">;</span> <span class="LIDENT">repr</span> <span class="EQUAL">=</span><span class="EOL">
+</span>        <span class="LPAREN">(</span><span class="MATCH">match</span> <a href="#local_extensions_22"><span class="LIDENT">extensions</span></a> <span class="WITH">with</span><span class="EOL">
+</span>         <span class="BAR">|</span> <span class="LBRACKET">[</span><span class="RBRACKET">]</span> <span class="MINUSGREATER">-&gt;</span> <a href="../../../stdune/src/stdune/code_error.ml.html#val-raise"><span class="UIDENT">Code_error</span><span class="DOT">.</span><span class="LIDENT">raise</span></a> <span class="STRING">&quot;empty list of extensions&quot;</span> <span class="LBRACKET">[</span><span class="RBRACKET">]</span><span class="EOL">
+</span>         <span class="BAR">|</span> <span class="LBRACKET">[</span> <span id="local_x_25"><span class="LIDENT">x</span></span> <span class="RBRACKET">]</span> <span class="MINUSGREATER">-&gt;</span> <a href="../../../stdune/src/stdune/stdune.ml.html#val-sprintf"><span class="LIDENT">sprintf</span></a> <span class="STRING">&quot;*.%s&quot;</span> <a href="#local_x_25"><span class="LIDENT">x</span></a><span class="EOL">
+</span>         <span class="BAR">|</span> <span id="local_xs_26"><span class="LIDENT">xs</span></span> <span class="MINUSGREATER">-&gt;</span> <a href="../../../stdune/src/stdune/stdune.ml.html#val-sprintf"><span class="LIDENT">sprintf</span></a> <span class="STRING">&quot;*.{%s}&quot;</span> <span class="LPAREN">(</span><a href="../../../ocaml-compiler/src/stdlib/string.ml.html#val-concat"><span class="UIDENT">String</span><span class="DOT">.</span><span class="LIDENT">concat</span></a> <a href="#local_xs_26"><span class="LIDENT">xs</span></a> <span class="LABEL">~sep:</span><span class="STRING">&quot;,&quot;</span><span class="RPAREN">)</span><span class="RPAREN">)</span><span class="EOL">
+</span>    <span class="RBRACE">}</span><span class="EOL">
+</span><span class="SEMISEMI">;;</span><span class="EOL">
+</span></span></code></pre></body></html>

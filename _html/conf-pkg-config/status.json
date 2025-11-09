@@ -1,0 +1,7 @@
+{
+  "name": "conf-pkg-config",
+  "version": "4",
+  "files": [ "index.html" ],
+  "failed": false,
+  "redirections": []
+}
