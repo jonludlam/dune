@@ -678,17 +678,22 @@ let odoc_lib_flags _ctx ~stdlib_opt requires pkg_discovery =
            let lib_pkg = Lib_info.package (Lib.Local.info local_lib) in
            (match lib_pkg with
             | Some pkg ->
-              (* Get the library's odoc directory path using Paths.odocs *)
-              let target = Lib (pkg, lib) in
-              let odoc_dir = Paths.odocs _ctx target in
-              (* Make path relative to html_root (_doc/_html)
-                 Paths.odocs returns _build/default/_doc/_odoc/pkg/lib
-                 We need ../_odoc/pkg/lib relative to _build/default/_doc/_html *)
-              let odoc_path = Path.Build.to_string odoc_dir in
+              (* For local libraries without a real package, the synthetic package name
+                 already encodes the library (e.g., "ocaml_inotify@hash"), so files are
+                 at _odoc/pkg/ not _odoc/pkg/lib/. Detect this by checking for '@' in pkg name. *)
+              let pkg_name_str = Package.Name.to_string pkg in
               let odoc_path_rel =
-                match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
-                | Some suffix -> "../" ^ suffix
-                | None -> odoc_path  (* Fallback to absolute if prefix doesn't match *)
+                if String.contains pkg_name_str '@' then
+                  (* Synthetic package: files are at _odoc/pkg/ *)
+                  "../_odoc/" ^ pkg_name_str
+                else
+                  (* Real package: files are at _odoc/pkg/lib/ *)
+                  let target = Lib (pkg, lib) in
+                  let odoc_dir = Paths.odocs _ctx target in
+                  let odoc_path = Path.Build.to_string odoc_dir in
+                  match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
+                  | Some suffix -> "../" ^ suffix
+                  | None -> odoc_path
               in
               let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
               Log.info [ Pp.textf "odoc_lib_flags: Adding -L %s (local)" lib_path_arg ];
@@ -807,16 +812,21 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
         Memo.return (Command.Args.S [])
       else
         let lib_name_str = Lib_name.to_string odoc_file.lib_name in
-        (* Get the library's odoc directory path using Paths.odocs *)
-        let odoc_dir = Paths.odocs ctx odoc_file.target in
-        (* Make path relative to html_root (_doc/_html)
-           Paths.odocs returns _build/default/_doc/_odoc/pkg/lib
-           We need ../_odoc/pkg/lib relative to _build/default/_doc/_html *)
-        let odoc_path = Path.Build.to_string odoc_dir in
+        (* For libraries without a real package, the synthetic package name
+           already encodes the library (e.g., "ocaml_inotify@hash"), so files are
+           at _odoc/pkg/ not _odoc/pkg/lib/. Detect this by checking for '@' in pkg name. *)
+        let pkg_name_str = Package.Name.to_string _pkg_name in
         let odoc_path_rel =
-          match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
-          | Some suffix -> "../" ^ suffix
-          | None -> odoc_path  (* Fallback to absolute if prefix doesn't match *)
+          if String.contains pkg_name_str '@' then
+            (* Synthetic package: files are at _odoc/pkg/ *)
+            "../_odoc/" ^ pkg_name_str
+          else
+            (* Real package: files are at _odoc/pkg/lib/ *)
+            let odoc_dir = Paths.odocs ctx odoc_file.target in
+            let odoc_path = Path.Build.to_string odoc_dir in
+            match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
+            | Some suffix -> "../" ^ suffix
+            | None -> odoc_path
         in
         let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
         Memo.return (Command.Args.S [ Command.Args.A "-L"; A lib_path_arg ])
