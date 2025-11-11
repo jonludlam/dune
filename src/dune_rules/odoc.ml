@@ -655,10 +655,19 @@ let odoc_lib_flags _ctx ~stdlib_opt requires pkg_discovery =
            let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
            (match lib_pkg_opt with
             | Some lib_pkg ->
-              let pkg_name_str = Package.Name.to_string lib_pkg in
-              (* Path relative to html_root (_doc/_html): ../_odoc/pkg/lib *)
-              let odoc_path = "../_odoc/" ^ pkg_name_str ^ "/" ^ lib_name_str in
-              let lib_path_arg = lib_name_str ^ ":" ^ odoc_path in
+              (* Get the library's odoc directory path using Paths.odocs *)
+              let target = Lib (lib_pkg, lib) in
+              let odoc_dir = Paths.odocs _ctx target in
+              (* Make path relative to html_root (_doc/_html)
+                 Paths.odocs returns _build/default/_doc/_odoc/pkg/lib
+                 We need ../_odoc/pkg/lib relative to _build/default/_doc/_html *)
+              let odoc_path = Path.Build.to_string odoc_dir in
+              let odoc_path_rel =
+                match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
+                | Some suffix -> "../" ^ suffix
+                | None -> odoc_path  (* Fallback to absolute if prefix doesn't match *)
+              in
+              let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
               Log.info [ Pp.textf "odoc_lib_flags: Adding -L %s" lib_path_arg ];
               [ Command.Args.A "-L"; A lib_path_arg ]
             | None ->
@@ -669,10 +678,19 @@ let odoc_lib_flags _ctx ~stdlib_opt requires pkg_discovery =
            let lib_pkg = Lib_info.package (Lib.Local.info local_lib) in
            (match lib_pkg with
             | Some pkg ->
-              let pkg_name_str = Package.Name.to_string pkg in
-              (* Path relative to html_root (_doc/_html): ../_odoc/pkg/lib *)
-              let odoc_path = "../_odoc/" ^ pkg_name_str ^ "/" ^ lib_name_str in
-              let lib_path_arg = lib_name_str ^ ":" ^ odoc_path in
+              (* Get the library's odoc directory path using Paths.odocs *)
+              let target = Lib (pkg, lib) in
+              let odoc_dir = Paths.odocs _ctx target in
+              (* Make path relative to html_root (_doc/_html)
+                 Paths.odocs returns _build/default/_doc/_odoc/pkg/lib
+                 We need ../_odoc/pkg/lib relative to _build/default/_doc/_html *)
+              let odoc_path = Path.Build.to_string odoc_dir in
+              let odoc_path_rel =
+                match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
+                | Some suffix -> "../" ^ suffix
+                | None -> odoc_path  (* Fallback to absolute if prefix doesn't match *)
+              in
+              let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
               Log.info [ Pp.textf "odoc_lib_flags: Adding -L %s (local)" lib_path_arg ];
               [ Command.Args.A "-L"; A lib_path_arg ]
             | None ->
@@ -770,16 +788,39 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
     | Installed_source _ -> true
     | Local_source _ -> false
   in
-  (* Add -L flag for the library itself so modules can reference each other *)
-  let self_lib_flag = match odoc_file.target with
-    | Lib (pkg_name, _lib) ->
-      let lib_name_str = Lib_name.to_string odoc_file.lib_name in
-      let pkg_name_str = Package.Name.to_string pkg_name in
-      (* Path relative to html_root (_doc/_html): ../_odoc/pkg/lib *)
-      let odoc_path = "../_odoc/" ^ pkg_name_str ^ "/" ^ lib_name_str in
-      let lib_path_arg = lib_name_str ^ ":" ^ odoc_path in
-      Command.Args.S [ Command.Args.A "-L"; A lib_path_arg ]
-    | Pkg _ -> Command.Args.S []
+  (* Add -L flag for the library itself so modules can reference each other,
+     but only if the library isn't already in the requires list or stdlib.
+     odoc_lib_flags already handles libraries in requires + stdlib. *)
+  let* self_lib_flag = match odoc_file.target with
+    | Lib (_pkg_name, lib) ->
+      let* libs_with_flags = Resolve.read_memo requires in
+      (* Check if this library is already in requires or is stdlib *)
+      let is_already_included =
+        List.exists libs_with_flags ~f:(fun req_lib ->
+          Lib_name.equal (Lib.name req_lib) (Lib.name lib))
+        ||
+        match stdlib_opt with
+        | Some stdlib -> Lib_name.equal (Lib.name stdlib) (Lib.name lib)
+        | None -> false
+      in
+      if is_already_included then
+        Memo.return (Command.Args.S [])
+      else
+        let lib_name_str = Lib_name.to_string odoc_file.lib_name in
+        (* Get the library's odoc directory path using Paths.odocs *)
+        let odoc_dir = Paths.odocs ctx odoc_file.target in
+        (* Make path relative to html_root (_doc/_html)
+           Paths.odocs returns _build/default/_doc/_odoc/pkg/lib
+           We need ../_odoc/pkg/lib relative to _build/default/_doc/_html *)
+        let odoc_path = Path.Build.to_string odoc_dir in
+        let odoc_path_rel =
+          match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
+          | Some suffix -> "../" ^ suffix
+          | None -> odoc_path  (* Fallback to absolute if prefix doesn't match *)
+        in
+        let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
+        Memo.return (Command.Args.S [ Command.Args.A "-L"; A lib_path_arg ])
+    | Pkg _ -> Memo.return (Command.Args.S [])
   in
   let run_odoc =
     run_odoc
