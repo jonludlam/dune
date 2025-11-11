@@ -788,6 +788,13 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
       ; Dep (Path.build odoc_file.odoc_file)
       ]
   in
+  (* For installed packages, suppress output (both stdout and stderr) *)
+  let run_odoc = match odoc_file.source with
+    | Installed_source _ ->
+      Action_builder.With_targets.map run_odoc ~f:(fun action ->
+        Action.Full.map action ~f:Action.ignore_outputs)
+    | Local_source _ -> run_odoc
+  in
   add_rule
     sctx
     (let open Action_builder.With_targets.O in
@@ -990,6 +997,13 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
         ; Command.Args.Dep source_file
         ])
   in
+  (* For installed packages, suppress output (both stdout and stderr) *)
+  let run_odoc = match artifact.source with
+    | Installed_source _ ->
+      Action_builder.With_targets.map run_odoc ~f:(fun action ->
+        Action.Full.map action ~f:Action.ignore_outputs)
+    | Local_source _ -> run_odoc
+  in
   add_rule sctx run_odoc
 ;;
 
@@ -1040,6 +1054,14 @@ let generate_html_artifact sctx ~artifact ~search_db =
            | None -> Hidden_targets [ html_file ]
            | Some _ -> Command.Args.empty)
         ]
+    in
+
+    (* For installed packages, suppress output (both stdout and stderr) *)
+    let run_odoc = match artifact.source with
+      | Installed_source _ ->
+        Action_builder.With_targets.map run_odoc ~f:(fun action ->
+          Action.Full.map action ~f:Action.ignore_outputs)
+      | Local_source _ -> run_odoc
     in
 
     (* Add explicit dependency on CSS/support files *)
