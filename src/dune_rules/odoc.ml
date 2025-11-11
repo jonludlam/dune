@@ -875,6 +875,25 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
     | Pkg _ -> requires_closure
   in
 
+  (* DEBUG: Check what's in requires *)
+  let () =
+    match Resolve.peek requires with
+    | Ok libs_list ->
+      let lib_names = List.map libs_list ~f:(fun lib -> Lib_name.to_string (Lib.name lib)) in
+      let stdlib_in_list =
+        match stdlib_opt with
+        | Some stdlib -> List.exists libs_list ~f:(fun lib -> Lib_name.equal (Lib.name lib) (Lib.name stdlib))
+        | None -> false
+      in
+      Log.info [ Pp.textf "compile_artifact for %s: requires has %d libs (stdlib_in_list=%b): %s"
+                   artifact.parent_id
+                   (List.length libs_list)
+                   stdlib_in_list
+                   (String.concat ~sep:", " lib_names) ]
+    | Error _ ->
+      Log.info [ Pp.textf "compile_artifact for %s: requires is Error" artifact.parent_id ]
+  in
+
   let* pkg_discovery = Package_discovery.create ~context:ctx in
 
   (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases)
@@ -894,10 +913,14 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
         "compile"
         ~quiet:false
         ~flags_for:(Some artifact.odoc_file)
-        [ (* Include paths for all dependency libraries including stdlib.
-             Pass None for pkg to avoid adding our own package directory to -I paths.
-             Use requires which already includes the transitive closure. *)
+        [ (* Include paths for all dependency libraries including stdlib *)
           odoc_include_flags ctx None ~stdlib_opt requires pkg_discovery
+        ; (* Add -I for current library directory so modules can reference each other *)
+          (match artifact.target with
+           | Lib lib ->
+             let lib_dir = Paths.odocs ctx (Lib lib) in
+             Command.Args.S [Command.Args.A "-I"; Command.Args.Path (Path.build lib_dir)]
+           | Pkg _ -> Command.Args.S [])
         ; Command.Args.A "--output-dir"
         ; Command.Args.A "_doc/_odoc"
         ; Command.Args.A "--parent-id"
