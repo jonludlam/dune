@@ -775,6 +775,21 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
     | Installed_source _ -> true
     | Local_source _ -> false
   in
+  (* Add -L flag for the library itself so modules can reference each other *)
+  let self_lib_flag = match odoc_file.target with
+    | Lib (pkg_name, _lib) ->
+      let lib_name_str = Lib_name.to_string odoc_file.lib_name in
+      let pkg_name_str = Package.Name.to_string pkg_name in
+      let odoc_path =
+        Paths.root ctx
+        ++ "_odoc"
+        ++ pkg_name_str
+        ++ lib_name_str
+      in
+      let lib_path_arg = lib_name_str ^ ":" ^ Path.Build.to_string odoc_path in
+      Command.Args.S [ Command.Args.A "-L"; A lib_path_arg ]
+    | Pkg _ -> Command.Args.S []
+  in
   let run_odoc =
     run_odoc
       sctx
@@ -784,6 +799,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
       ~flags_for:(Some odoc_file.odoc_file)
       [ odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery
       ; odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery
+      ; self_lib_flag  (* Add -L for the library being linked *)
       ; odoc_pkg_flags ctx requires pkg_discovery ~current_pkg:odoc_file.pkg
       ; (* Add --current-package flag when we have a package *)
         (match odoc_file.pkg with
