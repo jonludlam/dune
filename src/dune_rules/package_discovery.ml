@@ -122,8 +122,17 @@ let find_package_for_library ~file_to_package_map lib =
   in
 
   (* Look up each archive file in the opam changes map to see which package installed it *)
-  List.find_map all_archives ~f:(fun archive_path ->
-    Path.Map.find file_to_package_map archive_path)
+  let pkg_from_archives = List.find_map all_archives ~f:(fun archive_path ->
+    Path.Map.find file_to_package_map archive_path) in
+
+  match pkg_from_archives with
+  | Some pkg -> Some pkg
+  | None ->
+    (* No archives found (e.g., dummy packages like "bytes").
+       Fallback: check if the META file is in the installed files. *)
+    let src_dir = Lib_info.src_dir lib_info in
+    let meta_path = Path.relative src_dir "META" in
+    Path.Map.find file_to_package_map meta_path
 
 (* Simplified: inline the logic *)
 
