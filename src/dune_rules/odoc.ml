@@ -106,6 +106,15 @@ type artifact_source =
       archive : string;  (* Which archive it belongs to *)
     }
 
+(* Check if a library is vendored using dune's vendored_dirs mechanism *)
+let is_lib_vendored lib =
+  let lib_info = Lib.info lib in
+  match Lib_info.status lib_info with
+  | Installed_private | Installed -> Memo.return false
+  | Public (proj, _) | Private (proj, _) ->
+    Source_tree.is_vendored (Dune_project.root proj)
+;;
+
 type artifact = {
   kind : artifact_kind;
   source : artifact_source;
@@ -788,12 +797,22 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
       ; Dep (Path.build odoc_file.odoc_file)
       ]
   in
-  (* For installed packages, suppress output (both stdout and stderr) *)
-  let run_odoc = match odoc_file.source with
-    | Installed_source _ ->
+  (* For installed packages or vendored libraries, suppress output (both stdout and stderr) *)
+  let* should_suppress =
+    match odoc_file.source with
+    | Installed_source _ -> Memo.return true
+    | Local_source _ ->
+      (* Check if this is a vendored library *)
+      (match odoc_file.target with
+       | Lib (_, lib) -> is_lib_vendored lib
+       | Pkg _ -> Memo.return false)
+  in
+  let run_odoc =
+    if should_suppress
+    then
       Action_builder.With_targets.map run_odoc ~f:(fun action ->
         Action.Full.map action ~f:Action.ignore_outputs)
-    | Local_source _ -> run_odoc
+    else run_odoc
   in
   add_rule
     sctx
@@ -997,12 +1016,22 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
         ; Command.Args.Dep source_file
         ])
   in
-  (* For installed packages, suppress output (both stdout and stderr) *)
-  let run_odoc = match artifact.source with
-    | Installed_source _ ->
+  (* For installed packages or vendored libraries, suppress output (both stdout and stderr) *)
+  let* should_suppress =
+    match artifact.source with
+    | Installed_source _ -> Memo.return true
+    | Local_source _ ->
+      (* Check if this is a vendored library *)
+      (match artifact.target with
+       | Lib (_, lib) -> is_lib_vendored lib
+       | Pkg _ -> Memo.return false)
+  in
+  let run_odoc =
+    if should_suppress
+    then
       Action_builder.With_targets.map run_odoc ~f:(fun action ->
         Action.Full.map action ~f:Action.ignore_outputs)
-    | Local_source _ -> run_odoc
+    else run_odoc
   in
   add_rule sctx run_odoc
 ;;
@@ -1056,12 +1085,22 @@ let generate_html_artifact sctx ~artifact ~search_db =
         ]
     in
 
-    (* For installed packages, suppress output (both stdout and stderr) *)
-    let run_odoc = match artifact.source with
-      | Installed_source _ ->
+    (* For installed packages or vendored libraries, suppress output (both stdout and stderr) *)
+    let* should_suppress =
+      match artifact.source with
+      | Installed_source _ -> Memo.return true
+      | Local_source _ ->
+        (* Check if this is a vendored library *)
+        (match artifact.target with
+         | Lib (_, lib) -> is_lib_vendored lib
+         | Pkg _ -> Memo.return false)
+    in
+    let run_odoc =
+      if should_suppress
+      then
         Action_builder.With_targets.map run_odoc ~f:(fun action ->
           Action.Full.map action ~f:Action.ignore_outputs)
-      | Local_source _ -> run_odoc
+      else run_odoc
     in
 
     (* Add explicit dependency on CSS/support files *)
