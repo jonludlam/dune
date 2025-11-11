@@ -636,7 +636,7 @@ let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
 
 (* Generate -L library:path flags for odoc link
    These tell odoc where to find .odocl files for library dependencies *)
-let odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery =
+let odoc_lib_flags _ctx ~stdlib_opt requires pkg_discovery =
   Resolve.args
     (let open Resolve.O in
      let+ libs = requires in
@@ -656,13 +656,9 @@ let odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery =
            (match lib_pkg_opt with
             | Some lib_pkg ->
               let pkg_name_str = Package.Name.to_string lib_pkg in
-              let odoc_path =
-                Paths.root ctx
-                ++ "_odoc"
-                ++ pkg_name_str
-                ++ lib_name_str
-              in
-              let lib_path_arg = lib_name_str ^ ":" ^ Path.Build.to_string odoc_path in
+              (* Path relative to html_root (_doc/_html): ../_odoc/pkg/lib *)
+              let odoc_path = "../_odoc/" ^ pkg_name_str ^ "/" ^ lib_name_str in
+              let lib_path_arg = lib_name_str ^ ":" ^ odoc_path in
               Log.info [ Pp.textf "odoc_lib_flags: Adding -L %s" lib_path_arg ];
               [ Command.Args.A "-L"; A lib_path_arg ]
             | None ->
@@ -674,13 +670,9 @@ let odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery =
            (match lib_pkg with
             | Some pkg ->
               let pkg_name_str = Package.Name.to_string pkg in
-              let odoc_path =
-                Paths.root ctx
-                ++ "_odoc"
-                ++ pkg_name_str
-                ++ lib_name_str
-              in
-              let lib_path_arg = lib_name_str ^ ":" ^ Path.Build.to_string odoc_path in
+              (* Path relative to html_root (_doc/_html): ../_odoc/pkg/lib *)
+              let odoc_path = "../_odoc/" ^ pkg_name_str ^ "/" ^ lib_name_str in
+              let lib_path_arg = lib_name_str ^ ":" ^ odoc_path in
               Log.info [ Pp.textf "odoc_lib_flags: Adding -L %s (local)" lib_path_arg ];
               [ Command.Args.A "-L"; A lib_path_arg ]
             | None ->
@@ -702,7 +694,7 @@ let get_config_package_deps pkg_discovery pkg_opt =
 
 (* Generate -P package:path flags for odoc link
    These tell odoc where to find .odoc files for package dependencies *)
-let odoc_pkg_flags ctx requires pkg_discovery ~current_pkg =
+let odoc_pkg_flags _ctx requires pkg_discovery ~current_pkg =
   Resolve.args
     (let open Resolve.O in
      let+ libs = requires in
@@ -713,7 +705,8 @@ let odoc_pkg_flags ctx requires pkg_discovery ~current_pkg =
          match lib_pkg_opt with
          | Some pkg ->
            let pkg_name_str = Package.Name.to_string pkg in
-           let odoc_path = Paths.root ctx ++ "_odoc" ++ pkg_name_str in
+           (* Path relative to html_root (_doc/_html): ../_odoc/pkg *)
+           let odoc_path = "../_odoc/" ^ pkg_name_str in
            Package.Name.Map.set acc pkg odoc_path
          | None -> acc)
      in
@@ -723,7 +716,8 @@ let odoc_pkg_flags ctx requires pkg_discovery ~current_pkg =
      let all_pkg_paths =
        List.fold_left config_pkg_deps ~init:lib_pkg_paths ~f:(fun acc pkg ->
          let pkg_name_str = Package.Name.to_string pkg in
-         let odoc_path = Paths.root ctx ++ "_odoc" ++ pkg_name_str in
+         (* Path relative to html_root (_doc/_html): ../_odoc/pkg *)
+         let odoc_path = "../_odoc/" ^ pkg_name_str in
          Package.Name.Map.set acc pkg odoc_path)
      in
 
@@ -734,14 +728,15 @@ let odoc_pkg_flags ctx requires pkg_discovery ~current_pkg =
        | None -> all_pkg_paths
        | Some pkg ->
          let pkg_name_str = Package.Name.to_string pkg in
-         let odoc_path = Paths.root ctx ++ "_odoc" ++ pkg_name_str in
+         (* Path relative to html_root (_doc/_html): ../_odoc/pkg *)
+         let odoc_path = "../_odoc/" ^ pkg_name_str in
          Package.Name.Map.set all_pkg_paths pkg odoc_path
      in
 
      let pkg_args =
        Package.Name.Map.to_list_map all_pkg_paths ~f:(fun pkg path ->
          let pkg_name_str = Package.Name.to_string pkg in
-         let pkg_path_arg = pkg_name_str ^ ":" ^ Path.Build.to_string path in
+         let pkg_path_arg = pkg_name_str ^ ":" ^ path in
          Log.info [ Pp.textf "odoc_pkg_flags: Adding -P %s" pkg_path_arg ];
          [ Command.Args.A "-P"; A pkg_path_arg ])
        |> List.concat
@@ -780,13 +775,9 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
     | Lib (pkg_name, _lib) ->
       let lib_name_str = Lib_name.to_string odoc_file.lib_name in
       let pkg_name_str = Package.Name.to_string pkg_name in
-      let odoc_path =
-        Paths.root ctx
-        ++ "_odoc"
-        ++ pkg_name_str
-        ++ lib_name_str
-      in
-      let lib_path_arg = lib_name_str ^ ":" ^ Path.Build.to_string odoc_path in
+      (* Path relative to html_root (_doc/_html): ../_odoc/pkg/lib *)
+      let odoc_path = "../_odoc/" ^ pkg_name_str ^ "/" ^ lib_name_str in
+      let lib_path_arg = lib_name_str ^ ":" ^ odoc_path in
       Command.Args.S [ Command.Args.A "-L"; A lib_path_arg ]
     | Pkg _ -> Command.Args.S []
   in
