@@ -96,7 +96,7 @@ type target =
 
 type artifact_kind =
   | Module of { visible : bool; module_name : Module_name.t }
-  | Page of { name : string }  (* mld files *)
+  | Page of { name : string; pkg_libs : Lib.t list }  (* mld files - pkg_libs are the libraries to link with *)
 
 type artifact_source =
   | Local_source of Path.Build.t  (* cmti, cmt, mld from local build *)
@@ -260,7 +260,11 @@ end = struct
       | Some p -> Package.Name.to_string p
       | None -> "<none>"
     in
-    let lib_names = List.map libs ~f:(fun lib -> Lib_name.to_string (Lib.name lib)) in
+    let lib_names = List.map libs ~f:(fun lib ->
+      let name = Lib_name.to_string (Lib.name lib) in
+      Log.info [ Pp.textf "  - lib name: '%s'" name ];
+      name
+    ) in
     let lib_names_str = match lib_names with
       | [] -> "(none)"
       | names -> String.concat ~sep:", " names
@@ -270,6 +274,8 @@ end = struct
     (* We need Package_discovery to map installed libraries to their opam packages.
        Use Action_builder.of_memo to execute Memo code from Action_builder context. *)
     let* pkg_discovery = Action_builder.of_memo (Package_discovery.create ~context:ctx) in
+    (* Get the set of local package names to check against *)
+    let* local_packages = Action_builder.of_memo (Dune_load.packages ()) in
     Action_builder.deps
       (let init =
          match pkg with
@@ -285,18 +291,27 @@ end = struct
            let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
            (match lib_pkg_opt with
             | Some lib_pkg ->
-              let dir =
-                Paths.root ctx
-                ++ "_odoc"
-                ++ Package.Name.to_string lib_pkg
-                ++ Lib_name.to_string lib_name
-              in
-              let alias_path = alias ~dir in
-              Log.info [ Pp.textf "Dep.deps: Adding dependency on installed library %s (opam package=%s) odoc alias at %s"
-                           (Lib_name.to_string lib_name)
-                           (Package.Name.to_string lib_pkg)
-                           (Path.Build.to_string dir) ];
-              Dep.Set.add acc (Dep.alias alias_path)
+              (* Check if this package is a local project package.
+                 If so, skip it - we don't want to depend on installed versions of local packages! *)
+              if Package.Name.Map.mem local_packages lib_pkg then (
+                Log.info [ Pp.textf "Dep.deps: Installed library %s belongs to local package %s, skipping to avoid conflict"
+                             (Lib_name.to_string lib_name)
+                             (Package.Name.to_string lib_pkg) ];
+                acc
+              ) else (
+                let dir =
+                  Paths.root ctx
+                  ++ "_odoc"
+                  ++ Package.Name.to_string lib_pkg
+                  ++ Lib_name.to_string lib_name
+                in
+                let alias_path = alias ~dir in
+                Log.info [ Pp.textf "Dep.deps: Adding dependency on installed library %s (opam package=%s) odoc alias at %s"
+                             (Lib_name.to_string lib_name)
+                             (Package.Name.to_string lib_pkg)
+                             (Path.Build.to_string dir) ];
+                Dep.Set.add acc (Dep.alias alias_path)
+              )
             | None ->
               Log.info [ Pp.textf "Dep.deps: Installed library %s has no opam package, skipping"
                            (Lib_name.to_string lib_name) ];
@@ -312,6 +327,10 @@ end = struct
            in
            let dir = Paths.odocs ctx (Lib (pkg, lib_t)) in
            let alias = alias ~dir in
+           Log.info [ Pp.textf "Dep.deps: Adding dependency on LOCAL library %s (package=%s) odoc alias at %s"
+                        (Lib_name.to_string (Lib.name lib_t))
+                        (Package.Name.to_string pkg)
+                        (Path.Build.to_string dir) ];
            Dep.Set.add acc (Dep.alias alias)))
   ;;
 
@@ -742,12 +761,17 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
     )
   in
 
+  (* Suppress output for installed packages *)
+  let quiet = match odoc_file.source with
+    | Installed_source _ -> true
+    | Local_source _ -> false
+  in
   let run_odoc =
     run_odoc
       sctx
       ~dir:(Path.build (Paths.html_root ctx))
       "link"
-      ~quiet:false
+      ~quiet
       ~flags_for:(Some odoc_file.odoc_file)
       [ odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery
       ; odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery
@@ -926,6 +950,11 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
 
   let run_odoc =
     let open Action_builder.With_targets.O in
+    (* Suppress output for installed packages *)
+    let quiet = match artifact.source with
+      | Installed_source _ -> true
+      | Local_source _ -> false
+    in
     (* Depend on: 1) intra-library module deps, 2) inter-library deps *)
     Action_builder.with_no_targets module_deps
     >>> Action_builder.with_no_targets lib_deps
@@ -934,7 +963,7 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
         sctx
         ~dir:(Path.build compile_dir)
         "compile"
-        ~quiet:false
+        ~quiet
         ~flags_for:(Some artifact.odoc_file)
         [ (* Include paths for all dependency libraries including stdlib *)
           odoc_include_flags ctx None ~stdlib_opt requires pkg_discovery
@@ -986,12 +1015,17 @@ let generate_html_artifact sctx ~artifact ~search_db =
       if Path.Build.equal html_dir html_root then None else Some html_dir
     in
 
+    (* Suppress output for installed packages *)
+    let quiet = match artifact.source with
+      | Installed_source _ -> true
+      | Local_source _ -> false
+    in
     let run_odoc =
       run_odoc
         sctx
         ~dir:(Path.build (Paths.html_root ctx))
         "html-generate"
-        ~quiet:false
+        ~quiet
         ~flags_for:None
         [ search_args
         ; A "-o"
@@ -1148,20 +1182,18 @@ let libs_of_pkg ctx ~pkg =
 (* Compute requires for linking an artifact.
    For modules: use the library's requires
    For pages: use all libraries in the package (since pages document the whole package) *)
-let compute_link_requires sctx ~artifact =
-  let ctx = Super_context.context sctx in
+let compute_link_requires _sctx ~artifact =
   match artifact.kind, artifact.target with
   | Module _, Lib (_, lib) ->
     (* Module in a library: use library's dependencies *)
     Lib.requires lib
-  | Page _, Pkg pkg ->
-    (* Page in a package: needs all libraries in that package *)
-    let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
-    Memo.return (Resolve.return (List.map local_libs ~f:Lib.Local.to_lib))
+  | Page { pkg_libs; _ }, Pkg _ ->
+    (* Page in a package: use the libraries that were recorded when the artifact was created *)
+    Memo.return (Resolve.return pkg_libs)
   | Module _, Pkg _ ->
     (* This shouldn't happen - modules should have Lib targets *)
     Memo.return (Resolve.return [])
-  | Page _, Lib (_, lib) ->
+  | Page { pkg_libs = _; _ }, Lib (_, lib) ->
     (* Page in a library target - just use that library *)
     Memo.return (Resolve.return [ lib ])
 ;;
@@ -1171,15 +1203,6 @@ let compute_link_requires sctx ~artifact =
    is derived from the artifact itself. *)
 let link_artifact sctx ~artifact =
   let* requires = compute_link_requires sctx ~artifact in
-
-  let pkg_str = match artifact.pkg with
-    | Some p -> Package.Name.to_string p
-    | None -> "<none>"
-  in
-  Log.info [ Pp.textf "link_artifact: Processing library %s/%s"
-               pkg_str
-               (Lib_name.to_string artifact.lib_name) ];
-
   (* Call the existing link_odoc_rules with computed requires *)
   link_odoc_rules sctx artifact ~pkg:artifact.pkg ~requires
 ;;
@@ -1327,7 +1350,7 @@ let create_artifact_installed ctx ~pkg ~lib ~lib_name ~module_name ~archive ~vis
 ;;
 
 (* Create an artifact for an installed package mld file *)
-let create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name ~odoc_config =
+let create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name ~odoc_config ~pkg_libs =
   let pkg_name_str = Package.Name.to_string pkg in
 
   (* Paths for installed package mld files follow the v3 structure *)
@@ -1343,7 +1366,7 @@ let create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name ~odoc_config =
   let json_file = html_root ++ pkg_name_str ++ (page_name ^ ".json") in
 
   let parent_id = pkg_name_str in
-  let kind = Page { name = page_name } in
+  let kind = Page { name = page_name; pkg_libs } in
   let target = Pkg pkg in
   let lib_name = Lib_name.of_string pkg_name_str in  (* Use package name as lib name for pages *)
   let output_dir = odoc_root ++ pkg_name_str in
@@ -1366,7 +1389,7 @@ let create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name ~odoc_config =
 ;;
 
 (* Discover mld files for an installed package and create artifacts *)
-let discover_installed_pkg_mld_artifacts ctx ~pkg : artifact list Memo.t =
+let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : artifact list Memo.t =
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
 
@@ -1383,7 +1406,7 @@ let discover_installed_pkg_mld_artifacts ctx ~pkg : artifact list Memo.t =
       Memo.return None
     else
       let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-      Memo.return (Some (create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name ~odoc_config))
+      Memo.return (Some (create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name ~odoc_config ~pkg_libs))
   )
 ;;
 
@@ -1676,6 +1699,8 @@ let get_pkg_mld_artifacts sctx ctx pkg =
   match Package.Name.Map.find packages pkg with
   | Some _local_pkg ->
     (* Local package - use Packages.mlds *)
+    let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
+    let pkg_libs = List.map local_libs ~f:Lib.Local.to_lib in
     let* pkg_discovery = Package_discovery.create ~context:ctx in
     let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
     let+ mlds =
@@ -1688,11 +1713,13 @@ let get_pkg_mld_artifacts sctx ctx pkg =
     let lib_modules = Module_name.Set.empty in
     let target = Pkg pkg in
     Filename.Map.to_list_map mlds ~f:(fun name mld ->
-      let kind = Page { name } in
+      let kind = Page { name; pkg_libs } in
       create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
   | None ->
     (* Installed package - use discover_installed_pkg_mld_artifacts *)
-    discover_installed_pkg_mld_artifacts ctx ~pkg
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+    discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs:installed_libs
 ;;
 
 (* Helper to group artifacts by library name *)
@@ -1783,6 +1810,7 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
       (* Get package-level mld artifacts directly *)
       let* pkg_discovery = Package_discovery.create ~context:ctx in
       let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+      let pkg_libs = List.map local_libs ~f:Lib.Local.to_lib in
       let* pkg_artifacts =
         let+ mlds = Packages.mlds sctx pkg in
         let mlds = check_mlds_no_dupes ~pkg ~mlds in
@@ -1793,7 +1821,7 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
         let lib_modules = Module_name.Set.empty in
         let target = Pkg pkg in
         Filename.Map.to_list_map mlds ~f:(fun name mld ->
-          let kind = Page { name } in
+          let kind = Page { name; pkg_libs } in
           create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
       in
 
@@ -1825,7 +1853,7 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
       in
 
       (* Get package-level mld artifacts *)
-      let* mld_artifacts = discover_installed_pkg_mld_artifacts ctx ~pkg in
+      let* mld_artifacts = discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs:installed_libs in
 
       (* Get artifacts for all installed libraries in this package *)
       let* lib_artifacts_list =
@@ -1894,20 +1922,23 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
   Log.info [ Pp.textf "odoc v3: discovered %d artifacts for %s"
               (List.length all_artifacts) pkg_or_lib_name ];
 
-  (* Group artifacts by library *)
-  let artifacts_by_lib = group_artifacts_by_lib all_artifacts in
+  (* Separate package-level pages from library artifacts *)
+  let library_artifacts, package_pages = List.partition_map all_artifacts ~f:(fun artifact ->
+    match artifact.target with
+    | Lib _ -> Left artifact  (* Library artifacts *)
+    | Pkg _ -> Right artifact  (* Package-level pages *)
+  ) in
+
+  (* Group library artifacts by library *)
+  let artifacts_by_lib = group_artifacts_by_lib library_artifacts in
 
   Log.info [ Pp.textf "odoc v3: grouped into %d lib groups for %s"
               (Lib_name.Map.cardinal artifacts_by_lib) pkg_or_lib_name ];
 
-  (* Ensure all lib_subdirs are represented in artifacts_by_lib, even if they have no artifacts.
-     Also add the package name itself as a library, to handle cases where a package has sub-libraries
-     (like dune-private-libs.dune-section) but no top-level library, yet dependencies expect
-     {package}/{package} to exist. *)
+  (* Ensure all lib_subdirs are represented in artifacts_by_lib, even if they have no artifacts. *)
   let all_lib_names =
     let from_subdirs = List.map lib_subdirs ~f:Lib_name.of_string in
-    let pkg_as_lib = Lib_name.of_string pkg_or_lib_name in
-    Lib_name.Set.of_list (pkg_as_lib :: from_subdirs)
+    Lib_name.Set.of_list from_subdirs
   in
   let artifacts_by_lib_complete =
     Lib_name.Set.fold all_lib_names ~init:artifacts_by_lib ~f:(fun lib_name acc ->
@@ -1940,16 +1971,36 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                           (List.length lib_artifacts) ];
 
               (* Add all .odoc files to the .odoc-all alias BEFORE compiling,
-                 so dependencies on the alias will wait for all files to be built *)
+                 so dependencies on the alias will wait for all files to be built.
+                 Group by target type to ensure MLD pages (Pkg target) and modules (Lib target)
+                 go to the correct aliases. *)
               let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
-              let all_odoc_paths = Path.Set.of_list_map lib_artifacts ~f:(fun a -> Path.build a.odoc_file) in
 
-              let* () =
-                match lib_artifacts with
-                | first_artifact :: _ ->
-                  Dep.setup_deps ctx first_artifact.target all_odoc_paths
-                | [] -> Memo.return ()
-              in
+              (* Separate artifacts by target type *)
+              let artifacts_by_target = List.fold_left lib_artifacts ~init:[] ~f:(fun acc artifact ->
+                match List.find acc ~f:(fun (target, _) ->
+                  match target, artifact.target with
+                  | Pkg p1, Pkg p2 -> Package.Name.equal p1 p2
+                  | Lib (p1, l1), Lib (p2, l2) ->
+                    Package.Name.equal p1 p2 && Lib_name.equal (Lib.name l1) (Lib.name l2)
+                  | _ -> false
+                ) with
+                | Some (target, _) ->
+                  List.map acc ~f:(fun (t, arts) ->
+                    if match t, target with
+                       | Pkg p1, Pkg p2 -> Package.Name.equal p1 p2
+                       | Lib (p1, l1), Lib (p2, l2) ->
+                         Package.Name.equal p1 p2 && Lib_name.equal (Lib.name l1) (Lib.name l2)
+                       | _ -> false
+                    then (t, artifact :: arts)
+                    else (t, arts))
+                | None -> (artifact.target, [artifact]) :: acc
+              ) in
+
+              let* () = Memo.parallel_iter artifacts_by_target ~f:(fun (target, arts) ->
+                let odoc_paths = Path.Set.of_list_map arts ~f:(fun a -> Path.build a.odoc_file) in
+                Dep.setup_deps ctx target odoc_paths
+              ) in
 
               (* Now compile all artifacts *)
               let* () = Memo.parallel_iter lib_artifacts ~f:(fun artifact -> compile_artifact sctx ~artifact ~lib_artifacts) in
@@ -1959,12 +2010,16 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
             )
             )
         in
+        (* Compile package-level pages *)
+        let* () = Memo.parallel_iter package_pages ~f:(fun artifact -> compile_artifact sctx ~artifact ~lib_artifacts:package_pages) in
+
         create_pkg_alias_if_v3 ctx ~path_prefix ~pkg_or_lib_name ~lib_alias_dirs
       )
     | "_odocls" ->
       (* Linking *)
       Rules.collect_unit (fun () ->
-        Lib_name.Map.to_list artifacts_by_lib_complete
+        (* Link library artifacts *)
+        let* () = Lib_name.Map.to_list artifacts_by_lib_complete
         |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
           if List.is_empty lib_artifacts then (
             Log.info [ Pp.textf "odoc v3: _odocls handler for lib_name=%s: no artifacts, creating empty .odoc-all alias"
@@ -1989,13 +2044,18 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
             let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
             let lib_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
             Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files)
-          ))
+          )) in
+
+        (* Link package-level pages *)
+        Memo.parallel_iter package_pages ~f:(fun artifact -> link_artifact sctx ~artifact)
       )
     | "_html" ->
       (* HTML generation *)
       Rules.collect_unit (fun () ->
+        (* Combine library artifacts and package pages for HTML generation *)
+        let all_artifacts_for_html = library_artifacts @ package_pages in
         (* Filter to only visible artifacts for HTML generation *)
-        let visible_artifacts = List.filter all_artifacts ~f:(fun a -> not a.hidden) in
+        let visible_artifacts = List.filter all_artifacts_for_html ~f:(fun a -> not a.hidden) in
 
         Log.info [ Pp.textf "odoc v3: _html handler for %s: %d visible artifacts"
                     pkg_or_lib_name
@@ -2028,10 +2088,27 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
 
         (* Also create library-level aliases for each library *)
         Lib_name.Map.to_list artifacts_by_lib_complete
-        |> Memo.parallel_iter ~f:(fun (_lib_name, lib_artifacts) ->
+        |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
           let visible_lib_artifacts = List.filter lib_artifacts ~f:(fun a -> not a.hidden) in
           if List.is_empty visible_lib_artifacts then
-            Memo.return ()
+            (* Even for libraries with no artifacts, create empty aliases *)
+            (* We need to construct a target for this library *)
+            (* Since we have no artifacts, we need to look up the library *)
+            let pkg_name = Package.Name.of_string pkg_or_lib_name in
+            let* lib_opt =
+              let* pkg_discovery = Package_discovery.create ~context:ctx in
+              let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg_name in
+              Memo.return (List.find installed_libs ~f:(fun lib ->
+                Lib_name.equal (Lib.name lib) lib_name
+              ))
+            in
+            (match lib_opt with
+            | Some lib ->
+              Output_format.iter ~f:(fun output ->
+                let lib_alias = Dep.format_alias output ctx (Lib (pkg_name, lib)) in
+                Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths [])
+              )
+            | None -> Memo.return ())
           else
             Output_format.iter ~f:(fun output ->
               let lib_paths = List.map visible_lib_artifacts ~f:(fun artifact ->
