@@ -3,12 +3,13 @@ This test generates documentation using odoc for a library:
   $ dune build @doc
 
 This test if `.odocl` files are generated
-  $ find _build/default/_doc/_odocls -name '*.odocl' | sort -n
+  $ find _build/default/_doc/_odocls/{bar,foo} -name '*.odocl' | sort -n
   _build/default/_doc/_odocls/bar/bar/bar.odocl
   _build/default/_doc/_odocls/bar/page-index.odocl
   _build/default/_doc/_odocls/foo/foo.byte/foo_byte.odocl
   _build/default/_doc/_odocls/foo/foo/foo.odocl
   _build/default/_doc/_odocls/foo/foo/foo2.odocl
+  _build/default/_doc/_odocls/foo/foo/foo3.odocl
   _build/default/_doc/_odocls/foo/page-index.odocl
 
   $ dune runtest
