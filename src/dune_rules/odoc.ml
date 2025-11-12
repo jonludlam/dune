@@ -272,27 +272,7 @@ end = struct
   let deps ctx pkg requires =
     let open Action_builder.O in
     let* libs = Resolve.read requires in
-    (* Log what we're processing *)
-    let pkg_str = match pkg with
-      | Some p -> Package.Name.to_string p
-      | None -> "<none>"
-    in
-    let lib_names = List.map libs ~f:(fun lib ->
-      let name = Lib_name.to_string (Lib.name lib) in
-      Log.info [ Pp.textf "  - lib name: '%s'" name ];
-      name
-    ) in
-    let lib_names_str = match lib_names with
-      | [] -> "(none)"
-      | names -> String.concat ~sep:", " names
-    in
-    Log.info [ Pp.textf "Dep.deps called for pkg=%s with %d requires: [%s]"
-                 pkg_str (List.length libs) lib_names_str ];
-    (* We need Package_discovery to map installed libraries to their opam packages.
-       Use Action_builder.of_memo to execute Memo code from Action_builder context. *)
     let* pkg_discovery = Action_builder.of_memo (Package_discovery.create ~context:ctx) in
-    (* Get the set of local package names to check against *)
-    let* local_packages = Action_builder.of_memo (Dune_load.packages ()) in
     Action_builder.deps
       (let init =
          match pkg with
@@ -302,38 +282,20 @@ end = struct
        List.fold_left libs ~init ~f:(fun acc (lib : Lib.t) ->
          match Lib.Local.of_lib lib with
          | None ->
-           (* Installed library - add dependency on its .odoc files via .odoc-all alias *)
-           (* Use Package_discovery to get the correct opam package name *)
-           let lib_name = Lib.name lib in
+           (* Installed library - add dependency on its .odoc-all alias *)
            let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
            (match lib_pkg_opt with
             | Some lib_pkg ->
-              (* Check if this package is a local project package.
-                 If so, skip it - we don't want to depend on installed versions of local packages! *)
-              if Package.Name.Map.mem local_packages lib_pkg then (
-                Log.info [ Pp.textf "Dep.deps: Installed library %s belongs to local package %s, skipping to avoid conflict"
-                             (Lib_name.to_string lib_name)
-                             (Package.Name.to_string lib_pkg) ];
-                acc
-              ) else (
-                let dir =
-                  Paths.root ctx
-                  ++ "_odoc"
-                  ++ Package.Name.to_string lib_pkg
-                  ++ Lib_name.to_string lib_name
-                in
-                let alias_path = alias ~dir in
-                Log.info [ Pp.textf "Dep.deps: Adding dependency on installed library %s (opam package=%s) odoc alias at %s"
-                             (Lib_name.to_string lib_name)
-                             (Package.Name.to_string lib_pkg)
-                             (Path.Build.to_string dir) ];
-                Dep.Set.add acc (Dep.alias alias_path)
-              )
-            | None ->
-              Log.info [ Pp.textf "Dep.deps: Installed library %s has no opam package, skipping"
-                           (Lib_name.to_string lib_name) ];
-              acc)
+              let dir =
+                Paths.root ctx
+                ++ "_odoc"
+                ++ Package.Name.to_string lib_pkg
+                ++ Lib_name.to_string (Lib.name lib)
+              in
+              Dep.Set.add acc (Dep.alias (alias ~dir))
+            | None -> acc)
          | Some local_lib ->
+           (* Local library - add dependency on its .odoc-all alias *)
            let lib_t = Lib.Local.to_lib local_lib in
            let info = Lib.info lib_t in
            let pkg = match Lib_info.package info with
@@ -343,12 +305,7 @@ end = struct
                Package.Name.of_string (pkg_or_lnu local_lib)
            in
            let dir = Paths.odocs ctx (Lib (pkg, lib_t)) in
-           let alias = alias ~dir in
-           Log.info [ Pp.textf "Dep.deps: Adding dependency on LOCAL library %s (package=%s) odoc alias at %s"
-                        (Lib_name.to_string (Lib.name lib_t))
-                        (Package.Name.to_string pkg)
-                        (Path.Build.to_string dir) ];
-           Dep.Set.add acc (Dep.alias alias)))
+           Dep.Set.add acc (Dep.alias (alias ~dir))))
   ;;
 
   let alias ctx m = alias ~dir:(Paths.odocs ctx m)
