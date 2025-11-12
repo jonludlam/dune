@@ -589,9 +589,12 @@ let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
   Resolve.args
     (let open Resolve.O in
      let+ libs = requires in
-     (* Add stdlib to the list of libraries if provided *)
+     (* Add stdlib to the list of libraries if provided and not already present *)
      let libs = match stdlib_opt with
-       | Some stdlib -> stdlib :: libs
+       | Some stdlib ->
+         if List.exists libs ~f:(fun lib -> Lib_name.equal (Lib.name lib) (Lib.name stdlib))
+         then libs  (* stdlib already in list, don't add it again *)
+         else stdlib :: libs
        | None -> libs
      in
      let paths =
@@ -648,9 +651,12 @@ let odoc_lib_flags _ctx ~stdlib_opt requires pkg_discovery =
   Resolve.args
     (let open Resolve.O in
      let+ libs = requires in
-     (* Add stdlib to the list of libraries if provided *)
+     (* Add stdlib to the list of libraries if provided and not already present *)
      let libs = match stdlib_opt with
-       | Some stdlib -> stdlib :: libs
+       | Some stdlib ->
+         if List.exists libs ~f:(fun lib -> Lib_name.equal (Lib.name lib) (Lib.name stdlib))
+         then libs  (* stdlib already in list, don't add it again *)
+         else stdlib :: libs
        | None -> libs
      in
      let lib_args =
@@ -1295,13 +1301,18 @@ let libs_of_pkg ctx ~pkg =
 ;;
 
 (* Compute requires for linking an artifact.
-   For modules: use the library's requires
+   For modules: use the library's requires + the library itself
    For pages: use all libraries in the package (since pages document the whole package) *)
 let compute_link_requires _sctx ~artifact =
   match artifact.kind, artifact.target with
   | Module _, Lib (_, lib) ->
-    (* Module in a library: use library's dependencies *)
-    Lib.requires lib
+    (* Module in a library: use library's dependencies PLUS the library itself.
+       This ensures all modules in the library (including hidden/wrapped ones) are compiled
+       before any module is linked. Critical for wrapped libraries. *)
+    let* external_requires = Lib.requires lib in
+    Memo.return (Resolve.bind external_requires ~f:(fun libs ->
+      (* Add the library itself to ensure .odoc-all dependency includes all modules *)
+      Resolve.return (lib :: libs)))
   | Page { pkg_libs; _ }, Pkg _ ->
     (* Page in a package: use the libraries that were recorded when the artifact was created *)
     Memo.return (Resolve.return pkg_libs)

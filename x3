@@ -1,0 +1,407 @@
+File "_doc/_odocls/dune-rpc-lwt/dune-rpc-lwt/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias _doc/_odoc/lwt/lwt/.odoc-all
+File "_doc/_odocls/dune-rpc-lwt/dune-rpc-lwt/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias _doc/_odoc/lwt/lwt.unix/.odoc-all
+File "_doc/_odocls/dune-private-libs/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias
+_doc/_odoc/dune-private-libs/dune-private-libs/.odoc-all
+File "_doc/_odocls/dune/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias _doc/_odoc/dune/dune/.odoc-all
+File "_doc/_odocls/stdune/stdune/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias _doc/_odoc/ocaml-compiler/unix/.odoc-all
+File "_doc/_odoc/test_odoc_driver/test_odoc_driver/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias _doc/_odoc/ocaml-compiler/stdlib/.odoc-all
+File "_doc/_odoc/dune-rpc-lwt/dune-rpc-lwt/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias _doc/_odoc/ocaml-compiler/threads/.odoc-all
+File "_doc/_odoc/dune-rpc-lwt/dune-rpc-lwt/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias
+_doc/_odoc/ocplib-endian/ocplib-endian/.odoc-all
+File "_doc/_odoc/dune-rpc-lwt/dune-rpc-lwt/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias
+_doc/_odoc/ocplib-endian/ocplib-endian.bigstring/.odoc-all
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 389, character 8 to line 393, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 394, character 8 to line 398, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 400, character 8 to line 404, character 22:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 405, character 8 to line 409, character 22:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 411, character 8 to line 415, character 22:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 416, character 8 to line 420, character 22:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 422, character 8 to line 424, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/doc/lwt/odoc-pages/manual.mld", line 425, character 8 to line 427, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "src/core/lwt_sequence.mli", line 21, character 0 to line 23, character 41:
+Warning: Alert deprecated not expected here.
+File "src/unix/lwt_engine.mli", line 219, character 2 to line 221, character 43:
+Warning: Alert deprecated not expected here.
+File "src/unix/lwt_engine.mli", line 234, character 2 to line 235, character 59:
+Warning: Alert deprecated not expected here.
+File "src/unix/lwt_main.mli", line 20, character 6 to line 24, character 8:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/lwt/unix/lwt_throttle.cmti":
+Warning: Couldn't find the following modules:
+  Stdlib
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/lwt/unix/lwt_config.cmt":
+Warning: Couldn't find the following modules:
+  Lwt_features
+File "src/core/lwt_pool.mli", line 23, character 4 to line 39, character 2:
+Warning: Code blocks should be indented at the opening `{`.
+File "_doc/_odocls/ocaml-compiler/compiler-libs.bytecomp/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias
+_doc/_odoc/ocaml-compiler/compiler-libs.bytecomp/.odoc-all
+File "_doc/_odocls/ocaml-compiler/compiler-libs.bytecomp/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias
+_doc/_odoc/ocaml-compiler/compiler-libs.common/.odoc-all
+File "_doc/_odocls/ocaml-compiler/compiler-libs.bytecomp/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias
+_doc/_odoc/ocaml-compiler/compiler-libs.optcomp/.odoc-all
+File "_doc/_odocls/ocaml-compiler/compiler-libs.bytecomp/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias
+_doc/_odoc/ocaml-compiler/compiler-libs.toplevel/.odoc-all
+File "_doc/_odocls/ocaml-compiler/compiler-libs.bytecomp/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias _doc/_odoc/ocaml-compiler/dynlink/.odoc-all
+File "_doc/_odocls/ocaml-compiler/compiler-libs.bytecomp/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias
+_doc/_odoc/ocaml-compiler/runtime_events/.odoc-all
+File "_doc/_odocls/ocaml-compiler/compiler-libs.bytecomp/_unknown_", line 1, characters 0-0:
+Error: No rule found for alias _doc/_odoc/ocaml-compiler/str/.odoc-all
+File "otherlibs/unix/unix.mli", line 1590, characters 65-78:
+Warning: '@since' should begin on its own line.
+File "unixLabels.mli", line 1590, characters 65-78:
+Warning: '@since' should begin on its own line.
+File "domain.mli", line 69, character 4 to line 74, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "scanf.mli", line 86, character 0 to line 88, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/bytelink.cmti":
+Warning: Couldn't find the following modules:
+  Stdlib
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/arg_helper.cmti":
+Warning: Couldn't find the following modules:
+  Stdlib
+File "utils/config_boot.mli", line 251, characters 24-29:
+Warning: Unknown tag '@FILE'.
+File "utils/config_main.mli", line 251, characters 24-29:
+Warning: Unknown tag '@FILE'.
+File "utils/config.mli", line 251, characters 24-29:
+Warning: Unknown tag '@FILE'.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/identifiable.cmti":
+Warning: Couldn't find the following modules:
+  Stdlib
+File "driver/main_args.mli", line 278, characters 27-34:
+Warning: '{c,opt}': bad markup.
+Suggestion: did you mean '{!c,opt}' or '[c,opt]'?
+File "driver/main_args.mli", line 279, characters 22-29:
+Warning: '{c,opt}': bad markup.
+Suggestion: did you mean '{!c,opt}' or '[c,opt]'?
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/backend_var.cmti":
+Warning: Couldn't find the following modules:
+  Ident
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/id_types.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/linkage_name.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/static_exception.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/tag.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "toplevel/toploop.mli", line 202, characters 50-50:
+Warning: End of text is not allowed in '[...]' (code).
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/topcommon.cmti":
+Warning: Couldn't find the following modules:
+  Genprintval
+File "driver/compile.mli", line 24, characters 27-28:
+Warning: Paragraph should begin on its own line.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/strongly_connected_components.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/numbers.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/ident.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/misc.cmti":
+Warning: Couldn't find the following modules:
+  Stdlib Stdlib__String
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/compilation_unit.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "arrayLabels.mli", line 433, character 1 to line 439, character 2:
+Warning: Code blocks should be indented at the opening `{`.
+File "array.mli", line 433, character 1 to line 439, character 2:
+Warning: Code blocks should be indented at the opening `{`.
+File "buffer.mli", line 35, character 0 to line 37, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "bytesLabels.mli", line 368, character 3 to line 373, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytesLabels.mli", line 395, character 3 to line 398, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytesLabels.mli", line 432, character 4 to line 435, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "dynarray.mli", line 47, character 0 to line 49, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "bytes.mli", line 368, character 3 to line 373, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytes.mli", line 395, character 3 to line 398, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "bytes.mli", line 432, character 4 to line 435, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "queue.mli", line 24, character 0 to line 26, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "hashtbl.mli", line 47, character 0 to line 49, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "stack.mli", line 23, character 0 to line 25, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/topeval.cmti":
+Warning: Couldn't find the following modules:
+  Topcommon
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/export_id.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/set_of_closures_id.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/variable.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "gc.mli", line 429, character 3 to line 438, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "format.mli", line 362, character 3 to line 368, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "format.mli", line 371, character 3 to line 374, character 5:
+Warning: Code blocks should be indented at the opening `{`.
+File "format.mli", line 1538, character 2 to line 1542, character 6:
+Warning: Code blocks should be indented at the opening `{`.
+File "ephemeron.mli", line 70, character 0 to line 72, character 1:
+Warning: Alert unsynchronized_access not expected here.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/diffing_with_keys.cmti":
+Warning: Couldn't find the following modules:
+  Diffing
+File "moreLabels.mli", line 64, character 2 to line 66, character 3:
+Warning: Alert unsynchronized_access not expected here.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/set_of_closures_origin.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "typing/shape.mli", line 50, characters 0-0:
+Warning: End of text is not allowed in '{{:...} ...}' (external link).
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/shape.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/closure_element.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/mutable_variable.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/parameter.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/symbol.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "parsing/parsetree.mli", line 648, characters 40-41:
+Warning: '.' is not allowed in '{ul ...}' (bulleted list).
+Suggestion: move '.' into a list item, '{li ...}' or '{- ...}'.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/closure_id.cmti":
+Warning: Couldn't find the following modules:
+  Closure_element
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/var_within_closure.cmti":
+Warning: Couldn't find the following modules:
+  Closure_element
+File "parsing/ast_mapper.mli", line 29, character 2 to line 43, character 35:
+Warning: Code blocks should be indented at the opening `{`.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/parser.cmti":
+Warning: Couldn't find the following modules:
+  CamlinternalMenhirLib
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/closure_origin.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/branch_relaxation.cmti":
+Warning: Couldn't find the following modules:
+  Branch_relaxation_intf
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/projection.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "middle_end/flambda/flambda.mli", line 391, character 27 to line 393, character 41:
+Warning: '{ f x ->
+            let applied_function = Symbol f_closure in
+            Apply (applied_function, x) }': bad markup.
+Suggestion: did you mean '{! f x ->
+            let applied_function = Symbol f_closure in
+            Apply (applied_function, x) }' or '[ f x ->
+            let applied_function = Symbol f_closure in
+            Apply (applied_function, x) ]'?
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/flambda.cmti":
+Warning: Couldn't find the following modules:
+  Identifiable
+File "typing/types.mli", line 16, characters 4-48:
+Warning: '{0': heading level should be lower than top heading level '0'.
+File "typing/types.mli", line 308, character 17 to line 314, character 48:
+Warning: '{ row_fields = [("X", _)];
+                   row_more   =
+                     Tvariant { row_fields = [("Y", _)];
+                                row_more   =
+                                  Tvariant { row_fields = [];
+                                             row_more   = _;
+                                             _ }': bad markup.
+Suggestion: did you mean '{! row_fields = [("X", _)];
+                   row_more   =
+                     Tvariant { row_fields = [("Y", _)];
+                                row_more   =
+                                  Tvariant { row_fields = [];
+                                             row_more   = _;
+                                             _ }' or '[ row_fields = [("X", _)];
+                   row_more   =
+                     Tvariant { row_fields = [("Y", _)];
+                                row_more   =
+                                  Tvariant { row_fields = [];
+                                             row_more   = _;
+                                             _ ]'?
+File "typing/types.mli", line 315, characters 34-35:
+Warning: Unpaired '}' (end of markup).
+Suggestion: try '\}'.
+File "typing/types.mli", line 317, characters 17-18:
+Warning: Unpaired '}' (end of markup).
+Suggestion: try '\}'.
+File "middle_end/flambda/simple_value_approx.mli", line 107, character 25 to line 109, character 4:
+Warning: Blank line is not allowed in '[...]' (code).
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/persistent_env.cmti":
+Warning: Couldn't find the following modules:
+  Consistbl
+File "typing/out_type.mli", line 125, characters 4-7:
+Warning: Heading label should not be empty.
+File "typing/typedtree.mli", line 59, character 27 to line 60, character 75:
+Warning: '{ pat_desc = P
+                           ; pat_extra = (Tpat_constraint T, _, _) :: ... }': bad markup.
+Suggestion: did you mean '{! pat_desc = P
+                           ; pat_extra = (Tpat_constraint T, _, _) :: ... }' or '[ pat_desc = P
+                           ; pat_extra = (Tpat_constraint T, _, _) :: ... ]'?
+File "typing/typedtree.mli", line 63, character 27 to line 64, character 80:
+Warning: '{ pat_desc = disjunction
+                           ; pat_extra = (Tpat_type (P, "tconst"), _, _) :: ...}': bad markup.
+Suggestion: did you mean '{! pat_desc = disjunction
+                           ; pat_extra = (Tpat_type (P, "tconst"), _, _) :: ...}' or '[ pat_desc = disjunction
+                           ; pat_extra = (Tpat_type (P, "tconst"), _, _) :: ...]'?
+File "typing/typedtree.mli", line 71, character 27 to line 72, character 69:
+Warning: '{ pat_desc  = Tpat_var "P"
+                           ; pat_extra = (Tpat_unpack, _, _) :: ... }': bad markup.
+Suggestion: did you mean '{! pat_desc  = Tpat_var "P"
+                           ; pat_extra = (Tpat_unpack, _, _) :: ... }' or '[ pat_desc  = Tpat_var "P"
+                           ; pat_extra = (Tpat_unpack, _, _) :: ... ]'?
+File "typing/typedtree.mli", line 73, character 27 to line 74, character 54:
+Warning: '{ pat_desc  = Tpat_any
+            ; pat_extra = (Tpat_unpack, _, _) :: ... }': bad markup.
+Suggestion: did you mean '{! pat_desc  = Tpat_any
+            ; pat_extra = (Tpat_unpack, _, _) :: ... }' or '[ pat_desc  = Tpat_any
+            ; pat_extra = (Tpat_unpack, _, _) :: ... ]'?
+File "typing/typedtree.mli", line 117, characters 12-33:
+Warning: '{ l1=P1; ...; ln=Pn }': bad markup.
+Suggestion: did you mean '{! l1=P1; ...; ln=Pn }' or '[ l1=P1; ...; ln=Pn ]'?
+File "typing/typedtree.mli", line 118, characters 12-35:
+Warning: '{ l1=P1; ...; ln=Pn; _}': bad markup.
+Suggestion: did you mean '{! l1=P1; ...; ln=Pn; _}' or '[ l1=P1; ...; ln=Pn; _]'?
+File "typing/typedtree.mli", line 244, characters 12-33:
+Warning: '{ l1=P1; ...; ln=Pn }': bad markup.
+Suggestion: did you mean '{! l1=P1; ...; ln=Pn }' or '[ l1=P1; ...; ln=Pn ]'?
+File "typing/typedtree.mli", line 245, characters 12-41:
+Warning: '{ E0 with l1=P1; ...; ln=Pn }': bad markup.
+Suggestion: did you mean '{! E0 with l1=P1; ...; ln=Pn }' or '[ E0 with l1=P1; ...; ln=Pn ]'?
+File "typing/typedtree.mli", line 249, characters 27-45:
+Warning: '{ l1: t1; l2: t2 }': bad markup.
+Suggestion: did you mean '{! l1: t1; l2: t2 }' or '[ l1: t1; l2: t2 ]'?
+File "typing/typedtree.mli", line 250, characters 12-29:
+Warning: '{ E0 with t2=P2 }': bad markup.
+Suggestion: did you mean '{! E0 with t2=P2 }' or '[ E0 with t2=P2 ]'?
+File "typing/typedtree.mli", line 252, character 14 to line 253, character 47:
+Warning: '{ fields = [| l1, Kept t1; l2 Override P2 |]; representation;
+                extended_expression = Some E0 }': bad markup.
+Suggestion: did you mean '{! fields = [| l1, Kept t1; l2 Override P2 |]; representation;
+                extended_expression = Some E0 }' or '[ fields = [| l1, Kept t1; l2 Override P2 |]; representation;
+                extended_expression = Some E0 ]'?
+File "driver/optcompile.mli", line 25, characters 27-28:
+Warning: Paragraph should begin on its own line.
+File "/Users/jon/.opam/ocaml-base-compiler.5.3.0/lib/ocaml/compiler-libs/simplify_boxed_integer_ops.cmti":
+Warning: Couldn't find the following modules:
+  Simplify_boxed_integer_ops_intf
+File "lambda/tmc.mli", line 30, character 4 to line 36, character 6:
+Warning: '{|
+     let[@tail_mod_cons] rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       y :: map f xs
+    |}': bad markup.
+Suggestion: did you mean '{!|
+     let[@tail_mod_cons] rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       y :: map f xs
+    |}' or '[|
+     let[@tail_mod_cons] rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       y :: map f xs
+    |]'?
+File "lambda/tmc.mli", line 39, character 4 to line 54, character 6:
+Warning: '{|
+     let rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       let dst = y :: Placeholder in
+       map_dps dst 1 f xs; dst
+     and map_dps dst offset f = function
+     | [] ->
+       dst.offset <- []
+     | x :: xs ->
+       let y = f x in
+       let dst' = y :: Placeholder in
+       dst.offset <- dst';
+       map_dps dst 1 f fx
+    |}': bad markup.
+Suggestion: did you mean '{!|
+     let rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       let dst = y :: Placeholder in
+       map_dps dst 1 f xs; dst
+     and map_dps dst offset f = function
+     | [] ->
+       dst.offset <- []
+     | x :: xs ->
+       let y = f x in
+       let dst' = y :: Placeholder in
+       dst.offset <- dst';
+       map_dps dst 1 f fx
+    |}' or '[|
+     let rec map f = function
+     | [] -> []
+     | x :: xs ->
+       let y = f x in
+       let dst = y :: Placeholder in
+       map_dps dst 1 f xs; dst
+     and map_dps dst offset f = function
+     | [] ->
+       dst.offset <- []
+     | x :: xs ->
+       let y = f x in
+       let dst' = y :: Placeholder in
+       dst.offset <- dst';
+       map_dps dst 1 f fx
+    |]'?
+File "typing/patterns.mli", line 101, characters 27-28:
+Warning: Unpaired ']' (end of code).
+Suggestion: try '\]'.
