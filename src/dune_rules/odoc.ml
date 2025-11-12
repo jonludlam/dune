@@ -796,10 +796,14 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
     )
   in
 
-  (* Suppress output for installed packages *)
-  let quiet = match odoc_file.source with
-    | Installed_source _ -> true
-    | Local_source _ -> false
+  (* Suppress output for installed packages and vendored libraries *)
+  let* quiet = match odoc_file.source with
+    | Installed_source _ -> Memo.return true
+    | Local_source _ ->
+      (* Check if this is a vendored library *)
+      (match odoc_file.target with
+       | Lib (_, lib) -> is_lib_vendored lib
+       | Pkg _ -> Memo.return false)
   in
   (* Add -L flag for the library itself so modules can reference each other,
      but only if the library isn't already in the requires list or stdlib.
