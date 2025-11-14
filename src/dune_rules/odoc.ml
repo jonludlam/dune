@@ -1829,41 +1829,6 @@ let check_mlds_no_dupes ~pkg ~mlds =
       ]
 ;;
 
-(* Helper to get mld artifacts for a package - both local and installed *)
-let get_pkg_mld_artifacts sctx ctx pkg =
-  let* packages = Dune_load.packages () in
-  match Package.Name.Map.find packages pkg with
-  | Some _local_pkg ->
-    (* Local package - use Packages.mlds *)
-    let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
-    let pkg_libs = List.map local_libs ~f:Lib.Local.to_lib in
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-    let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-    let+ mlds_list = Packages.mlds sctx pkg in
-    (* Convert mld list to (path, name) pairs *)
-    let mlds_pairs =
-      List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
-        let name = Path.Local.basename mld.in_doc in
-        (mld.path, name)
-      )
-    in
-    let mlds = check_mlds_no_dupes ~pkg ~mlds:mlds_pairs in
-    let mlds = Filename.Map.update mlds "index" ~f:(function
-      | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld", "index")
-      | Some _ as s -> s)
-    in
-    let lib_modules = Module_name.Set.empty in
-    let target = Pkg pkg in
-    Filename.Map.to_list_map mlds ~f:(fun _map_key (mld_path, mld_name) ->
-      let kind = Page { name = mld_name; pkg_libs } in
-      create_artifact_local ctx ~target ~source:mld_path ~kind ~odoc_config ~lib_modules)
-  | None ->
-    (* Installed package - use discover_installed_pkg_mld_artifacts *)
-    let* pkg_discovery = Package_discovery.create ~context:ctx in
-    let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
-    discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs:installed_libs
-;;
-
 (* Helper to group artifacts by library name *)
 let group_artifacts_by_lib artifacts =
   List.fold_left artifacts ~init:Lib_name.Map.empty ~f:(fun acc artifact ->
