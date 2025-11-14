@@ -136,6 +136,23 @@ let find_package_for_library ~file_to_package_map lib =
 
 (* Simplified: inline the logic *)
 
+(* Extract all library names from a META file, including subpackages.
+   Builds fully qualified names like mtime.clock, mtime.clock.os, etc. *)
+let extract_lib_names_from_meta ~base_name (meta : Meta.Simplified.t) =
+  let rec loop ~full_name acc (meta : Meta.Simplified.t) =
+    let acc = full_name :: acc in
+    (* Process subpackages with nested names *)
+    List.fold_left meta.Meta.Simplified.subs ~init:acc ~f:(fun acc (sub : Meta.Simplified.t) ->
+      let sub_full_name =
+        match sub.Meta.Simplified.name with
+        | None -> full_name
+        | Some name -> Lib_name.nest full_name name
+      in
+      loop ~full_name:sub_full_name acc sub
+    )
+  in
+  loop ~full_name:base_name [] meta
+
 let build_mappings_from_changes_data ~file_to_package_map libs =
   List.fold_left libs ~init:empty ~f:(fun acc lib ->
     let lib_name = Lib.name lib in
@@ -261,7 +278,56 @@ let create_impl context =
 
     let lib_mappings = build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs in
 
-    Memo.return { lib_mappings with
+    (* Second pass: parse META files to discover ALL libraries including those without archives.
+       For each library we found via archives, parse its META file to find subpackages. *)
+    let* lib_mappings_complete =
+      let libs_with_packages = Lib_name.Map.to_list lib_mappings.package_of_lib in
+      let+ additional_mappings =
+        Memo.parallel_map libs_with_packages ~f:(fun (lib_name, pkg_name) ->
+          (* Find the Lib.t for this library name *)
+          let* lib_opt = Lib.DB.find installed_libs lib_name in
+          match lib_opt with
+          | None -> Memo.return []
+          | Some lib ->
+            let lib_info = Lib.info lib in
+            let src_dir = Lib_info.src_dir lib_info in
+            let meta_path = Path.relative src_dir "META" in
+            let meta_path_external = Path.as_outside_build_dir_exn meta_path in
+            let* meta_exists = Fs_memo.file_exists meta_path_external in
+            if not meta_exists then
+              Memo.return []
+            else
+              let* meta = Meta.load meta_path_external ~name:(Some (Package.Name.of_string (Lib_name.to_string lib_name))) in
+              (* Extract all library names from this META file *)
+              let all_lib_names = extract_lib_names_from_meta ~base_name:lib_name meta in
+              (* Look up each library name and return (lib_name, lib, pkg_name) tuples *)
+              Memo.parallel_map all_lib_names ~f:(fun ln ->
+                let+ lib_opt = Lib.DB.find installed_libs ln in
+                Option.map lib_opt ~f:(fun lib -> (ln, lib, pkg_name))
+              )
+        )
+      in
+      (* Flatten and merge into lib_mappings *)
+      let all_additional = List.concat additional_mappings |> List.filter_map ~f:Fun.id in
+      List.fold_left all_additional ~init:lib_mappings ~f:(fun acc (lib_name, lib, pkg_name) ->
+        (* Only add if not already present *)
+        if Lib_name.Map.mem acc.package_of_lib lib_name then
+          acc
+        else
+          { package_of_lib = Lib_name.Map.set acc.package_of_lib lib_name pkg_name;
+            libs_of_package =
+              Package.Name.Map.update acc.libs_of_package pkg_name ~f:(function
+                | None -> Some [lib]
+                | Some libs -> Some (lib :: libs));
+            mlds_of_package = acc.mlds_of_package;
+            config_of_package = acc.config_of_package;
+            installed_files = acc.installed_files;
+            opam_prefix = acc.opam_prefix;
+          }
+      )
+    in
+
+    Memo.return { lib_mappings_complete with
                   mlds_of_package = mlds_map;
                   config_of_package = config_map;
                   installed_files = installed_files_map;

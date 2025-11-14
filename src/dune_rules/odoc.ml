@@ -208,6 +208,24 @@ module Paths = struct
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
   let odoc_support ctx = html_root ctx ++ odoc_support_dirname
   let toplevel_index ctx = html_root ctx ++ "index.html"
+
+  (* Sidebar root directory - separate from _odocls for cleaner organization *)
+  let sidebar_root ctx = root ctx ++ "_sidebar"
+
+  (* Index file for a package - generated after linking, input to sidebar generation *)
+  let index_file ctx pkg =
+    sidebar_root ctx ++ Package.Name.to_string pkg ++ "index.odoc-index"
+  ;;
+
+  (* Binary sidebar file for a package - generated after indexing *)
+  let sidebar_file ctx pkg =
+    sidebar_root ctx ++ Package.Name.to_string pkg ++ "sidebar.odoc-sidebar"
+  ;;
+
+  (* JSON sidebar file for web consumption - goes in HTML output *)
+  let sidebar_json ctx pkg =
+    html_root ctx ++ Package.Name.to_string pkg ++ "sidebar.json"
+  ;;
 end
 
 module Output_format = struct
@@ -1058,9 +1076,9 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
 ;;
 
 (* Unified HTML generation function for artifacts.
-   Takes an artifact and search_db, generates HTML for it.
+   Takes an artifact, search_db, and optional sidebar file, generates HTML for it.
    This follows the same pattern as compile_artifact and link_artifact. *)
-let generate_html_artifact sctx ~artifact ~search_db =
+let generate_html_artifact sctx ~artifact ~search_db ~sidebar_file =
   let ctx = Super_context.context sctx in
   let odoc_support_path = Paths.odoc_support ctx in
   let search_args =
@@ -1098,6 +1116,9 @@ let generate_html_artifact sctx ~artifact ~search_db =
         ; Path (Path.build odoc_support_path)
         ; A "--theme-uri"
         ; Path (Path.build odoc_support_path)
+        ; (match sidebar_file with
+           | Some sf -> S [A "--sidebar"; Dep (Path.build sf)]
+           | None -> S [])
         ; Dep (Path.build artifact.odocl_file)
         ; Output_format.args out
         ; (match html_dir_opt with
@@ -1929,7 +1950,8 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
       let* pkg_discovery = Package_discovery.create ~context:ctx in
       let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
 
-      (* Get library subdirectory names for build_dir_only_sub_dirs *)
+      (* Get library subdirectory names for build_dir_only_sub_dirs.
+         libraries_of_package now includes ALL libraries, including those without archives. *)
       let lib_subdirs =
         List.filter_map installed_libs ~f:(fun lib ->
           match Lib.Local.of_lib lib with
@@ -1995,6 +2017,123 @@ let create_pkg_alias_if_v3 ctx ~path_prefix ~pkg_or_lib_name ~lib_alias_dirs =
     Rules.Produce.Alias.add_deps pkg_alias (Action_builder.deps lib_alias_deps)
   ) else
     Memo.return ()
+;;
+
+(* Generate index file for a package from its linked .odocl files *)
+let generate_index sctx ~pkg ~odocl_files =
+  let ctx = Super_context.context sctx in
+  let index_file = Paths.index_file ctx pkg in
+
+  (* compile-index needs all .odocl files:
+     - Library .odocl files
+     - Package-level mld .odocl files *)
+  let odocl_dir = Paths.odocl ctx (Pkg pkg) in
+
+  let open Command.Args in
+  (* Pass all .odocl files as dependencies *)
+  let odocl_file_args = List.map odocl_files ~f:(fun odocl_file ->
+    Dep (Path.build odocl_file)
+  ) in
+
+  let action =
+    let open Action_builder.With_targets.O in
+    (* Depend on the package's .odoc-all alias *)
+    let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odocl_dir in
+    Action_builder.with_no_targets (Action_builder.dep (Dune_engine.Dep.alias pkg_alias))
+    >>>
+    run_odoc
+      sctx
+      ~dir:(Path.build (Paths.sidebar_root ctx))
+      "compile-index"
+      ~quiet:false
+      ~flags_for:None
+      ([ A "-o"; Target index_file ] @ odocl_file_args)
+  in
+  let* () = add_rule sctx action in
+  Memo.return index_file
+;;
+
+(* Generate binary sidebar file for a package from its index - called in _sidebar handler *)
+let generate_sidebar_binary sctx ~pkg ~index_file =
+  let ctx = Super_context.context sctx in
+  let sidebar_file = Paths.sidebar_file ctx pkg in
+
+  (* Generate binary sidebar - run from _sidebar directory with relative path to index *)
+  let* () =
+    let action =
+      let open Action_builder.With_targets.O in
+      Action_builder.with_no_targets (Action_builder.path (Path.build index_file))
+      >>>
+      run_odoc
+        sctx
+        ~dir:(Path.build (Paths.sidebar_root ctx))
+        "sidebar-generate"
+        ~quiet:false
+        ~flags_for:None
+        [ A "-o"; Target sidebar_file
+        ; A (sprintf "%s/index.odoc-index" (Package.Name.to_string pkg))
+        ]
+    in
+    add_rule sctx action
+  in
+  Memo.return sidebar_file
+;;
+
+(* Generate JSON sidebar file for a package from its index - called in _html handler *)
+let generate_sidebar_json sctx ~pkg ~index_file =
+  let ctx = Super_context.context sctx in
+  let sidebar_json = Paths.sidebar_json ctx pkg in
+
+  (* Generate JSON sidebar - run from _html directory with relative path to index *)
+  let action =
+    let open Action_builder.With_targets.O in
+    Action_builder.with_no_targets (Action_builder.path (Path.build index_file))
+    >>>
+    run_odoc
+      sctx
+      ~dir:(Path.build (Paths.html_root ctx))
+      "sidebar-generate"
+      ~quiet:false
+      ~flags_for:None
+      [ A "--json"
+      ; A "-o"; Target sidebar_json
+      ; A (sprintf "../_sidebar/%s/index.odoc-index" (Package.Name.to_string pkg))
+      ]
+  in
+  add_rule sctx action
+;;
+
+(* Handle sidebar generation for a package *)
+let handle_sidebar_artifacts sctx pkg_or_lib_name =
+  let ctx = Super_context.context sctx in
+  Log.info [ Pp.textf "odoc v3: handle_sidebar_artifacts called for %s" pkg_or_lib_name ];
+
+  (* Skip sidebar generation for synthetic packages *)
+  if String.contains pkg_or_lib_name '@' then (
+    Log.info [ Pp.textf "odoc v3: Skipping sidebar for synthetic package %s" pkg_or_lib_name ];
+    Memo.return (Build_config.Gen_rules.make (Memo.return Rules.empty))
+  ) else (
+    let rules = Rules.collect_unit (fun () ->
+      let pkg = Package.Name.of_string pkg_or_lib_name in
+
+      (* Discover artifacts to get all .odocl files *)
+      let* all_artifacts, _lib_subdirs = discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name in
+
+      (* Collect all .odocl files from all artifacts (libraries and package pages) *)
+      let odocl_files = List.filter_map all_artifacts ~f:(fun artifact ->
+        if artifact.hidden then None else Some artifact.odocl_file
+      ) in
+
+      (* Generate index file with all .odocl files *)
+      let* index_file = generate_index sctx ~pkg ~odocl_files in
+
+      (* Generate binary sidebar *)
+      let* _sidebar_file = generate_sidebar_binary sctx ~pkg ~index_file in
+
+      Memo.return ()
+    ) in
+    Memo.return (Build_config.Gen_rules.make rules)
+  )
 ;;
 
 let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
@@ -2134,7 +2273,26 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           )) in
 
         (* Link package-level pages *)
-        Memo.parallel_iter package_pages ~f:(fun artifact -> link_artifact sctx ~artifact)
+        let* () = Memo.parallel_iter package_pages ~f:(fun artifact -> link_artifact sctx ~artifact) in
+
+        (* Create package-level .odoc-all alias that aggregates all library aliases *)
+        if String.contains pkg_or_lib_name '@' then
+          Memo.return ()  (* Synthetic package - no package-level alias *)
+        else (
+          let pkg_dir = Paths.odocl_root ctx ++ pkg_or_lib_name in
+          let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_dir in
+
+          (* Collect all odocl files from libraries and pages *)
+          let all_odocl_paths =
+            let lib_odocls = List.concat_map (Lib_name.Map.values artifacts_by_lib_complete) ~f:(fun lib_artifacts ->
+              List.filter_map lib_artifacts ~f:(fun a -> if a.hidden then None else Some (Path.build a.odocl_file))
+            ) in
+            let page_odocls = List.map package_pages ~f:(fun a -> Path.build a.odocl_file) in
+            lib_odocls @ page_odocls
+          in
+
+          Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_odocl_paths)
+        )
       )
     | "_html" ->
       (* HTML generation *)
@@ -2148,6 +2306,19 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                     pkg_or_lib_name
                     (List.length visible_artifacts) ];
 
+        (* Generate JSON sidebar and reference binary sidebar for non-synthetic packages *)
+        let* sidebar_file_opt =
+          if String.contains pkg_or_lib_name '@' then
+            (* Synthetic package (private lib) - no sidebar *)
+            Memo.return None
+          else
+            (* Real package - generate JSON sidebar and reference binary sidebar *)
+            let pkg = Package.Name.of_string pkg_or_lib_name in
+            let index_file = Paths.index_file ctx pkg in
+            let* () = generate_sidebar_json sctx ~pkg ~index_file in
+            Memo.return (Some (Paths.sidebar_file ctx pkg))
+        in
+
         (* Create search_db for the entire package (all visible artifacts) *)
         let* search_db =
           let odocls = List.map visible_artifacts ~f:(fun artifact -> artifact.odocl_file) in
@@ -2159,7 +2330,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
 
         (* Generate HTML for all visible artifacts *)
         let* () = Memo.parallel_iter visible_artifacts ~f:(fun artifact ->
-          generate_html_artifact sctx ~artifact ~search_db
+          generate_html_artifact sctx ~artifact ~search_db ~sidebar_file:sidebar_file_opt
         ) in
 
         (* Create format aliases for all output formats *)
@@ -2760,6 +2931,16 @@ let gen_rules sctx ~dir rest =
   | [ "_html"; pkg_or_lib_name ] ->
     (* HTML generation: use unified handler *)
     handle_package_artifacts sctx ~dir ~path_prefix:"_html" pkg_or_lib_name
+  | [ "_sidebar" ] ->
+    (* Root sidebar directory - allow subdirs *)
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+         (Memo.return Rules.empty))
+  | [ "_sidebar"; pkg_or_lib_name ] ->
+    (* Sidebar generation for a package *)
+    handle_sidebar_artifacts sctx pkg_or_lib_name
   | [ "classify"; pkg_name; lib_name ] ->
     has_rules (fun () -> handle_classify_dir sctx ~pkg_name ~lib_name)
   | other ->
