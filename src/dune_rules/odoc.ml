@@ -344,20 +344,26 @@ let odoc_ext = ".odoc"
 module Mld : sig
   type t
 
-  val create : Path.Build.t -> t
+  val create : path:Path.Build.t -> name:string -> t
   val odoc_file : doc_dir:Path.Build.t -> t -> Path.Build.t
   val odoc_input : t -> Path.Build.t
 end = struct
-  type t = Path.Build.t
+  (** The [(documentation (files ...))] stanza allows with the [as] keyword to
+      distinguish the input file and the path in the documentation. Here we do
+      not support layered hierarchy, but we do support changing the name (hence
+      the two fields) *)
+  type t =
+    { path : Path.Build.t
+    ; name : string (** The name of the mld compilation unit (without extension) *)
+    }
 
-  let create p = p
+  let create ~path ~name = { path; name }
 
-  let odoc_file ~doc_dir t =
-    let t = Filename.remove_extension (Path.Build.basename t) in
-    Path.Build.relative doc_dir (sprintf "page-%s%s" t odoc_ext)
+  let odoc_file ~doc_dir { name; _ } =
+    Path.Build.relative doc_dir (sprintf "page-%s%s" name odoc_ext)
   ;;
 
-  let odoc_input t = t
+  let odoc_input { path; _ } = path
 end
 
 module Flags = struct
@@ -1809,12 +1815,11 @@ let discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib : artifact list Memo.t =
 
 let check_mlds_no_dupes ~pkg ~mlds =
   match
-    List.rev_map mlds ~f:(fun mld ->
-      Filename.remove_extension (Path.Build.basename mld), mld)
+    List.rev_map mlds ~f:(fun ((_path, mld_name) as mld) -> mld_name, mld)
     |> Filename.Map.of_list
   with
   | Ok m -> m
-  | Error (_, p1, p2) ->
+  | Error (_, (p1, _name1), (p2, _name2)) ->
     User_error.raise
       [ Pp.textf
           "Package %s has two mld's with the same basename %s, %s"
@@ -1834,18 +1839,24 @@ let get_pkg_mld_artifacts sctx ctx pkg =
     let pkg_libs = List.map local_libs ~f:Lib.Local.to_lib in
     let* pkg_discovery = Package_discovery.create ~context:ctx in
     let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-    let+ mlds =
-      let+ mlds = Packages.mlds sctx pkg in
-      let mlds = check_mlds_no_dupes ~pkg ~mlds in
-      Filename.Map.update mlds "index" ~f:(function
-        | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
-        | Some _ as s -> s)
+    let+ mlds_list = Packages.mlds sctx pkg in
+    (* Convert mld list to (path, name) pairs *)
+    let mlds_pairs =
+      List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
+        let name = Path.Local.basename mld.in_doc in
+        (mld.path, name)
+      )
+    in
+    let mlds = check_mlds_no_dupes ~pkg ~mlds:mlds_pairs in
+    let mlds = Filename.Map.update mlds "index" ~f:(function
+      | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld", "index")
+      | Some _ as s -> s)
     in
     let lib_modules = Module_name.Set.empty in
     let target = Pkg pkg in
-    Filename.Map.to_list_map mlds ~f:(fun name mld ->
-      let kind = Page { name; pkg_libs } in
-      create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
+    Filename.Map.to_list_map mlds ~f:(fun _map_key (mld_path, mld_name) ->
+      let kind = Page { name = mld_name; pkg_libs } in
+      create_artifact_local ctx ~target ~source:mld_path ~kind ~odoc_config ~lib_modules)
   | None ->
     (* Installed package - use discover_installed_pkg_mld_artifacts *)
     let* pkg_discovery = Package_discovery.create ~context:ctx in
@@ -1943,17 +1954,24 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name : (artifact list
       let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
       let pkg_libs = List.map local_libs ~f:Lib.Local.to_lib in
       let* pkg_artifacts =
-        let+ mlds = Packages.mlds sctx pkg in
-        let mlds = check_mlds_no_dupes ~pkg ~mlds in
+        let+ mlds_list = Packages.mlds sctx pkg in
+        (* Convert mld list to (path, name) pairs *)
+        let mlds_pairs =
+          List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
+            let name = Path.Local.basename mld.in_doc in
+            (mld.path, name)
+          )
+        in
+        let mlds = check_mlds_no_dupes ~pkg ~mlds:mlds_pairs in
         let mlds = Filename.Map.update mlds "index" ~f:(function
-          | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld")
+          | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld", "index")
           | Some _ as s -> s)
         in
         let lib_modules = Module_name.Set.empty in
         let target = Pkg pkg in
-        Filename.Map.to_list_map mlds ~f:(fun name mld ->
-          let kind = Page { name; pkg_libs } in
-          create_artifact_local ctx ~target ~source:mld ~kind ~odoc_config ~lib_modules)
+        Filename.Map.to_list_map mlds ~f:(fun _map_key (mld_path, mld_name) ->
+          let kind = Page { name = mld_name; pkg_libs } in
+          create_artifact_local ctx ~target ~source:mld_path ~kind ~odoc_config ~lib_modules)
       in
 
       (* Get artifacts for all libraries in this package *)
@@ -2565,6 +2583,22 @@ let default_index ~pkg entry_modules =
   Buffer.contents b
 ;;
 
+(* Stub function for reporting warnings - warnings are now handled by Packages.mlds *)
+let report_warnings (_ : Doc_sources.mld list) = ()
+
+(* Wrapper function to convert new Packages.mlds format to old format expected by interface *)
+let mlds sctx pkg =
+  let* mlds_list = Packages.mlds sctx pkg in
+  (* Convert mld list to (path, name) pairs *)
+  let mlds_pairs =
+    List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
+      let name = Path.Local.basename mld.in_doc in
+      (mld.path, name)
+    )
+  in
+  Memo.return (mlds_pairs, mlds_list)
+;;
+
 let package_mlds =
   let memo =
     Memo.create
@@ -2572,8 +2606,8 @@ let package_mlds =
       ~input:(module Super_context.As_memo_key.And_package_name)
       (fun (sctx, pkg) ->
          Rules.collect (fun () ->
-           let* mlds = Packages.mlds sctx pkg in
-           let mlds = check_mlds_no_dupes ~pkg ~mlds in
+           let* mlds_pairs, _mlds_list = mlds sctx pkg in
+           let mlds = check_mlds_no_dupes ~pkg ~mlds:mlds_pairs in
            let ctx = Super_context.context sctx in
            if Filename.Map.mem mlds "index"
            then Memo.return mlds
@@ -2585,7 +2619,7 @@ let package_mlds =
                  sctx
                  (Action_builder.write_file gen_mld (default_index ~pkg entry_modules))
              in
-             Filename.Map.set mlds "index" gen_mld)))
+             Filename.Map.set mlds "index" (gen_mld, "index"))))
   in
   fun sctx ~pkg -> Memo.exec memo (sctx, pkg)
 ;;
