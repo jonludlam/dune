@@ -1284,9 +1284,11 @@ let libs_of_pkg ctx ~pkg =
 
 (* Compute requires for linking an artifact.
    For modules: use the library's requires + the library itself
-   For pages: use all libraries in the package (since pages document the whole package) *)
-let compute_link_requires _sctx ~artifact =
-  match artifact.kind, artifact.target with
+   For pages: use all libraries in the package (since pages document the whole package)
+   Also includes extra libraries from odoc-config.sexp if present. *)
+let compute_link_requires sctx ~artifact =
+  let ctx = Super_context.context sctx in
+  let* base_requires = match artifact.kind, artifact.target with
   | Module _, Lib (_, lib) ->
     (* Module in a library: use library's dependencies PLUS the library itself.
        This ensures all modules in the library (including hidden/wrapped ones) are compiled
@@ -1304,6 +1306,27 @@ let compute_link_requires _sctx ~artifact =
   | Page { pkg_libs = _; _ }, Lib (_, lib) ->
     (* Page in a library target - just use that library *)
     Memo.return (Resolve.return [ lib ])
+  in
+
+  (* Add extra libraries from odoc-config.sexp if present *)
+  match artifact.pkg with
+  | None -> Memo.return base_requires
+  | Some pkg ->
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+    let extra_lib_names = odoc_config.Odoc_config.deps.libraries in
+    if List.is_empty extra_lib_names then
+      Memo.return base_requires
+    else
+      (* Look up the extra libraries *)
+      let* lib_db = Lib.DB.installed ctx in
+      let* extra_libs_opts = Memo.parallel_map extra_lib_names ~f:(fun lib_name ->
+        Lib.DB.find lib_db lib_name
+      ) in
+      let extra_libs = List.filter_map extra_libs_opts ~f:Fun.id in
+      (* Combine base requires with extra libraries *)
+      Memo.return (Resolve.bind base_requires ~f:(fun base_libs ->
+        Resolve.return (base_libs @ extra_libs)))
 ;;
 
 (* Unified linking function that works for all artifact types.
