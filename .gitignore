@@ -28,3 +28,6 @@ result
 .DS_Store
 nix/profiles/
 .png
+start/dune
+
+.claude/

@@ -19,7 +19,7 @@ val packages : t -> Package.t Package.Name.Map.t
 val name : t -> Dune_project_name.t
 val version : t -> Package_version.t option
 val root : t -> Path.Source.t
-val stanza_parser : t -> Stanza.t list Decoder.t
+val stanza_parser : t -> dir:Path.Source.t -> Stanza.t list Decoder.t
 val generate_opam_files : t -> bool
 val set_generate_opam_files : bool -> t -> t
 
@@ -97,17 +97,12 @@ val default_dune_language_version : Syntax.Version.t ref
 
 val get_exn : unit -> (t, 'k) Decoder.parser
 val get : unit -> (t option, 'k) Decoder.parser
-
-(** Find arguments passed to (using). [None] means that the extension was not
-    written in dune-project. *)
-val find_extension_args : t -> 'a Extension.t -> 'a option
-
+val find_extension_version : t -> Syntax.t -> Syntax.Version.t option
 val is_extension_set : t -> 'a Extension.t -> bool
 val set_parsing_context : t -> 'a Decoder.t -> 'a Decoder.t
 val implicit_transitive_deps : t -> Ocaml.Version.t -> Implicit_transitive_deps.t
 val dune_version : t -> Syntax.Version.t
 val wrapped_executables : t -> bool
-val map_workspace_root : t -> bool
 val executables_implicit_empty_intf : t -> bool
 val accept_alternative_dune_file_name : t -> bool
 val strict_package_deps : t -> bool

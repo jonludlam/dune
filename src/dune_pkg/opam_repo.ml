@@ -115,7 +115,7 @@ let of_git_repo loc url =
       (sprintf
          "%s#%s"
          (OpamUrl.base_url url)
-         (Rev_store.Object.to_string (Rev_store.At_rev.rev at_rev))
+         (Rev_store.Object.to_hex (Rev_store.At_rev.rev at_rev))
        |> OpamUrl.of_string
        |> OpamUrl.to_string)
   in
@@ -128,13 +128,20 @@ let revision t =
   | Directory _ -> Code_error.raise "not a git repo" []
 ;;
 
+let content_digest t =
+  match t.source with
+  | Repo repo ->
+    Rev_store.At_rev.rev repo |> Rev_store.Object.to_hex |> Dune_digest.string
+  | Directory path -> Path_digest.digest_with_lstat path
+;;
+
 let load_opam_package_from_dir ~(dir : Path.t) package =
   let opam_file_path = Paths.opam_file package in
   match Path.exists (Path.append_local dir opam_file_path) with
   | false -> None
   | true ->
     let files_dir = Some (Paths.files_dir package) in
-    Some (Resolved_package.local_fs package ~dir ~opam_file_path ~files_dir)
+    Some (Resolved_package.local_fs package ~dir ~opam_file_path ~files_dir ~url:None)
 ;;
 
 let load_packages_from_git rev_store opam_packages =
@@ -151,27 +158,36 @@ let load_packages_from_git rev_store opam_packages =
         ~opam_file:(Rev_store.File.path opam_file)
         ~opam_file_contents
         rev
-        ~files_dir:(Some files_dir))
+        ~files_dir:(Some files_dir)
+        ~url:None)
 ;;
 
-let all_packages_versions_in_dir loc ~dir opam_package_name =
-  let dir = Path.append_local dir (Paths.package_root opam_package_name) in
+let all_packages_in_dir_at_path ~dir ~path loc =
+  let dir = Path.append_local dir path in
   match Path.readdir_unsorted dir with
-  | Ok version_dirs -> List.map version_dirs ~f:OpamPackage.of_string
+  | Ok version_dirs -> version_dirs
   | Error (Unix.ENOENT, _, _) -> []
   | Error e ->
+    let err =
+      if Path.Local.(path <> Paths.packages) then "package versions" else "packages"
+    in
     User_error.raise
       ~loc
       [ Pp.textf
-          "Unable to read package versions from %s: %s"
+          "Unable to read %s from %s: %s"
+          err
           (Path.to_string_maybe_quoted dir)
-          (Dune_filesystem_stubs.Unix_error.Detailed.to_string_hum e)
+          (Unix_error.Detailed.to_string_hum e)
       ]
 ;;
 
-let all_packages_versions_at_rev rev opam_package_name =
-  Paths.package_root opam_package_name
-  |> Rev_store.At_rev.directory_entries rev ~recursive:true
+let all_packages_versions_in_dir loc ~dir opam_package_name =
+  let path = Paths.package_root opam_package_name in
+  all_packages_in_dir_at_path ~dir ~path loc |> List.map ~f:OpamPackage.of_string
+;;
+
+let all_packages_versions_at_rev_at_path ~path rev =
+  Rev_store.At_rev.directory_entries rev ~recursive:true path
   |> Rev_store.File.Set.to_list
   |> List.filter_map ~f:(fun file ->
     let path = Rev_store.File.path file in
@@ -184,6 +200,11 @@ let all_packages_versions_at_rev rev opam_package_name =
       in
       file, package
     | _ -> None)
+;;
+
+let all_packages_versions_at_rev rev opam_package_name =
+  let path = Paths.package_root opam_package_name in
+  all_packages_versions_at_rev_at_path ~path rev
 ;;
 
 module Key = struct
@@ -257,6 +278,19 @@ let load_all_versions_by_keys ts =
 
 let load_all_versions ts opam_package_name =
   all_packages_versions_map ts opam_package_name |> load_all_versions_by_keys
+;;
+
+let packages_in_repo repo =
+  let path = Paths.packages in
+  match repo.source with
+  | Repo rev ->
+    all_packages_versions_at_rev_at_path ~path rev
+    |> List.map ~f:(fun (_opam_file, pkg) -> OpamPackage.name pkg)
+    |> OpamPackage.Name.Set.of_list
+    |> OpamPackage.Name.Set.elements
+  | Directory dir ->
+    all_packages_in_dir_at_path ~path ~dir repo.loc
+    |> List.map ~f:OpamPackage.Name.of_string
 ;;
 
 module Private = struct

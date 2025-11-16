@@ -7,7 +7,7 @@ type for_ =
 
 type t =
   { loc : Loc.t
-  ; modules : Stanza_common.Modules_settings.t
+  ; modules : Modules_settings.t
   ; empty_module_interface_if_absent : bool
   ; libraries : Lib_dep.t list
   ; foreign_archives : (Loc.t * Foreign.Archive.t) list
@@ -31,3 +31,26 @@ val has_foreign_cxx : t -> bool
 val has_mode_dependent_foreign_stubs : t -> bool
 val decode : for_ -> t Dune_lang.Decoder.fields_parser
 val has_foreign_stubs : t -> bool
+
+(** Parser for the libraries fields *)
+val decode_libraries : allow_re_export:bool -> Lib_dep.L.t Dune_lang.Decoder.fields_parser
+
+(** Parser for the preprocesss *)
+val decode_preprocess
+  : ( Preprocess.With_instrumentation.t Preprocess.Per_module.t * Dep_conf.t list
+      , Dune_lang.Decoder.fields )
+      Dune_lang.Decoder.parser
+
+(** Parser for the ocaml flags *)
+val decode_ocaml_flags : Ocaml_flags.Spec.t Dune_lang.Decoder.fields_parser
+
+(* Parser for the modules field *)
+val decode_modules : Modules_settings.t Dune_lang.Decoder.fields_parser
+
+(* Parser for the lint field *)
+val decode_lint
+  : Preprocess.Without_instrumentation.t Preprocess.t Module_name.Per_item.t
+      Dune_lang.Decoder.fields_parser
+
+(* Parser for allow_overlapping_dependencies *)
+val decode_allow_overlapping : bool Dune_lang.Decoder.fields_parser

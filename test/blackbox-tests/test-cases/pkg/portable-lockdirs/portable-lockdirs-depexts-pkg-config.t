@@ -24,7 +24,8 @@ will demonstrate that even though the project isn't solved for a particular
 linux distribution, enough information is stored in the lockdir so that the
 correct depext names can be chosen for the current distro at build time.
   $ cat > dune-workspace <<EOF
-  > (lang dune 3.18)
+  > (lang dune 3.20)
+  > (pkg enabled)
   > (repository
   >  (name mock)
   >  (url "file://$(pwd)/mock-opam-repository"))
@@ -50,8 +51,10 @@ correct depext names can be chosen for the current distro at build time.
   >  (depends conf-pkg-config))
   > EOF
 
-  $ DUNE_CONFIG__PORTABLE_LOCK_DIR=enabled dune pkg lock
-  Solution for dune.lock:
+  $ dune pkg lock
+  Solution for dune.lock
+  
+  Dependencies common to all supported platforms:
   - conf-pkg-config.0.0.1
 
 Print the name of the depext on a variety of os/distro/versions:

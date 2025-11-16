@@ -1,5 +1,6 @@
 We want to test that support for multiple opam repositories works.
 
+  $ . ../git-helpers.sh
   $ . ./helpers.sh
   $ mkrepo
   $ mkpkg foo 1.0 <<EOF
@@ -28,7 +29,8 @@ Create a new mock repo, with a different foo package
 We have to define both repositories in the workspace, but will only use `new`.
 
   $ cat > dune-workspace <<EOF
-  > (lang dune 3.10)
+  > (lang dune 3.20)
+  > (pkg enabled)
   > (lock_dir
   >  (repositories new))
   > (repository
@@ -52,7 +54,7 @@ We have to define both repositories in the workspace, but will only use `new`.
 Locking should produce the newest package from `new`
 
   $ mkdir dune-workspace-cache
-  $ XDG_CACHE_HOME=$(pwd)/dune-workspace-cache dune pkg lock
+  $ XDG_CACHE_HOME=$(pwd)/dune-workspace-cache dune_pkg_lock_normalized
   Solution for dune.lock:
   - foo.2.0
 
@@ -60,7 +62,8 @@ If we just use `old` we should get the older `foo` package in our lockfile
 solution:
 
   $ cat > dune-workspace <<EOF
-  > (lang dune 3.10)
+  > (lang dune 3.20)
+  > (pkg enabled)
   > (lock_dir
   >  (repositories old))
   > (repository
@@ -75,7 +78,7 @@ solution:
   > EOF
  
   $ rm -r dune-workspace-cache && mkdir dune-workspace-cache
-  $ XDG_CACHE_HOME=$(pwd)/dune-workspace-cache dune pkg lock
+  $ XDG_CACHE_HOME=$(pwd)/dune-workspace-cache dune_pkg_lock_normalized
   Solution for dune.lock:
   - foo.1.0
 
@@ -83,7 +86,8 @@ If we specify both repositories to be used, we should still get the new foo
 package:
 
   $ cat > dune-workspace <<EOF
-  > (lang dune 3.10)
+  > (lang dune 3.20)
+  > (pkg enabled)
   > (lock_dir
   >  (repositories old new))
   > (repository
@@ -98,7 +102,7 @@ package:
   > EOF
 
   $ rm -r dune-workspace-cache && mkdir dune-workspace-cache
-  $ XDG_CACHE_HOME=$(pwd)/dune-workspace-cache dune pkg lock
+  $ XDG_CACHE_HOME=$(pwd)/dune-workspace-cache dune_pkg_lock_normalized
   Solution for dune.lock:
   - foo.2.0
 
@@ -107,7 +111,8 @@ set, we should get a solution that only has `old` and will thus include the
 older version of foo:
 
   $ cat > dune-workspace <<EOF
-  > (lang dune 3.10)
+  > (lang dune 3.20)
+  > (pkg enabled)
   > (repository
   >  (name new)
   >  (url "git+file://$(pwd)/mock-opam-repository"))
@@ -122,6 +127,6 @@ older version of foo:
   > EOF
 
   $ rm -r dune-workspace-cache && mkdir dune-workspace-cache
-  $ XDG_CACHE_HOME=$(pwd)/dune-workspace-cache dune pkg lock
+  $ XDG_CACHE_HOME=$(pwd)/dune-workspace-cache dune_pkg_lock_normalized
   Solution for dune.lock:
   - foo.1.0

@@ -169,6 +169,8 @@ module Lock_dirs_arg = struct
     | All
     | Selected of Path.Source.t list
 
+  let all = All
+
   let term =
     Common.one_of
       (let+ arg =
@@ -194,25 +196,26 @@ module Lock_dirs_arg = struct
   ;;
 
   let lock_dirs_of_workspace t (workspace : Workspace.t) =
+    let module Set = Path.Source.Set in
+    let default_path = Dune_rules.Lock_dir.default_source_path in
     let workspace_lock_dirs =
-      Lock_dir.default_path
+      default_path
       :: List.map workspace.lock_dirs ~f:(fun (lock_dir : Workspace.Lock_dir.t) ->
         lock_dir.path)
-      |> Path.Source.Set.of_list
-      |> Path.Source.Set.to_list
+      |> Set.of_list
+      |> Set.to_list
     in
     match t with
     | All -> workspace_lock_dirs
-    | Selected [] -> [ Lock_dir.default_path ]
+    | Selected [] -> [ default_path ]
     | Selected chosen_lock_dirs ->
-      let workspace_lock_dirs_set = Path.Source.Set.of_list workspace_lock_dirs in
-      let chosen_lock_dirs_set = Path.Source.Set.of_list chosen_lock_dirs in
-      if Path.Source.Set.is_subset chosen_lock_dirs_set ~of_:workspace_lock_dirs_set
+      let workspace_lock_dirs_set = Set.of_list workspace_lock_dirs in
+      let chosen_lock_dirs_set = Set.of_list chosen_lock_dirs in
+      if Set.is_subset chosen_lock_dirs_set ~of_:workspace_lock_dirs_set
       then chosen_lock_dirs
       else (
         let unknown_lock_dirs =
-          Path.Source.Set.diff chosen_lock_dirs_set workspace_lock_dirs_set
-          |> Path.Source.Set.to_list
+          Set.diff chosen_lock_dirs_set workspace_lock_dirs_set |> Set.to_list
         in
         let f x = Path.pp (Path.source x) in
         User_error.raise
@@ -224,3 +227,21 @@ module Lock_dirs_arg = struct
           ])
   ;;
 end
+
+let check_pkg_management_enabled () =
+  Memo.run
+  @@
+  let open Memo.O in
+  let+ workspace = Workspace.workspace () in
+  match workspace.config.pkg_enabled with
+  | Set (_, `Enabled) | Unset -> ()
+  | Set (loc, `Disabled) ->
+    User_error.raise
+      ~loc
+      [ Pp.text "Package management is disabled in workspace configuration." ]
+      ~hints:
+        [ Pp.text
+            "To enable package management, remove the explicit (pkg disabled) setting \
+             from your dune-workspace file."
+        ]
+;;

@@ -52,10 +52,7 @@ let%expect_test _ =
     read_file ~path:(Path.of_string "file_that_does_not_exist") |> map ~f:ignore
   in
   run_action_expect_throws action;
-  [%expect
-    {|
-    read_file: file_that_does_not_exist: No such file or directory
-  |}]
+  [%expect {| read_file: open(file_that_does_not_exist): No such file or directory |}]
 ;;
 
 let%expect_test _ =
@@ -80,7 +77,5 @@ let%expect_test _ =
   in
   run_action_expect_throws action;
   [%expect
-    {|
-    write_file: directory_that_does_not_exist/some_file: No such file or directory
-  |}]
+    {| write_file: open(directory_that_does_not_exist/some_file): No such file or directory |}]
 ;;

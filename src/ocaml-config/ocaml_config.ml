@@ -1,4 +1,4 @@
-open! Stdune
+open Stdune
 open Result.O
 
 module Prog_and_args = struct
@@ -136,6 +136,8 @@ type t =
   ; natdynlink_supported : bool
   ; supports_shared_libraries : bool
   ; windows_unicode : bool
+  ; ox : bool
+  ; parameterised_modules : bool
   }
 
 let version t = t.version
@@ -190,6 +192,8 @@ let cmt_magic_number t = t.cmt_magic_number
 let natdynlink_supported t = t.natdynlink_supported
 let supports_shared_libraries t = t.supports_shared_libraries
 let windows_unicode t = t.windows_unicode
+let ox t = t.ox
+let parameterised_modules t = t.parameterised_modules
 
 let to_list
       { version = _
@@ -244,6 +248,8 @@ let to_list
       ; natdynlink_supported
       ; supports_shared_libraries
       ; windows_unicode
+      ; ox
+      ; parameterised_modules
       }
   : (string * Value.t) list
   =
@@ -298,6 +304,8 @@ let to_list
   ; "natdynlink_supported", Bool natdynlink_supported
   ; "supports_shared_libraries", Bool supports_shared_libraries
   ; "windows_unicode", Bool windows_unicode
+  ; "ox", Bool ox
+  ; "parameterised_modules", Bool parameterised_modules
   ]
 ;;
 
@@ -357,6 +365,8 @@ let by_name
       ; natdynlink_supported
       ; supports_shared_libraries
       ; windows_unicode
+      ; ox
+      ; parameterised_modules
       }
       name
   : Value.t option
@@ -413,6 +423,8 @@ let by_name
   | "natdynlink_supported" -> Some (Bool natdynlink_supported)
   | "supports_shared_libraries" -> Some (Bool supports_shared_libraries)
   | "windows_unicode" -> Some (Bool windows_unicode)
+  | "ox" -> Some (Bool ox)
+  | "parameterised_modules" -> Some (Bool parameterised_modules)
   | _ -> None
 ;;
 
@@ -630,6 +642,7 @@ let make vars =
     let cmxs_magic_number = get vars "cmxs_magic_number" in
     let cmt_magic_number = get vars "cmt_magic_number" in
     let windows_unicode = get_bool vars "windows_unicode" in
+    let parameterised_modules = get_bool vars "parameterised_modules" in
     let natdynlink_supported =
       let lib = "dynlink.cmxa" in
       let lib = if version >= (5, 0, 0) then Filename.concat "dynlink" lib else lib in
@@ -640,13 +653,14 @@ let make vars =
       let stdlib = Path.external_ (Path.External.of_string standard_library) in
       Path.relative stdlib "Makefile.config"
     in
-    let vars = Vars.load_makefile_config file in
+    let ox = get_bool vars "ox" in
+    let makefile_vars = Vars.load_makefile_config file in
     let module Getters =
       Vars.Getters (struct
         let origin = Origin.Makefile_config file
       end)
     in
-    let supports_shared_libraries = get_bool vars "SUPPORTS_SHARED_LIBRARIES" in
+    let supports_shared_libraries = get_bool makefile_vars "SUPPORTS_SHARED_LIBRARIES" in
     { version
     ; version_string
     ; standard_library_default
@@ -699,6 +713,8 @@ let make vars =
     ; natdynlink_supported
     ; supports_shared_libraries
     ; windows_unicode
+    ; ox
+    ; parameterised_modules
     }
   with
   | t -> Ok t

@@ -92,8 +92,8 @@ let build_lib
          Expander.expand_and_eval_set expander lib.library_flags ~standard)
     ; As
         (match lib.kind with
-         | Normal -> []
-         | Ppx_deriver _ | Ppx_rewriter _ -> [ "-linkall" ])
+         | Virtual | Parameter | Dune_file Normal -> []
+         | Dune_file (Ppx_deriver _ | Ppx_rewriter _) -> [ "-linkall" ])
     ; Dyn
         (Cm_files.top_sorted_cms cm_files ~mode
          |> Action_builder.map ~f:(fun x -> Command.Args.Deps x))
@@ -123,15 +123,19 @@ let gen_wrapped_compat_modules (lib : Library.t) cctx =
        | Simple _ -> assert false
        | Yes_with_transition r -> r)
   in
+  let main_module_name =
+    lazy
+      (match Library.main_module_name lib with
+       | This (Some mmn) -> Module_name.to_string mmn
+       | _ -> assert false)
+  in
   Modules.With_vlib.wrapped_compat modules
   |> Module_name.Map.to_seq
   |> Memo.parallel_iter_seq ~f:(fun (name, m) ->
-    let main_module_name =
-      match Library.main_module_name lib with
-      | This (Some mmn) -> Module_name.to_string mmn
-      | _ -> assert false
-    in
     let contents =
+      let main_module_name = Lazy.force main_module_name in
+      let open Action_builder.O in
+      let+ () = Action_builder.return () in
       let name = Module_name.to_string name in
       let hidden_name = sprintf "%s__%s" main_module_name name in
       let real_name = sprintf "%s.%s" main_module_name name in
@@ -144,7 +148,7 @@ let gen_wrapped_compat_modules (lib : Library.t) cctx =
     let source_path = Option.value_exn (Module.file m ~ml_kind:Impl) in
     let loc = lib.buildable.loc in
     let sctx = Compilation_context.super_context cctx in
-    Action_builder.write_file (Path.as_in_build_dir_exn source_path) contents
+    Action_builder.write_file_dyn (Path.as_in_build_dir_exn source_path) contents
     |> Super_context.add_rule sctx ~loc ~dir:(Compilation_context.dir cctx))
 ;;
 
@@ -439,18 +443,21 @@ let setup_build_archives (lib : Library.t) ~top_sorted_modules ~cctx ~expander ~
     Lib_info.eval_native_archives_exn lib_info ~modules:(Some modules)
   in
   let* () =
-    let cm_files =
-      let excluded_modules =
-        (* ctypes type_gen and function_gen scripts should not be included in the
+    match lib.kind with
+    | Parameter -> Memo.return ()
+    | Virtual | Dune_file _ ->
+      let cm_files =
+        let excluded_modules =
+          (* ctypes type_gen and function_gen scripts should not be included in the
            library. Otherwise they will spew stuff to stdout on library load. *)
-        match lib.buildable.ctypes with
-        | Some ctypes -> Ctypes_field.non_installable_modules ctypes
-        | None -> []
+          match lib.buildable.ctypes with
+          | Some ctypes -> Ctypes_field.non_installable_modules ctypes
+          | None -> []
+        in
+        Cm_files.make ~excluded_modules ~obj_dir ~ext_obj ~modules ~top_sorted_modules ()
       in
-      Cm_files.make ~excluded_modules ~obj_dir ~ext_obj ~modules ~top_sorted_modules ()
-    in
-    iter_modes_concurrently modes.ocaml ~f:(fun mode ->
-      build_lib lib ~native_archives ~dir ~sctx ~expander ~flags ~mode ~cm_files)
+      iter_modes_concurrently modes.ocaml ~f:(fun mode ->
+        build_lib lib ~native_archives ~dir ~sctx ~expander ~flags ~mode ~cm_files)
   and* () =
     (* Build *.cma.js / *.wasma *)
     Memo.when_ modes.ocaml.byte (fun () ->
@@ -459,7 +466,7 @@ let setup_build_archives (lib : Library.t) ~top_sorted_modules ~cctx ~expander ~
         let action_with_targets =
           List.map Jsoo_rules.Config.all ~f:(fun config ->
             Jsoo_rules.build_cm
-              sctx
+              cctx
               ~dir
               ~in_context:
                 (Js_of_ocaml.In_context.make ~dir lib.buildable.js_of_ocaml
@@ -467,6 +474,7 @@ let setup_build_archives (lib : Library.t) ~top_sorted_modules ~cctx ~expander ~
               ~mode
               ~config:(Some config)
               ~src:(Path.build src)
+              ~deps:(Action_builder.return [])
               ~obj_dir)
         in
         Memo.parallel_iter action_with_targets ~f:(fun rule ->
@@ -479,9 +487,18 @@ let setup_build_archives (lib : Library.t) ~top_sorted_modules ~cctx ~expander ~
     (fun () -> build_shared ~native_archives ~sctx lib ~dir ~flags)
 ;;
 
-let cctx (lib : Library.t) ~sctx ~source_modules ~dir ~expander ~scope ~compile_info =
+let cctx
+      (lib : Library.t)
+      ~sctx
+      ~source_modules
+      ~dir
+      ~expander
+      ~scope
+      ~parameters
+      ~compile_info
+  =
   let* flags = Buildable_rules.ocaml_flags sctx ~dir lib.buildable.flags
-  and* vimpl = Virtual_rules.impl sctx ~lib ~scope in
+  and* implements = Virtual_rules.impl sctx ~lib ~scope in
   let obj_dir = Library.obj_dir ~dir lib in
   let* modules, pp =
     Buildable_rules.modules_rules
@@ -492,7 +509,7 @@ let cctx (lib : Library.t) ~sctx ~source_modules ~dir ~expander ~scope ~compile_
       scope
       source_modules
   in
-  let modules = Vimpl.impl_modules vimpl modules in
+  let modules = Virtual_rules.impl_modules implements modules in
   let requires_compile = Lib.Compile.direct_requires compile_info in
   let requires_link = Lib.Compile.requires_link compile_info in
   let* modes =
@@ -506,10 +523,10 @@ let cctx (lib : Library.t) ~sctx ~source_modules ~dir ~expander ~scope ~compile_
   let package = Library.package lib in
   let js_of_ocaml = Js_of_ocaml.In_context.make ~dir lib.buildable.js_of_ocaml in
   (* XXX(anmonteiro): `melange_package_name` is used to derive Melange's
-     `--bs-package-name` argument. We only use the library name for public
+     `--mel-package-name` argument. We only use the library name for public
      libraries / private libraries with `(package ..)` because we need Melange
      to preserve relative paths for private libs (i.e. not pass the
-     `--bs-package-name` arg). *)
+     `--mel-package-name` arg). *)
   let melange_package_name =
     match lib.visibility with
     | Public p -> Some (Public_lib.name p)
@@ -525,12 +542,13 @@ let cctx (lib : Library.t) ~sctx ~source_modules ~dir ~expander ~scope ~compile_
     ~flags
     ~requires_compile
     ~requires_link
+    ~implements
+    ~parameters
     ~preprocessing:pp
     ~opaque:Inherit_from_settings
     ~js_of_ocaml:(Js_of_ocaml.Mode.Pair.map ~f:Option.some js_of_ocaml)
     ?stdlib:lib.stdlib
     ~package
-    ?vimpl
     ~melange_package_name
     ~modes
 ;;
@@ -546,7 +564,7 @@ let library_rules
   =
   let modules = Compilation_context.modules cctx in
   let obj_dir = Compilation_context.obj_dir cctx in
-  let vimpl = Compilation_context.vimpl cctx in
+  let implements = Compilation_context.implements cctx in
   let sctx = Compilation_context.super_context cctx in
   let dir = Compilation_context.dir cctx in
   let scope = Compilation_context.scope cctx in
@@ -558,9 +576,7 @@ let library_rules
       (Compilation_context.dep_graphs cctx).impl
       impl_only
   in
-  let* () =
-    Memo.Option.iter vimpl ~f:(Virtual_rules.setup_copy_rules_for_impl ~sctx ~dir)
-  in
+  let* () = Virtual_rules.setup_copy_rules_for_impl ~sctx ~dir implements in
   let* expander = Super_context.expander sctx ~dir in
   let* () = Check_rules.add_cycle_check sctx ~dir top_sorted_modules in
   let* () = gen_wrapped_compat_modules lib cctx
@@ -585,7 +601,7 @@ let library_rules
       (not (Library.is_virtual lib))
       (fun () -> setup_build_archives lib ~lib_info ~top_sorted_modules ~cctx ~expander)
   and+ () =
-    let vlib_stubs_o_files = Vimpl.vlib_stubs_o_files vimpl in
+    let vlib_stubs_o_files = Virtual_rules.stubs_o_files implements in
     Memo.when_
       (Library.has_foreign lib || List.is_non_empty vlib_stubs_o_files)
       (fun () ->
@@ -605,7 +621,8 @@ let library_rules
     Sub_system.gen_rules
       { super_context = sctx; dir; stanza = lib; scope; source_modules; compile_info }
   and+ merlin =
-    let+ requires_hidden = Compilation_context.requires_hidden cctx in
+    let+ requires_hidden = Compilation_context.requires_hidden cctx
+    and+ parameters = Compilation_context.parameters cctx in
     let flags = Compilation_context.flags cctx in
     Merlin.make
       ~requires_compile
@@ -619,6 +636,7 @@ let library_rules
       ~dialects:(Dune_project.dialects (Scope.project scope))
       ~ident:(Merlin_ident.for_lib (Library.best_name lib))
       ~modes:(`Lib (Lib_info.modes lib_info))
+      ~parameters
   in
   merlin
 ;;
@@ -641,7 +659,10 @@ let rules (lib : Library.t) ~sctx ~dir_contents ~expander ~scope =
     let* source_modules =
       Dir_contents.ocaml dir_contents >>= Ml_sources.modules ~libs ~for_:(Library lib_id)
     in
-    let* cctx = cctx lib ~sctx ~source_modules ~dir ~scope ~expander ~compile_info in
+    let parameters = Lib.parameters local_lib in
+    let* cctx =
+      cctx lib ~sctx ~source_modules ~dir ~scope ~expander ~parameters ~compile_info
+    in
     let* () =
       match buildable.ctypes with
       | None -> Memo.return ()

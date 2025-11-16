@@ -3,18 +3,31 @@ open Dune_vcs
 module Process = Dune_engine.Process
 module Display = Dune_engine.Display
 module Scheduler = Dune_engine.Scheduler
-module Re = Dune_re
-module Flock = Dune_util.Flock
+module Console = Dune_console
 open Fiber.O
 
-module Object = struct
+module Object : sig
+  type t
+
+  val to_dyn : t -> Dyn.t
+  val equal : t -> t -> bool
+  val compare : t -> t -> Ordering.t
+  val hash : t -> int
+  val to_hex : t -> string
+  val of_sha1_unsafe : string -> t
+
+  type resolved = t
+
+  val of_sha1 : string -> resolved option
+end = struct
   type t = Sha1 of string
 
   let compare (Sha1 x) (Sha1 y) = String.compare x y
-  let to_string (Sha1 s) = s
+  let to_hex (Sha1 s) = s
   let equal (Sha1 x) (Sha1 y) = String.equal x y
-  let to_dyn (Sha1 s) = Dyn.string s
+  let to_dyn (Sha1 s) = Dyn.variant "Sha1" [ Dyn.opaque s ]
   let hash (Sha1 s) = String.hash s
+  let of_sha1_unsafe s = Sha1 s
 
   type resolved = t
 
@@ -29,12 +42,276 @@ module Object = struct
   ;;
 end
 
+module Commit = struct
+  module T = struct
+    type t =
+      { path : Path.Local.t
+      ; rev : Object.t
+      }
+
+    let compare { path; rev } t =
+      let open Ordering.O in
+      let= () = Path.Local.compare path t.path in
+      Object.compare rev t.rev
+    ;;
+
+    let to_dyn { path; rev } =
+      Dyn.record [ "path", Path.Local.to_dyn path; "rev", Object.to_dyn rev ]
+    ;;
+  end
+
+  include T
+  module C = Comparable.Make (T)
+  module Set = C.Set
+end
+
+module File = struct
+  module T = struct
+    type t =
+      | Redirect of
+          { path : Path.Local.t
+          ; to_ : t
+          }
+      | Direct of
+          { path : Path.Local.t
+          ; size : int
+          ; hash : Object.t
+          }
+
+    let rec compare x y =
+      let open Ordering.O in
+      match x, y with
+      | Redirect { path; to_ }, Redirect t ->
+        let= () = Path.Local.compare path t.path in
+        compare to_ t.to_
+      | Redirect _, _ -> Lt
+      | _, Redirect _ -> Gt
+      | Direct { path; size; hash }, Direct t ->
+        let= () = Path.Local.compare path t.path in
+        let= () = Int.compare size t.size in
+        Object.compare hash t.hash
+    ;;
+
+    let rec to_dyn = function
+      | Redirect { path; to_ } ->
+        Dyn.variant
+          "Redirect"
+          [ Dyn.record [ "path", Path.Local.to_dyn path; "to_", to_dyn to_ ] ]
+      | Direct { path; size; hash } ->
+        Dyn.variant
+          "Direct"
+          [ Dyn.record
+              [ "path", Path.Local.to_dyn path
+              ; "size", Dyn.int size
+              ; "hash", Object.to_dyn hash
+              ]
+          ]
+    ;;
+  end
+
+  include T
+
+  let path = function
+    | Redirect p -> p.path
+    | Direct p -> p.path
+  ;;
+
+  let rec size = function
+    | Direct t -> t.size
+    | Redirect t -> size t.to_
+  ;;
+
+  let rec hash = function
+    | Direct t -> t.hash
+    | Redirect t -> hash t.to_
+  ;;
+
+  module C = Comparable.Make (T)
+  module Set = C.Set
+end
+
+module Cache = struct
+  (* CR-someday Alizter: Various LMDB  operations are able to raise [Map_full]
+     when the database is full. We should handle this in a sensible way. For
+     now, we allow it to raise. It won't be visible to most users due to the
+     cache size we have chosen. *)
+
+  let rev_store_cache =
+    (* CR-soon Alizter: For now the cache is disabled by default. Once we add
+       versioning to the cache it will be safe to enable by default. 
+
+       When we do this we should check [Int.equal Sys.word_size 64] since
+       32-bit platforms won't handle our cache size well. *)
+    Dune_config.Config.make_toggle ~name:"rev_store_cache" ~default:`Disabled
+  ;;
+
+  let cache_dir =
+    lazy
+      (let path =
+         Path.L.relative
+           (Lazy.force Dune_util.xdg
+            |> Xdg.cache_dir
+            |> Path.Outside_build_dir.of_string
+            |> Path.outside_build_dir)
+           [ "dune"; "rev_store" ]
+       in
+       let rev_store_cache = Dune_config.Config.get rev_store_cache in
+       Dune_util.Log.info
+         [ Pp.textf
+             "Revision store cache: %s"
+             (Dune_config.Config.Toggle.to_string rev_store_cache)
+         ];
+       match rev_store_cache, Path.mkdir_p path with
+       | `Enabled, () ->
+         Dune_util.Log.info
+           [ Pp.textf "Revision store cache location: %s" (Path.to_string path) ];
+         Some path
+       | `Disabled, () -> None)
+  ;;
+
+  let db =
+    lazy
+      (Lazy.force cache_dir
+       |> Option.map ~f:(fun path ->
+         Lmdb.Env.create
+           ~map_size:(Int64.to_int 5_000_000_000L) (* 5 GB *)
+           ~max_maps:2
+           ~flags:Lmdb.Env.Flags.(no_meta_sync)
+           Rw
+           (Path.to_string path)))
+  ;;
+
+  let () =
+    at_exit (fun () ->
+      if Lazy.is_val db
+      then (
+        match Lazy.force db with
+        | Some db -> Lmdb.Env.close db
+        | None -> ()))
+  ;;
+
+  module Key = struct
+    module T = struct
+      type t = Object.t
+
+      let compare = Object.compare
+      let to_dyn = Object.to_dyn
+    end
+
+    include T
+    module C = Comparable.Make (T)
+    module Map = C.Map
+    module Set = C.Set
+
+    let conv =
+      Lmdb.Conv.make
+        ~serialise:(fun alloc obj ->
+          Object.to_hex obj |> Lmdb.Conv.(serialise string alloc))
+        ~deserialise:(fun bs ->
+          Lmdb.Conv.(deserialise string bs) |> Object.of_sha1_unsafe)
+        ()
+    ;;
+  end
+
+  let map =
+    lazy
+      (Lazy.force db
+       |> Option.map ~f:(fun env ->
+         Lmdb.Map.create Nodup ~key:Key.conv ~value:Lmdb.Conv.string ~name:"objects" env)
+      )
+  ;;
+
+  module Files_and_submodules = struct
+    module Key = struct
+      module T = struct
+        type t = Object.t
+
+        let compare = Object.compare
+        let to_dyn = Object.to_dyn
+      end
+
+      include T
+      module C = Comparable.Make (T)
+
+      let conv =
+        Lmdb.Conv.make
+          ~serialise:(fun alloc obj ->
+            Object.to_hex obj |> Lmdb.Conv.(serialise string alloc))
+          ~deserialise:(fun bs ->
+            Lmdb.Conv.(deserialise string bs) |> Object.of_sha1_unsafe)
+          ()
+      ;;
+    end
+
+    module Value = struct
+      let conv : (File.Set.t * Commit.Set.t) Lmdb.Conv.t =
+        Lmdb.Conv.make
+          ~serialise:(fun alloc v ->
+            Marshal.to_string v [] |> Lmdb.Conv.(serialise string alloc))
+          ~deserialise:(fun bs -> Marshal.from_string Lmdb.Conv.(deserialise string bs) 0)
+          ()
+      ;;
+    end
+
+    let map =
+      lazy
+        (Lazy.force db
+         |> Option.map ~f:(fun env ->
+           Lmdb.Map.create Nodup ~key:Key.conv ~value:Value.conv ~name:"ls-tree" env))
+    ;;
+
+    let get key =
+      let open Option.O in
+      let* m = Lazy.force map in
+      match Lmdb.Map.get m key with
+      | exception Not_found -> None
+      | v -> Some v
+    ;;
+
+    let set key value =
+      ignore
+      @@
+      let open Option.O in
+      let+ map = Lazy.force map in
+      Lmdb.Map.set map key value
+    ;;
+  end
+
+  let get keys =
+    match Lazy.force map with
+    | None -> Key.Map.empty
+    | Some m ->
+      Key.Set.fold keys ~init:Key.Map.empty ~f:(fun key acc ->
+        match Lmdb.Map.get m key with
+        | exception Not_found -> acc
+        | v -> Key.Map.add_exn acc key v)
+  ;;
+
+  let set keys =
+    ignore
+    @@
+    let open Option.O in
+    let* map = Lazy.force map in
+    let* env = Lazy.force db in
+    Lmdb.Txn.go Rw env (fun txn ->
+      Key.Map.iteri keys ~f:(fun key value -> Lmdb.Map.set ~txn map key value))
+  ;;
+end
+
 module Remote = struct
-  type nonrec t =
+  type t =
     { url : string
     ; default_branch : Object.resolved option Fiber.t
     ; refs : Object.resolved String.Map.t Fiber.t
     }
+
+  let to_dyn { url; default_branch; refs } =
+    Dyn.record
+      [ "url", Dyn.string url
+      ; "default_branch", Dyn.opaque default_branch
+      ; "refs", Dyn.opaque refs
+      ]
+  ;;
 
   let default_branch t = t.default_branch
 end
@@ -46,6 +323,18 @@ type t =
     object_mutexes : (Object.t, Fiber.Mutex.t) Table.t
   ; present_objects : (Object.t, unit) Table.t
   }
+
+let to_dyn { dir; remotes; object_mutexes; present_objects } =
+  Dyn.record
+    [ (* This is an external path, so we relativize to sanitize. We don't use
+         [Path.to_dyn] since it wouldn't be correct and therefore confusing. *)
+      "dir", Path.Expert.try_localize_external dir |> Path.to_string |> Dyn.string
+    ; "remotes", Table.to_list remotes |> Dyn.list (Dyn.pair Dyn.string Remote.to_dyn)
+    ; "object_mutexes", Dyn.opaque object_mutexes
+    ; ( "present_objects"
+      , Table.to_list present_objects |> Dyn.list (Dyn.pair Object.to_dyn Dyn.unit) )
+    ]
+;;
 
 let with_mutex t obj ~f =
   let* () = Fiber.return () in
@@ -197,9 +486,7 @@ let run_with_exit_code { dir; _ } ~allow_codes ~display args =
              minimum supported version is Git 2.29."
         ]
         ~hints:[ User_message.command "Please update your git version." ]
-    | _ ->
-      Dune_console.print [ Pp.verbatim stderr ];
-      Error { Git_error.dir; args; exit_code; output = [] })
+    | _ -> Error { Git_error.dir; args; exit_code; output = [ stderr ] })
 ;;
 
 let run t ~display args =
@@ -247,10 +534,16 @@ let rev_parse { dir; _ } rev =
   if code = 0 then Some (Option.value_exn (Object.of_sha1 line)) else None
 ;;
 
-let object_exists_no_lock { dir; _ } (Object.Sha1 sha1) =
+let object_exists_no_lock { dir; _ } obj =
   let git = Lazy.force Vcs.git in
   let+ (), code =
-    Process.run ~dir ~display:Quiet ~env Return git [ "cat-file"; "-e"; sha1 ]
+    Process.run
+      ~dir
+      ~display:Quiet
+      ~env
+      Return
+      git
+      [ "cat-file"; "-e"; Object.to_hex obj ]
   in
   code = 0
 ;;
@@ -275,8 +568,8 @@ let resolve_object t hash =
   | true -> Some hash
 ;;
 
-let mem_path repo (Object.Sha1 sha1) path =
-  cat_file repo [ "-e"; sprintf "%s:%s" sha1 (Path.Local.to_string path) ]
+let mem_path repo obj path =
+  cat_file repo [ "-e"; sprintf "%s:%s" (Object.to_hex obj) (Path.Local.to_string path) ]
 ;;
 
 let show =
@@ -286,8 +579,8 @@ let show =
     let command =
       "show"
       :: List.map revs_and_paths ~f:(function
-        | `Object o -> o
-        | `Path (Object.Sha1 r, path) -> sprintf "%s:%s" r (Path.Local.to_string path))
+        | `Object o -> Object.to_hex o
+        | `Path (r, path) -> sprintf "%s:%s" (Object.to_hex r) (Path.Local.to_string path))
     in
     let stderr_to = make_stderr () in
     Process.run_capture ~dir ~display:Quiet ~stderr_to failure_mode git command
@@ -308,9 +601,11 @@ let show =
           (* space separator *)
           +
           match cmd with
-          | `Object o -> String.length o
-          | `Path (Object.Sha1 r, path) ->
-            String.length r + String.length (Path.Local.to_string path) + 1
+          | `Object o -> String.length (Object.to_hex o)
+          | `Path (r, path) ->
+            String.length (Object.to_hex r)
+            + String.length (Path.Local.to_string path)
+            + 1
         in
         let new_remaining = cmd_len_remaining - cmd_len in
         if new_remaining >= 0
@@ -353,76 +648,6 @@ let load_or_create ~dir =
   in
   t
 ;;
-
-module Commit = struct
-  module T = struct
-    type t =
-      { path : Path.Local.t
-      ; rev : Object.t
-      }
-
-    let compare { path; rev } t =
-      let open Ordering.O in
-      let= () = Path.Local.compare path t.path in
-      Object.compare rev t.rev
-    ;;
-
-    let to_dyn { path; rev } =
-      Dyn.record [ "path", Path.Local.to_dyn path; "rev", Object.to_dyn rev ]
-    ;;
-  end
-
-  include T
-  module C = Comparable.Make (T)
-  module Set = C.Set
-end
-
-module File = struct
-  module T = struct
-    type t =
-      | Redirect of
-          { path : Path.Local.t
-          ; to_ : t
-          }
-      | Direct of
-          { path : Path.Local.t
-          ; size : int
-          ; hash : string
-          }
-
-    let compare = Poly.compare
-
-    let to_dyn = function
-      | Redirect _ -> Dyn.opaque ()
-      | Direct { path; size; hash } ->
-        Dyn.record
-          [ "path", Path.Local.to_dyn path
-          ; "size", Dyn.int size
-          ; "hash", Dyn.string hash
-          ]
-    ;;
-  end
-
-  include T
-
-  let path = function
-    | Redirect p -> p.path
-    | Direct p -> p.path
-  ;;
-
-  let rec size = function
-    | Direct t -> t.size
-    | Redirect t -> size t.to_
-  ;;
-
-  let rec hash = function
-    | Direct t -> t.hash
-    | Redirect t -> hash t.to_
-  ;;
-
-  module C = Comparable.Make (T)
-  module Set = C.Set
-end
 
 module Entry = struct
   module T = struct
@@ -477,15 +702,15 @@ module Entry = struct
           Some
             (File
                (Direct
-                  { hash = Re.Group.get m 2
-                  ; size = Int.of_string_exn @@ Re.Group.get m 3
-                  ; path = Path.Local.of_string @@ Re.Group.get m 4
+                  { hash = Re.Group.get m 2 |> Object.of_sha1 |> Option.value_exn
+                  ; size = Re.Group.get m 3 |> Int.of_string_exn
+                  ; path = Re.Group.get m 4 |> Path.Local.of_string
                   }))
         | "commit" ->
           Some
             (Commit
                { rev = Re.Group.get m 2 |> Object.of_sha1 |> Option.value_exn
-               ; path = Path.Local.of_string @@ Re.Group.get m 4
+               ; path = Re.Group.get m 4 |> Path.Local.of_string
                })
         | _ -> None)
   ;;
@@ -498,15 +723,16 @@ let fetch_allow_failure repo ~url obj =
     | true -> Fiber.return `Fetched
     | false ->
       run_with_exit_code
-        ~allow_codes:(fun x -> x = 0 || x = 128)
+        ~allow_codes:(Int.equal 0)
         repo
         ~display:!Dune_engine.Clflags.display
-        [ "fetch"; "--no-write-fetch-head"; url; Object.to_string obj ]
+        [ "fetch"; "--no-write-fetch-head"; url; Object.to_hex obj ]
       >>| (function
-       | Ok 128 -> `Not_found
        | Ok 0 ->
          Table.set repo.present_objects obj ();
          `Fetched
+       | Error { Git_error.exit_code; output; _ } when exit_code = 128 ->
+         `Not_found output
        | Error git_error -> Git_error.raise_code_error git_error
        | _ -> assert false))
 ;;
@@ -515,9 +741,33 @@ let fetch repo ~url obj =
   fetch_allow_failure repo ~url obj
   >>| function
   | `Fetched -> ()
-  | `Not_found ->
-    User_error.raise [ Pp.textf "unable to fetch %S from %S" (Object.to_string obj) url ]
+  | `Not_found output ->
+    User_error.raise
+      ([ Pp.textf
+           "Dune was unable to fetch %S from %S due to the following git fetch error:"
+           (Object.to_hex obj)
+           url
+       ]
+       @ List.map ~f:Pp.verbatim output)
 ;;
+
+module Debug = struct
+  let files_and_submodules_cache = ref false
+  let content_of_files_cache = ref false
+
+  type t =
+    { name : string
+    ; payload : (string * Dyn.t) list
+    }
+
+  let to_dyn { name; payload } =
+    Dyn.Tuple [ Dyn.string name; Dyn.list (Dyn.pair Dyn.string Fun.id) payload ]
+  ;;
+
+  let print : string -> (string * Dyn.t) list -> unit =
+    fun name payload -> Console.print [ to_dyn { name; payload } |> Dyn.pp ]
+  ;;
+end
 
 module At_rev = struct
   type repo = t
@@ -527,6 +777,7 @@ module At_rev = struct
     ; revision : Object.t
     ; files : File.Set.t
     ; recursive_directory_entries : File.Set.t Path.Local.Table.t
+    ; submodules : Object.t Path.Local.Map.t
     }
 
   let equal x y = Object.equal x.revision y.revision
@@ -566,8 +817,12 @@ module At_rev = struct
       section, arg, binding, value
     ;;
 
-    let config repo (Object.Sha1 rev) path : t Fiber.t =
-      [ "config"; "--list"; "--blob"; sprintf "%s:%s" rev (Path.Local.to_string path) ]
+    let config repo rev path : t Fiber.t =
+      [ "config"
+      ; "--list"
+      ; "--blob"
+      ; sprintf "%s:%s" (Object.to_hex rev) (Path.Local.to_string path)
+      ]
       |> run_capture_lines repo ~display:Quiet
       >>| Git_error.result_get_or_code_error
       >>| List.fold_left ~init:KV.Map.empty ~f:(fun acc line ->
@@ -624,16 +879,28 @@ module At_rev = struct
     ;;
   end
 
-  let files_and_submodules repo (Object.Sha1 rev) =
-    run_capture_zero_separated_lines repo [ "ls-tree"; "-z"; "--long"; "-r"; rev ]
-    >>| Git_error.result_get_or_code_error
-    >>| List.fold_left
-          ~init:(File.Set.empty, Commit.Set.empty)
-          ~f:(fun (files, commits) line ->
-            match Entry.parse line with
-            | None -> files, commits
-            | Some (File file) -> File.Set.add files file, commits
-            | Some (Commit commit) -> files, Commit.Set.add commits commit)
+  let files_and_submodules repo key =
+    let cached = Cache.Files_and_submodules.get key in
+    if !Debug.files_and_submodules_cache
+    then Debug.print "files_and_submodules" [ "cached", Dyn.option Dyn.opaque cached ];
+    match cached with
+    | Some v -> Fiber.return v
+    | None ->
+      let+ value =
+        run_capture_zero_separated_lines
+          repo
+          [ "ls-tree"; "-z"; "--long"; "-r"; Object.to_hex key ]
+        >>| Git_error.result_get_or_code_error
+        >>| List.fold_left
+              ~init:(File.Set.empty, Commit.Set.empty)
+              ~f:(fun (files, commits) line ->
+                match Entry.parse line with
+                | None -> files, commits
+                | Some (File file) -> File.Set.add files file, commits
+                | Some (Commit commit) -> files, Commit.Set.add commits commit)
+      in
+      Cache.Files_and_submodules.set key value;
+      value
   ;;
 
   let path_commit_map submodules =
@@ -643,27 +910,25 @@ module At_rev = struct
       ~f:(fun { Commit.path; rev } m ->
         match Path.Local.Map.add m path rev with
         | Ok m -> m
-        | Error (Sha1 existing_rev) ->
-          let (Sha1 found_rev) = rev in
+        | Error existing_rev ->
           User_error.raise
             [ Pp.textf
                 "Path %s specified multiple times as submodule pointing to different \
                  commits: %s and %s"
                 (Path.Local.to_string path)
-                found_rev
-                existing_rev
+                (Object.to_hex rev)
+                (Object.to_hex existing_rev)
             ])
   ;;
 
   let rec of_rev repo ~revision =
     let* files, submodules = files_and_submodules repo revision in
+    let commit_paths = path_commit_map submodules in
     let+ files =
-      let commit_paths = path_commit_map submodules in
       let* submodules = Submodule.parse repo revision in
       (* It's not safe to do a parallel map because adding a remote
          requires getting the lock (which we're now holding) *)
-      submodules
-      |> Fiber.sequential_map ~f:(fun { Submodule.path; source } ->
+      Fiber.sequential_map submodules ~f:(fun { Submodule.path; source } ->
         match Path.Local.Map.find commit_paths path with
         | None ->
           User_error.raise
@@ -716,10 +981,13 @@ module At_rev = struct
         loop (File.path file |> Path.Local.parent));
       recursive_directory_entries
     in
-    { repo; revision; files; recursive_directory_entries }
+    { repo; revision; files; recursive_directory_entries; submodules = commit_paths }
   ;;
 
-  let content { repo; revision; files = _; recursive_directory_entries = _ } path =
+  let content
+        { repo; revision; files = _; recursive_directory_entries = _; submodules = _ }
+        path
+    =
     show repo [ `Path (revision, path) ]
   ;;
 
@@ -746,39 +1014,51 @@ module At_rev = struct
 
   let check_out
         { repo = { dir; _ }
-        ; revision = Sha1 rev
+        ; revision
         ; files = _
         ; recursive_directory_entries = _
+        ; submodules
         }
         ~target
     =
-    (* TODO iterate over submodules to output sources *)
     let git = Lazy.force Vcs.git in
-    let temp_dir = Temp_dir.dir_for_target ~target ~prefix:"rev-store" ~suffix:rev in
+    let temp_dir =
+      Temp_dir.dir_for_target ~target ~prefix:"rev-store" ~suffix:(Object.to_hex revision)
+    in
     Fiber.finalize ~finally:(fun () ->
       let+ () = Fiber.return () in
       Temp.destroy Dir temp_dir)
     @@ fun () ->
-    let archive = Path.relative temp_dir "archive.tar" in
-    let stdout_to = Process.Io.file archive Process.Io.Out in
     let stderr_to = make_stderr () in
-    let* () =
-      let args = [ "archive"; "--format=tar"; rev ] in
-      let+ (), exit_code =
-        Process.run ~dir ~display:Quiet ~stdout_to ~stderr_to ~env failure_mode git args
-      in
-      if exit_code <> 0
-      then Git_error.raise_code_error { dir; args; exit_code; output = [] }
+    let* archives =
+      let all = Path.Local.Map.add_exn submodules Path.Local.root revision in
+      Path.Local.Map.to_list all
+      |> Fiber.parallel_map ~f:(fun (path, rev) ->
+        let archive = Path.relative temp_dir (sprintf "%s.tar" (Object.to_hex rev)) in
+        let stdout_to = Process.Io.file archive Process.Io.Out in
+        let args = [ "archive"; "--format=tar"; Object.to_hex rev ] in
+        let+ (), exit_code =
+          Process.run ~dir ~display:Quiet ~stdout_to ~stderr_to ~env failure_mode git args
+        in
+        if exit_code <> 0
+        then Git_error.raise_code_error { dir; args; exit_code; output = [] };
+        path, archive)
     in
     (* We untar things into a temp dir to make sure we don't create garbage
        in the build dir until we know can produce the files *)
     let target_in_temp_dir = Path.relative temp_dir "dir" in
-    Archive_driver.extract Archive_driver.tar ~archive ~target:target_in_temp_dir
-    >>| function
-    | Error () -> User_error.raise [ Pp.text "failed to untar archive created by git" ]
-    | Ok () ->
-      Path.mkdir_p (Path.parent_exn target);
-      Path.rename target_in_temp_dir target
+    let+ () =
+      (* We don't necessarily need to unpack things sequentially, but it's the
+         easiest thing to do *)
+      Fiber.sequential_iter archives ~f:(fun (path, archive) ->
+        let target_in_temp_dir = Path.append_local target_in_temp_dir path in
+        Archive_driver.extract Archive_driver.tar ~archive ~target:target_in_temp_dir
+        >>| function
+        | Error () ->
+          User_error.raise [ Pp.text "failed to untar archive created by git" ]
+        | Ok () -> ())
+    in
+    Path.rename target_in_temp_dir target
   ;;
 end
 
@@ -787,11 +1067,11 @@ let remote =
   let head_mark, head = Re.mark (Re.str "HEAD") in
   let ref = Re.(group (seq [ str "refs/"; rep1 any ])) in
   let re = Re.(compile @@ seq [ bol; group hash; rep1 space; alt [ head; ref ] ]) in
-  fun t ~url:(url_loc, url) ->
+  fun t ~loc:url_loc ~url ->
     let f url =
       let command = [ "ls-remote"; url ] in
       let refs =
-        Fiber_lazy.create (fun () ->
+        Fiber.Lazy.create (fun () ->
           let+ hits =
             run_capture_lines t ~display:!Dune_engine.Clflags.display command
             >>| function
@@ -828,8 +1108,8 @@ let remote =
           default_branch, String.Map.of_list_exn refs)
       in
       { Remote.url
-      ; default_branch = Fiber_lazy.force refs >>| fst
-      ; refs = Fiber_lazy.force refs >>| snd
+      ; default_branch = Fiber.Lazy.force refs >>| fst
+      ; refs = Fiber.Lazy.force refs >>| snd
       }
     in
     Table.find_or_add t.remotes ~f url
@@ -881,8 +1161,8 @@ let resolve_revision t (remote : Remote.t) ~revision =
 let fetch_object t (remote : Remote.t) revision =
   fetch_allow_failure t ~url:remote.url revision
   >>= function
-  | `Not_found -> Fiber.return None
-  | `Fetched -> At_rev.of_rev t ~revision >>| Option.some
+  | `Not_found git_output -> Fiber.return (Error git_output)
+  | `Fetched -> At_rev.of_rev t ~revision >>| Result.ok
 ;;
 
 let content_of_files t files =
@@ -911,13 +1191,42 @@ let content_of_files t files =
     List.rev (loop [] 0 files)
 ;;
 
+let content_of_files t files =
+  let keys = List.map files ~f:(fun file -> File.hash file, file) in
+  let cached = Cache.get (Cache.Key.Set.of_list_map keys ~f:fst) in
+  let uncached =
+    List.filter_map keys ~f:(fun (key, file) ->
+      if Cache.Key.Map.mem cached key then None else Some (key, file))
+  in
+  if !Debug.content_of_files_cache
+  then
+    Debug.print
+      "contents_of_files"
+      [ "files", Dyn.list File.to_dyn files
+      ; "cached", Cache.Key.Map.to_dyn Dyn.string cached
+      ];
+  content_of_files t (List.map ~f:snd uncached)
+  >>| function
+  | [] -> List.map keys ~f:(fun (key, _) -> Cache.Key.Map.find_exn cached key)
+  | to_write ->
+    let to_write =
+      List.combine (List.map ~f:fst uncached) to_write
+      |> Cache.Key.Map.of_list_reduce ~f:(fun x _y -> x)
+    in
+    Cache.set to_write;
+    List.map keys ~f:(fun (key, _) ->
+      match Cache.Key.Map.find cached key with
+      | Some s -> s
+      | None -> Cache.Key.Map.find_exn to_write key)
+;;
+
 let get =
-  Fiber_lazy.create (fun () ->
+  Fiber.Lazy.create (fun () ->
     let dir =
       Path.L.relative
         (Path.of_string (Xdg.cache_dir (Lazy.force Dune_util.xdg)))
         [ "dune"; "git-repo" ]
     in
     load_or_create ~dir)
-  |> Fiber_lazy.force
+  |> Fiber.Lazy.force
 ;;

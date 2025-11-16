@@ -21,7 +21,6 @@ include struct
 end
 
 module Cached_digest = Dune_digest.Cached_digest
-module Execution_env = Dune_util.Execution_env
 
 include struct
   open Source
@@ -39,7 +38,6 @@ include struct
   module Dune_file = Dune_file
   module Library = Library
   module Melange = Melange
-  module Melange_stanzas = Melange_stanzas
   module Executables = Executables
 end
 
@@ -53,8 +51,8 @@ include struct
 
     let default_exits = List.map ~f:Exit_code.info Exit_code.all
 
-    let info ?docs ?doc ?man ?envs ?version name =
-      info ?docs ?doc ?man ?envs ?version ~exits:default_exits name
+    let info ?docs ?doc ?man_xrefs ?man ?envs ?version name =
+      info ?docs ?doc ?man_xrefs ?man ?envs ?version ~exits:default_exits name
     ;;
   end
 end
@@ -77,6 +75,14 @@ include struct
   module Section = Section
   module Dune_project_name = Dune_project_name
   module Dune_project = Dune_project
+end
+
+include struct
+  open Dune_pkg
+  module Opam_repo = Opam_repo
+  module Lock_dir = Lock_dir
+  module Rev_store = Rev_store
+  module Resolved_package = Resolved_package
 end
 
 module Log = Dune_util.Log
@@ -119,130 +125,6 @@ end = struct
                   (if failed = 0 then "" else sprintf ", %u failed" failed)
                   (Dune_engine.Scheduler.running_jobs_count scheduler))));
     Fiber.return (Memo.of_thunk get)
-  ;;
-end
-
-module Scheduler = struct
-  include Dune_engine.Scheduler
-
-  let maybe_clear_screen ~details_hum (dune_config : Dune_config.t) =
-    match Execution_env.inside_dune with
-    | true -> (* Don't print anything here to make tests less verbose *) ()
-    | false ->
-      (match dune_config.terminal_persistence with
-       | Clear_on_rebuild -> Console.reset ()
-       | Clear_on_rebuild_and_flush_history -> Console.reset_flush_history ()
-       | Preserve ->
-         let message =
-           sprintf
-             "********** NEW BUILD (%s) **********"
-             (String.concat ~sep:", " details_hum)
-         in
-         Console.print_user_message
-           (User_message.make
-              [ Pp.nop; Pp.tag User_message.Style.Success (Pp.verbatim message); Pp.nop ]))
-  ;;
-
-  let on_event dune_config _config = function
-    | Run.Event.Tick -> Console.Status_line.refresh ()
-    | Source_files_changed { details_hum } -> maybe_clear_screen ~details_hum dune_config
-    | Build_interrupted ->
-      Console.Status_line.set
-        (Live
-           (fun () ->
-             let progression =
-               match Fiber.Svar.read Build_system.state with
-               | Initializing
-               | Restarting_current_build
-               | Build_succeeded__now_waiting_for_changes
-               | Build_failed__now_waiting_for_changes -> Build_system.Progress.init
-               | Building progress -> progress
-             in
-             Pp.seq
-               (Pp.tag User_message.Style.Error (Pp.verbatim "Source files changed"))
-               (Pp.verbatim
-                  (sprintf
-                     ", restarting current build... (%u/%u)"
-                     progression.number_of_rules_executed
-                     progression.number_of_rules_discovered))))
-    | Build_finish build_result ->
-      let message =
-        match build_result with
-        | Success -> Pp.tag User_message.Style.Success (Pp.verbatim "Success")
-        | Failure ->
-          let failure_message =
-            match
-              Build_system_error.(
-                Id.Map.cardinal (Set.current (Fiber.Svar.read Build_system.errors)))
-            with
-            | 1 -> Pp.textf "Had 1 error"
-            | n -> Pp.textf "Had %d errors" n
-          in
-          Pp.tag User_message.Style.Error failure_message
-      in
-      Console.Status_line.set
-        (Constant (Pp.seq message (Pp.verbatim ", waiting for filesystem changes...")))
-  ;;
-
-  let rpc server =
-    { Dune_engine.Rpc.run = Dune_rpc_impl.Server.run server
-    ; stop = Dune_rpc_impl.Server.stop server
-    ; ready = Dune_rpc_impl.Server.ready server
-    }
-  ;;
-
-  let go_without_rpc_server ~(common : Common.t) ~config:dune_config f =
-    let stats = Common.stats common in
-    let config =
-      let watch_exclusions = Common.watch_exclusions common in
-      Dune_config.for_scheduler
-        dune_config
-        stats
-        ~print_ctrl_c_warning:true
-        ~watch_exclusions
-    in
-    Dune_rules.Clflags.concurrency := config.concurrency;
-    Run.go config ~on_event:(on_event dune_config) f
-  ;;
-
-  let go_with_rpc_server ~common ~config f =
-    let f =
-      match Common.rpc common with
-      | `Allow server -> fun () -> Dune_engine.Rpc.with_background_rpc (rpc server) f
-      | `Forbid_builds -> f
-    in
-    go_without_rpc_server ~common ~config f
-  ;;
-
-  let go_with_rpc_server_and_console_status_reporting
-        ~(common : Common.t)
-        ~config:dune_config
-        run
-    =
-    let server =
-      match Common.rpc common with
-      | `Allow server -> rpc server
-      | `Forbid_builds -> Code_error.raise "rpc must be enabled in polling mode" []
-    in
-    let stats = Common.stats common in
-    let config =
-      let watch_exclusions = Common.watch_exclusions common in
-      Dune_config.for_scheduler
-        dune_config
-        stats
-        ~print_ctrl_c_warning:true
-        ~watch_exclusions
-    in
-    Dune_rules.Clflags.concurrency := config.concurrency;
-    let file_watcher = Common.file_watcher common in
-    let run () =
-      let open Fiber.O in
-      Dune_engine.Rpc.with_background_rpc server
-      @@ fun () ->
-      let* () = Dune_engine.Rpc.ensure_ready () in
-      run ()
-    in
-    Run.go config ~file_watcher ~on_event:(on_event dune_config) run
   ;;
 end
 

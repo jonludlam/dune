@@ -12,7 +12,7 @@ unset them all.
   $ unset DUNE_CONFIG__OS DUNE_CONFIG__ARCH DUNE_CONFIG__OS_FAMILY DUNE_CONFIG__OS_DISTRIBUTION DUNE_CONFIG__OS_VERSION DUNE_CONFIG__SYS_OCAML_VERSION
 
   $ mkrepo
-  > mkpkg testpkg <<EOF
+  $ mkpkg testpkg <<EOF
   > build: [
   >   ["echo" arch]
   >   ["echo" os]
@@ -21,19 +21,21 @@ unset them all.
   >   ["echo" os-version]
   > ]
   > EOF
-  > solve testpkg
+  $ solve testpkg
   Solution for dune.lock:
   - testpkg.0.0.1
-  $ cat dune.lock/testpkg.pkg 
+  $ cat ${default_lock_dir}/testpkg.0.0.1.pkg
   (version 0.0.1)
   
   (build
-   (progn
-    (run echo %{arch})
-    (run echo %{os})
-    (run echo %{os_distribution})
-    (run echo %{os_family})
-    (run echo %{os_version})))
+   (all_platforms
+    ((action
+      (progn
+       (run echo %{arch})
+       (run echo %{os})
+       (run echo %{os_distribution})
+       (run echo %{os_family})
+       (run echo %{os_version}))))))
 
 We write all the dune values to a file and then diff them with the output of opam var.
 
@@ -52,7 +54,7 @@ separately here:
   >   ["echo" sys-ocaml-version]
   > ]
   > EOF
-  > solve testpkg
+  $ solve testpkg
   Solution for dune.lock:
   - testpkg.0.0.1
 

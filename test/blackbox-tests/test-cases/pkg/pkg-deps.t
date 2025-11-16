@@ -7,7 +7,7 @@ We should be able to specify (package ..) deps on locally built packages.
   > EOF
 
   $ make_lockdir
-  $ cat >dune.lock/foo.pkg <<EOF
+  $ make_lockpkg foo <<EOF
   > (version 0.0.1)
   > (install
   >  (progn
@@ -27,9 +27,9 @@ We should be able to specify (package ..) deps on locally built packages.
   >  (deps (package foo)))
   > EOF
 
-  $ dune build @foo
-  $TESTCASE_ROOT/_build/_private/default/.pkg/foo/target/bin/foo
-  ../_private/default/.pkg/foo/target/bin/foo
+  $ dune build @foo 2>&1 | sanitize_pkg_digest foo.0.0.1
+  $TESTCASE_ROOT/_build/_private/default/.pkg/foo.0.0.1-DIGEST_HASH/target/bin/foo
+  ../_private/default/.pkg/foo.0.0.1-DIGEST_HASH/target/bin/foo
 
 Now we define the external package using a dune project:
 
@@ -46,11 +46,11 @@ Now we define the external package using a dune project:
   > print_endline "Hello from foo.ml!"
   > EOF
 
-  $ cat >dune.lock/foo.pkg <<EOF
+  $ make_lockpkg foo <<EOF
   > (version 0.0.1)
   > (source (copy $PWD/external_sources))
   > (build (run dune build @install --promote-install-files))
   > EOF
-  $ dune build @foo
-  $TESTCASE_ROOT/_build/_private/default/.pkg/foo/target/bin/foo
-  ../_private/default/.pkg/foo/target/bin/foo
+  $ dune build @foo 2>&1 | sanitize_pkg_digest foo.0.0.1
+  $TESTCASE_ROOT/_build/_private/default/.pkg/foo.0.0.1-DIGEST_HASH/target/bin/foo
+  ../_private/default/.pkg/foo.0.0.1-DIGEST_HASH/target/bin/foo

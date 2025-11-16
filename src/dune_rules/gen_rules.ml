@@ -192,25 +192,6 @@ end = struct
   ;;
 end
 
-let define_all_alias ~dir ~project ~js_targets =
-  let deps =
-    let predicate =
-      if Dune_project.explicit_js_mode project
-      then Predicate_lang.true_
-      else (
-        List.iter js_targets ~f:(fun js_target ->
-          assert (Path.Build.equal (Path.Build.parent_exn js_target) dir));
-        Predicate_lang.not
-          (Predicate_lang.Glob.of_string_set
-             (String.Set.of_list_map js_targets ~f:Path.Build.basename)))
-    in
-    let only_generated_files = Dune_project.dune_version project >= (3, 0) in
-    File_selector.of_predicate_lang ~dir:(Path.build dir) ~only_generated_files predicate
-    |> Action_builder.paths_matching_unit ~loc:Loc.none
-  in
-  Rules.Produce.Alias.add_deps (Alias.make Alias0.all ~dir) deps
-;;
-
 let gen_rules_for_stanzas sctx dir_contents cctxs expander ~dune_file ~dir:ctx_dir =
   let src_dir = Dune_file.dir dune_file in
   let* stanzas = Dune_file.stanzas dune_file
@@ -295,7 +276,7 @@ let gen_rules_for_stanzas sctx dir_contents cctxs expander ~dune_file ~dir:ctx_d
       | _ -> Memo.return ())
   and+ () =
     let project = Dune_file.project dune_file in
-    define_all_alias ~dir:ctx_dir ~project ~js_targets
+    Alias_builder.define_all_alias ~project ~js_targets ctx_dir
   in
   cctxs
 ;;
@@ -311,7 +292,10 @@ let gen_rules_source_only sctx ~dir source_dir =
     let* sctx = sctx in
     let+ () = gen_format_and_cram_rules sctx ~dir source_dir
     and+ () =
-      define_all_alias ~dir ~js_targets:[] ~project:(Source_tree.Dir.project source_dir)
+      Alias_builder.define_all_alias
+        ~js_targets:[]
+        ~project:(Source_tree.Dir.project source_dir)
+        dir
     in
     ())
 ;;
@@ -329,7 +313,7 @@ let gen_rules_group_part_or_root sctx dir_contents cctxs ~source_dir ~dir
       >>= gen_rules_for_stanzas sctx dir_contents cctxs ~dune_file ~dir
     | None ->
       let project = Source_tree.Dir.project source_dir in
-      let+ () = define_all_alias ~dir ~js_targets:[] ~project in
+      let+ () = Alias_builder.define_all_alias ~js_targets:[] ~project dir in
       []
   in
   contexts
@@ -477,6 +461,7 @@ let gen_rules_standalone_or_root sctx ~dir ~source_dir =
       let* cctxs = gen_rules_group_part_or_root sctx dir_contents [] ~source_dir ~dir in
       Dir_contents.Standalone_or_root.subdirs standalone_or_root
       >>= Memo.parallel_iter ~f:(fun dc ->
+        let source_dir = Option.value_exn (Dir_contents.source_dir dc) in
         let+ (_ : (Loc.t * Compilation_context.t) list) =
           gen_rules_group_part_or_root
             sctx
@@ -506,7 +491,7 @@ let gen_automatic_subdir_rules sctx ~dir ~nearest_src_dir ~src_dir =
 let gen_rules_regular_directory (sctx : Super_context.t Memo.t) ~src_dir ~components ~dir =
   Dir_status.DB.get ~dir
   >>= function
-  | Lock_dir -> Memo.return Gen_rules.no_rules
+  | Lock_dir _ -> Memo.return Gen_rules.no_rules
   | dir_status ->
     let+ rules =
       let* st_dir = Source_tree.find_dir src_dir in
@@ -550,7 +535,7 @@ let gen_rules_regular_directory (sctx : Super_context.t Memo.t) ~src_dir ~compon
             Gen_rules.rules_for ~dir ~directory_targets ~allowed_subdirs rules
         in
         match dir_status with
-        | Lock_dir -> Gen_rules.rules_here Gen_rules.Rules.empty
+        | Lock_dir _ -> Gen_rules.rules_here Gen_rules.Rules.empty
         | Source_only source_dir ->
           gen_rules_source_only sctx ~dir source_dir |> make_rules |> Gen_rules.rules_here
         | Generated | Is_component_of_a_group_but_not_the_root _ ->
@@ -647,7 +632,10 @@ let private_context ~dir components _ctx =
   analyze_private_context_path components
   >>= function
   | `Invalid_context -> Memo.return Gen_rules.unknown_context
-  | `Valid (ctx, components) -> Pkg_rules.setup_rules ctx ~dir ~components
+  | `Valid (ctx, components) ->
+    let+ lock_rules = Lock_rules.setup_rules ~dir ~components
+    and+ pkg_rules = Pkg_rules.setup_rules ctx ~dir ~components in
+    Gen_rules.combine lock_rules pkg_rules
   | `Root ->
     let+ contexts = Per_context.list () in
     let build_dir_only_sub_dirs =
@@ -676,7 +664,9 @@ let raise_on_lock_dir_out_of_sync =
         with
         | `Valid -> ()
         | `Invalid ->
-          let loc = Loc.in_file (Path.source (Path.Source.relative path "lock.dune")) in
+          let source_path = Dune_pkg.Lock_dir.in_source_tree path in
+          let loc_path = Path.source source_path in
+          let loc = Loc.in_file (Path.relative loc_path "lock.dune") in
           let hints = Pp.[ text "run dune pkg lock" ] in
           User_error.raise
             ~loc

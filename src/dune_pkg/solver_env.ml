@@ -11,6 +11,21 @@ end
 include T
 include Comparable.Make (T)
 
+let hash t =
+  Package_variable_name.Map.foldi t ~init:0 ~f:(fun key value running_hash ->
+    Tuple.T3.hash
+      Package_variable_name.hash
+      Variable_value.hash
+      Int.hash
+      (key, value, running_hash))
+;;
+
+let digest_feed hasher t =
+  Package_variable_name.Map.iteri t ~f:(fun key value ->
+    Package_variable_name.digest_feed hasher key;
+    Variable_value.digest_feed hasher value)
+;;
+
 let empty = Package_variable_name.Map.empty
 let is_empty = Package_variable_name.Map.is_empty
 
@@ -89,6 +104,19 @@ let pp t =
         (String.maybe_quoted (Variable_value.to_string value)))
 ;;
 
+let pp_oneline t =
+  if Package_variable_name.Map.is_empty t
+  then Pp.text "(empty)"
+  else
+    Pp.concat
+      ~sep:(Pp.text "; ")
+      (List.map (Package_variable_name.Map.to_list t) ~f:(fun (variable, value) ->
+         Pp.textf
+           "%s = %s"
+           (Package_variable_name.to_string variable)
+           (String.maybe_quoted (Variable_value.to_string value))))
+;;
+
 let unset = Package_variable_name.Map.remove
 
 let unset_multi t variable_names =
@@ -147,8 +175,6 @@ let popular_platform_envs =
   ; make ~os:"linux" ~arch:(Some "arm64") ~os_distribution:None ~os_family:None ()
   ; make ~os:"macos" ~arch:(Some "x86_64") ~os_distribution:None ~os_family:None ()
   ; make ~os:"macos" ~arch:(Some "arm64") ~os_distribution:None ~os_family:None ()
-  ; make ~os:"win32" ~arch:(Some "x86_64") ~os_distribution:None ~os_family:None ()
-  ; make ~os:"win32" ~arch:(Some "arm64") ~os_distribution:None ~os_family:None ()
   ]
 ;;
 

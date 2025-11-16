@@ -51,7 +51,6 @@ include struct
   module Sandbox_config = Sandbox_config
   module Sandbox_mode = Sandbox_mode
   module Action = Action
-  module Compound_user_error = Compound_user_error
   module Fs_cache = Fs_cache
   module Process = Process
   module Execution_parameters = Execution_parameters
@@ -63,6 +62,8 @@ include struct
   module Subdir_set = Subdir_set
 end
 
+module Compound_user_error = Dune_rpc_private.Compound_user_error
+
 include struct
   open Ocaml
   module Cm_kind = Cm_kind
@@ -72,7 +73,6 @@ include struct
   module Version = Version
 end
 
-module Re = Dune_re
 module Syntax = Dune_sexp.Syntax
 
 include struct
@@ -129,9 +129,10 @@ include struct
   module Enabled_if = Enabled_if
   module Rule_mode_decoder = Rule_mode_decoder
   module Alias_conf = Alias_conf
-  module Stanza_common = Stanza_common
+  module Stanza_pkg = Stanza_pkg
   module Include_subdirs = Include_subdirs
   module Mode_conf = Mode_conf
+  module Modules_settings = Modules_settings
 end
 
 include Dune_engine.No_io

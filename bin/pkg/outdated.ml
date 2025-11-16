@@ -1,7 +1,5 @@
 open Import
 open Pkg_common
-module Lock_dir = Dune_pkg.Lock_dir
-module Opam_repo = Dune_pkg.Opam_repo
 
 let find_outdated_packages ~transitive ~lock_dirs_arg () =
   let open Fiber.O in
@@ -9,6 +7,7 @@ let find_outdated_packages ~transitive ~lock_dirs_arg () =
     let* workspace = Memo.run (Workspace.workspace ()) in
     Pkg_common.Lock_dirs_arg.lock_dirs_of_workspace lock_dirs_arg workspace
     |> Fiber.parallel_map ~f:(fun lock_dir_path ->
+      let lock_dir_path = Path.source lock_dir_path in
       (* updating makes sense when checking for outdated packages *)
       let* repos =
         get_repos
@@ -16,13 +15,13 @@ let find_outdated_packages ~transitive ~lock_dirs_arg () =
           ~repositories:(repositories_of_lock_dir workspace ~lock_dir_path)
       and+ local_packages = Memo.run find_local_packages
       and+ platform = solver_env_from_system_and_context ~lock_dir_path in
-      let lock_dir = Lock_dir.read_disk_exn lock_dir_path in
+      let lock_dir = Dune_pkg.Lock_dir.read_disk_exn lock_dir_path in
       let packages =
-        Lock_dir.Packages.pkgs_on_platform_by_name lock_dir.packages ~platform
+        Dune_pkg.Lock_dir.Packages.pkgs_on_platform_by_name lock_dir.packages ~platform
       in
-      let+ results = Dune_pkg_outdated.find ~repos ~local_packages packages in
-      ( Dune_pkg_outdated.pp ~transitive ~lock_dir_path results
-      , ( Dune_pkg_outdated.packages_that_were_not_found results
+      let+ results = Dune_pkg.Outdated.find ~repos ~local_packages packages in
+      ( Dune_pkg.Outdated.pp ~transitive ~lock_dir_path results
+      , ( Dune_pkg.Outdated.packages_that_were_not_found results
           |> Package_name.Set.of_list
           |> Package_name.Set.to_list
         , lock_dir_path
@@ -40,7 +39,7 @@ let find_outdated_packages ~transitive ~lock_dirs_arg () =
           ~sep:Pp.space
           [ Pp.textf
               "When checking %s, the following packages:"
-              (Path.Source.to_string_maybe_quoted lock_dir_path)
+              (Path.to_string_maybe_quoted lock_dir_path)
             |> Pp.hovbox
           ; Pp.concat
               ~sep:Pp.space
@@ -50,8 +49,8 @@ let find_outdated_packages ~transitive ~lock_dirs_arg () =
               ; Pp.enumerate repos ~f:(fun repo ->
                   (* CR-rgrinberg: why are we outputting [Dyn.t] in error
                      messages? *)
-                  Opam_repo.serializable repo
-                  |> Dyn.option Opam_repo.Serializable.to_dyn
+                  Dune_pkg.Opam_repo.serializable repo
+                  |> Dyn.option Dune_pkg.Opam_repo.Serializable.to_dyn
                   |> Dyn.pp)
               ]
             |> Pp.vbox
@@ -77,8 +76,10 @@ let term =
   and+ lock_dirs_arg = Pkg_common.Lock_dirs_arg.term in
   let builder = Common.Builder.forbid_builds builder in
   let common, config = Common.init builder in
-  Scheduler.go_with_rpc_server ~common ~config
-  @@ find_outdated_packages ~transitive ~lock_dirs_arg
+  Scheduler.go_with_rpc_server ~common ~config (fun () ->
+    let open Fiber.O in
+    Pkg_common.check_pkg_management_enabled ()
+    >>> find_outdated_packages ~transitive ~lock_dirs_arg ())
 ;;
 
 let info =

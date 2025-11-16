@@ -236,7 +236,8 @@ let decode =
        field "files" Predicate_lang.Glob.decode ~default:Predicate_lang.standard
      and+ enabled_if = Enabled_if.decode ~allowed_vars:Any ~since:(Some (2, 9)) ()
      and+ package =
-       Stanza_common.Pkg.field_opt () ~check:(Dune_lang.Syntax.since Stanza.syntax (2, 9))
+       Stanza_pkg.field_opt () ~check:(Dune_lang.Syntax.since Stanza.syntax (2, 9))
+       >>| Option.map ~f:snd
      and+ packages =
        field
          ~default:[]
@@ -271,13 +272,7 @@ let decode =
 let () =
   let open Dune_lang.Decoder in
   let decode = Dune_lang.Syntax.since Stanza.syntax (2, 4) >>> decode in
-  Dune_project.Extension.register_simple
-    syntax
-    (return
-       [ ( "mdx"
-         , let+ stanza = decode in
-           [ make_stanza stanza ] )
-       ])
+  Dune_project.Extension.register_simple syntax (return [ "mdx", decode_stanza decode ])
 ;;
 
 (** Returns the list of files (in _build) to be passed to mdx for the given
@@ -431,7 +426,8 @@ let mdx_prog_gen t ~sctx ~dir ~scope ~mdx_prog =
       let open Command.Args in
       S
         (Lib_flags.L.include_paths libs_to_include (Ocaml mode) lib_config
-         |> Path.Set.to_list_map ~f:(fun p -> S [ A "--directory"; Path p ]))
+         |> Lib_flags.L.include_only
+         |> List.map ~f:(fun p -> S [ A "--directory"; Path p ]))
     in
     let open Command.Args in
     let prelude_args = S (List.concat_map t.preludes ~f:(Prelude.to_args ~dir)) in

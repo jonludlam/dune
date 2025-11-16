@@ -1,4 +1,4 @@
-open! Import
+open Import
 include Dune_pkg.Dev_tool
 
 let install_path_base_dir_name = ".dev-tool"
@@ -19,12 +19,8 @@ let universe_install_path t =
     (Package.Name.to_string @@ package_name t)
 ;;
 
-let package_install_path t =
-  Path.Build.relative (universe_install_path t) (Package.Name.to_string @@ package_name t)
-;;
-
 let exe_path t =
   Path.Build.L.relative
-    (package_install_path t)
+    (universe_install_path t)
     ("target" :: exe_path_components_within_package t)
 ;;

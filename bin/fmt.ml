@@ -7,8 +7,8 @@ let man =
   ; `P
       {|$(b,dune fmt) runs the formatter on the source code. The formatter is
         automatically selected. ocamlformat is used to format OCaml source code
-        (*.ml and *.mli files) and refmt is used to format Reason source code
-        (*.re and *.rei files).|}
+        ( *.ml and *.mli files) and refmt is used to format Reason source code
+        ( *.re and *.rei files).|}
   ; `Blocks Common.help_secs
   ]
 ;;
@@ -26,7 +26,7 @@ let lock_ocamlformat () =
   else Fiber.return ()
 ;;
 
-let run_fmt_command ~(common : Common.t) ~config =
+let run_fmt_command ~common ~config ~preview builder =
   let open Fiber.O in
   let once () =
     let* () = lock_ocamlformat () in
@@ -35,18 +35,31 @@ let run_fmt_command ~(common : Common.t) ~config =
       Alias.in_dir ~name:Dune_rules.Alias.fmt ~recursive:true ~contexts:setup.contexts dir
       |> Alias.request
     in
-    Build_cmd.run_build_system ~common ~request
+    Build.run_build_system ~common ~request
     >>| function
     | Ok () -> ()
     | Error `Already_reported -> raise Dune_util.Report_error.Already_reported
   in
-  Scheduler.go_with_rpc_server ~common ~config once
+  match Dune_util.Global_lock.lock ~timeout:None with
+  | Ok () -> Scheduler.go_with_rpc_server ~common ~config once
+  | Error lock_held_by ->
+    (* The --preview flag is being ignored by the RPC server, warn the user. *)
+    if preview then Rpc.Rpc_common.warn_ignore_arguments lock_held_by;
+    Scheduler.go_without_rpc_server ~common ~config (fun () ->
+      Rpc.Rpc_common.fire_request
+        ~name:"format"
+        ~wait:true
+        ~warn_forwarding:false
+        ~lock_held_by
+        builder
+        Dune_rpc.Procedures.Public.format
+        ())
 ;;
 
 let command =
   let term =
     let+ builder = Common.Builder.term
-    and+ no_promote =
+    and+ preview =
       Arg.(
         value
         & flag
@@ -58,10 +71,10 @@ let command =
                command.")
     in
     let builder =
-      Common.Builder.set_promote builder (if no_promote then Never else Automatically)
+      Common.Builder.set_promote builder (if preview then Never else Automatically)
     in
     let common, config = Common.init builder in
-    run_fmt_command ~common ~config
+    run_fmt_command ~common ~config ~preview builder
   in
   Cmd.v (Cmd.info "fmt" ~doc ~man ~envs:Common.envs) term
 ;;

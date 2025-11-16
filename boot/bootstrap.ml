@@ -2,7 +2,7 @@ open StdLabels
 open Printf
 
 (* This program performs version checking of the compiler and switches to the
-   secondary compiler if necessary. The script should execute in OCaml 4.08! *)
+   secondary compiler if necessary. The script should execute in OCaml 4.02! *)
 
 let min_supported_natively = 4, 08, 0
 
@@ -25,7 +25,7 @@ let keep_generated_files =
   !keep_generated_files
 ;;
 
-let modules = [ "boot/libs"; "boot/duneboot" ]
+let modules = [ "boot/types"; "boot/libs"; "boot/duneboot" ]
 let duneboot = ".duneboot"
 let prog = duneboot ^ ".exe"
 
@@ -34,7 +34,9 @@ let () =
     Array.iter (Sys.readdir "boot") ~f:(fun fn ->
       let fn = Filename.concat "boot" fn in
       if Filename.check_suffix fn ".cmi" || Filename.check_suffix fn ".cmo"
-      then Sys.remove fn));
+      then (
+        try Sys.remove fn with
+        | Sys_error _ -> ())));
   if not keep_generated_files
   then
     at_exit (fun () ->
@@ -74,9 +76,10 @@ let () =
     then "ocamlc", None
     else (
       let compiler = "ocamlfind -toolchain secondary ocamlc" in
-      let output_fn = duneboot ^ ".ocamlfind-output" in
+      let output_fn, out = Filename.open_temp_file "duneboot" "ocamlfind-output" in
       let n = runf "%s 2>%s" compiler output_fn in
       let s = read_file output_fn in
+      close_out out;
       prerr_endline s;
       if n <> 0 || s <> ""
       then (
@@ -96,7 +99,7 @@ let () =
   in
   exit_if_non_zero
     (runf
-       "%s %s -w -24 -g -o %s -I boot %sunix.cma %s"
+       "%s %s -intf-suffix .dummy -g -o %s -I boot %sunix.cma %s"
        compiler
        (* Make sure to produce a self-contained binary as dlls tend to cause
           issues *)

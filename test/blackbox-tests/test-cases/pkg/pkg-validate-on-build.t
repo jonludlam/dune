@@ -1,5 +1,12 @@
 Test that we validate lockdirs before using them to build a package.
 
+Disable portable lockdirs. This test exercise dune's ability to detect when
+dune is asked to execute a build plan on a different platform than the platform
+it was generated for. A similar case is possible with portable lockdirs where
+the current platform isn't one of the platforms for which a solution exists in
+the lockdir, and this is tested in "portable-lockdirs-custom-platforms".
+  $ export DUNE_CONFIG__PORTABLE_LOCK_DIR=disabled
+
   $ . ./helpers.sh
 
   $ mkrepo
@@ -20,7 +27,8 @@ Test that we validate lockdirs before using them to build a package.
 Helper function that creates a workspace file with a given solver env.
   $ generate_workspace() {
   >  cat <<EOF
-  > (lang dune 3.12)
+  > (lang dune 3.20)
+  > (pkg enabled)
   > (lock_dir
   >  (repositories mock)
   > EOF

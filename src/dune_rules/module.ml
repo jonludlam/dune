@@ -56,6 +56,7 @@ module Kind = struct
     | Impl_vmodule
     | Wrapped_compat
     | Root
+    | Parameter
 
   let encode =
     let open Dune_lang.Encoder in
@@ -70,6 +71,7 @@ module Kind = struct
     | Impl_vmodule -> string "impl_vmodule"
     | Wrapped_compat -> string "wrapped_compat"
     | Root -> string "root"
+    | Parameter -> string "parameter"
   ;;
 
   let to_dyn t = Dune_sexp.to_dyn (encode t)
@@ -83,6 +85,7 @@ module Kind = struct
       ; "impl_vmodule", return Impl_vmodule
       ; "wrapped_compat", return Wrapped_compat
       ; "root", return Root
+      ; "parameter", return Parameter
       ; ( "alias"
         , let* next = peek in
           (* TODO remove this once everyone recompiles *)
@@ -96,7 +99,7 @@ module Kind = struct
 
   let has_impl = function
     | Alias _ | Impl_vmodule | Wrapped_compat | Root | Impl -> true
-    | Intf_only | Virtual -> false
+    | Intf_only | Virtual | Parameter -> false
   ;;
 end
 
@@ -137,7 +140,7 @@ module Source = struct
       ]
   ;;
 
-  let make ?impl ?intf path =
+  let make ~impl ~intf path =
     if path = [] then Code_error.raise "path cannot be empty" [];
     (match impl, intf with
      | None, None ->
@@ -207,11 +210,11 @@ let kind t = t.kind
 let pp_flags t = t.pp
 let install_as t = t.install_as
 
-let of_source ?install_as ~obj_name ~visibility ~(kind : Kind.t) (source : Source.t) =
+let of_source ~install_as ~obj_name ~visibility ~(kind : Kind.t) (source : Source.t) =
   (match kind, visibility with
    | (Alias _ | Impl_vmodule | Virtual | Wrapped_compat), Visibility.Public
-   | Root, Private
-   | (Impl | Intf_only), _ -> ()
+   | Root, Public
+   | (Impl | Intf_only | Parameter), _ -> ()
    | _, _ ->
      Code_error.raise
        "Module.of_source: invalid kind, visibility combination"
@@ -349,8 +352,14 @@ let encode ({ source; obj_name; pp = _; visibility; kind; install_as = _ } as t)
     match kind with
     | Kind.Impl when has_impl -> None
     | Intf_only when not has_impl -> None
-    | Root | Wrapped_compat | Impl_vmodule | Alias _ | Impl | Virtual | Intf_only ->
-      Some kind
+    | Root
+    | Wrapped_compat
+    | Impl_vmodule
+    | Alias _
+    | Impl
+    | Virtual
+    | Intf_only
+    | Parameter -> Some kind
   in
   record_fields
     [ field "obj_name" Module_name.Unique.encode obj_name
@@ -408,17 +417,26 @@ let generated ?install_as ?obj_name ~(kind : Kind.t) ~src_dir (path : Module_nam
       let basename = Module_name.Unique.artifact_filename obj_name ~ext:ml_gen in
       Path.Build.relative src_dir basename |> Path.build |> File.make Dialect.ocaml
     in
-    Source.make ~impl path
+    Source.make ~impl:(Some impl) ~intf:None path
   in
   let visibility : Visibility.t =
-    match kind with
-    | Root -> Private
-    | _ -> Public
+    Public
+    (* CR-someday rgrinberg: This used to be;:
+      {[
+        match kind with
+        | Root -> Private
+        | _ -> Public
+      ]}
+
+      But this currently triggers module hiding via [-I]. We need to fix that.
+    *)
   in
-  of_source ?install_as ~visibility ~kind ~obj_name:(Some obj_name) source
+  of_source ~install_as ~visibility ~kind ~obj_name:(Some obj_name) source
 ;;
 
-let of_source ~visibility ~kind source = of_source ~obj_name:None ~visibility ~kind source
+let of_source ~visibility ~kind source =
+  of_source ~install_as:None ~obj_name:None ~visibility ~kind source
+;;
 
 module Name_map = struct
   type nonrec t = t Module_name.Map.t

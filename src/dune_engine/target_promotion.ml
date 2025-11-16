@@ -1,4 +1,4 @@
-open! Import
+open Import
 
 (* [To_delete] is used mostly to implement [dune clean]. It is an imperfect
    heuristic, in particular it can go wrong if:
@@ -82,9 +82,10 @@ let promote_target_if_not_up_to_date
         ];
       if promote_until_clean then To_delete.add dst;
       (* The file in the build directory might be read-only if it comes from the
-         shared cache. However, we want the file in the source tree to be
-         writable by the user, so we explicitly set the user writable bit. *)
-      let chmod = Path.Permissions.add Path.Permissions.write in
+         shared cache. We don't want the file in the source tree to be writable
+         by the user, since a new promotion will overwrite it, so we explicitly
+         remove the write permission. *)
+      let chmod = Path.Permissions.remove Path.Permissions.write in
       let+ () = promote_source ~chmod ~delete_dst_if_it_is_a_directory:true ~src ~dst in
       true
   in
@@ -141,11 +142,9 @@ let promote ~(targets : _ Targets.Produced.t) ~(promote : Rule.Promote.t) ~promo
       in
       Memo.run (Fs_memo.path_kind (In_source_dir into_dir))
       >>| (function
-       | Ok S_DIR -> fun src -> Path.Source.relative into_dir (Path.Build.basename src)
+       | Ok S_DIR | Error (ENOENT, _, _) ->
+         fun src -> Path.Source.relative into_dir (Path.Build.basename src)
        | Ok _other_kind -> promote_into_error (Pp.textf "%S is not a directory.")
-       | Error (ENOENT, _, _) ->
-         promote_into_error
-           (Pp.textf "Directory %S does not exist. Please create it manually.")
        | Error unix_error ->
          promote_into_error ~unix_error (Pp.textf "Cannot promote to directory %S."))
   in

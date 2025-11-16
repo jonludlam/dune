@@ -1,8 +1,7 @@
 open Import
-open Decoder
 module Versioned_file = Dune_sexp.Versioned_file
 module Execution_parameters = Dune_engine.Execution_parameters
-module Compound_user_error = Dune_engine.Compound_user_error
+module Compound_user_error = Dune_rpc_private.Compound_user_error
 
 module Implicit_transitive_deps = struct
   type t =
@@ -42,6 +41,7 @@ module Implicit_transitive_deps = struct
     ;;
 
     let decode =
+      let open Decoder in
       let check ver = Syntax.since Stanza.syntax ver in
       enum'
         [ "true", check (1, 7) >>> return Enabled
@@ -73,6 +73,7 @@ type t =
   ; dune_version : Syntax.Version.t
   ; info : Package_info.t
   ; packages : Package.t Package.Name.Map.t
+  ; exclusive_dir_packages : Package_id.t Path.Source.Map.t
   ; stanza_parser : Stanza.t list Decoder.t
   ; project_file : Path.Source.t option
   ; extension_args : Univ_map.t
@@ -103,9 +104,9 @@ let get () = Decoder.get key
 
 let get_exn () =
   get ()
-  >>| function
-  | Some t -> t
-  | None -> Code_error.raise "Current project is unset" []
+  |> Decoder.map ~f:(function
+    | Some t -> t
+    | None -> Code_error.raise "Current project is unset" [])
 ;;
 
 let equal : t -> t -> bool = ( == )
@@ -114,7 +115,13 @@ let packages t = t.packages
 let name t = t.name
 let version t = t.version
 let root t = t.root
-let stanza_parser t = Decoder.set key t t.stanza_parser
+
+let stanza_parser t ~dir =
+  let mask = Package_mask.package_env ~dir ~packages:t.exclusive_dir_packages in
+  let parser = Decoder.set key t t.stanza_parser in
+  Decoder.set Package_mask.key mask parser
+;;
+
 let file t = t.project_file
 
 let implicit_transitive_deps t ocaml_version =
@@ -162,6 +169,7 @@ let to_dyn
       ; expand_aliases_in_sandbox
       ; opam_file_location
       ; including_hidden_packages = _
+      ; exclusive_dir_packages = _
       }
   =
   let open Dyn in
@@ -200,8 +208,15 @@ let to_dyn
     ]
 ;;
 
-let find_extension_args t key = Univ_map.find t.extension_args key
 let is_extension_set t key = Univ_map.mem t.extension_args key
+
+let find_extension_version t syntax =
+  match Univ_map.find t.parsing_context (Syntax.key syntax) with
+  | None | Some (Inactive _) -> None
+  | Some (Active v) -> Some v
+;;
+
+let find_extension_args t key = Univ_map.find t.extension_args key
 
 include Versioned_file.Make (struct
     type t = Stanza.Parser.t list
@@ -261,6 +276,7 @@ module Extension = struct
 
   let register_unit syntax stanzas =
     let unit_stanzas =
+      let open Decoder in
       let+ r = stanzas in
       (), r
     in
@@ -328,44 +344,46 @@ let explicit_extensions_map explicit_extensions =
   | Ok map -> map
 ;;
 
+let make_parsing_context ~(lang : Lang.Instance.t) extensions =
+  let init =
+    let init = Univ_map.singleton (Syntax.key lang.syntax) (Active lang.version) in
+    let extensions =
+      List.fold_left extensions ~init:[] ~f:(fun acc (ext : Extension.automatic) ->
+        match ext with
+        | Not_selected _ -> acc
+        | Selected ext ->
+          let syntax =
+            let (Extension.Packed ext) = ext.extension in
+            ext.syntax
+          in
+          (syntax, ext.version) :: acc)
+    in
+    Univ_map.set
+      init
+      String_with_vars.decoding_env_key
+      (Pform.Env.initial ~stanza:lang.version ~extensions)
+  in
+  List.fold_left extensions ~init ~f:(fun acc (ext : Extension.automatic) ->
+    let syntax =
+      let (Extension.Packed ext) =
+        match ext with
+        | Selected e -> e.extension
+        | Not_selected e -> e
+      in
+      ext.syntax
+    in
+    let status : Syntax.Key.t =
+      match ext with
+      | Selected ext -> Active ext.version
+      | Not_selected (Packed e) ->
+        Inactive { lang = e.syntax; dune_lang_ver = lang.version }
+    in
+    Univ_map.set acc (Syntax.key syntax) status)
+;;
+
 let interpret_lang_and_extensions ~(lang : Lang.Instance.t) ~explicit_extensions =
   let extensions = Extension.automatic ~explicitly_selected:explicit_extensions in
-  let parsing_context =
-    let init =
-      let init = Univ_map.singleton (Syntax.key lang.syntax) (Active lang.version) in
-      let extensions =
-        List.fold_left extensions ~init:[] ~f:(fun acc (ext : Extension.automatic) ->
-          match ext with
-          | Not_selected _ -> acc
-          | Selected ext ->
-            let syntax =
-              let (Extension.Packed ext) = ext.extension in
-              ext.syntax
-            in
-            (syntax, ext.version) :: acc)
-      in
-      Univ_map.set
-        init
-        String_with_vars.decoding_env_key
-        (Pform.Env.initial ~stanza:lang.version ~extensions)
-    in
-    List.fold_left extensions ~init ~f:(fun acc (ext : Extension.automatic) ->
-      let syntax =
-        let (Extension.Packed ext) =
-          match ext with
-          | Selected e -> e.extension
-          | Not_selected e -> e
-        in
-        ext.syntax
-      in
-      let status : Syntax.Key.t =
-        match ext with
-        | Selected ext -> Active ext.version
-        | Not_selected (Packed e) ->
-          Inactive { lang = e.syntax; dune_lang_ver = lang.version }
-      in
-      Univ_map.set acc (Syntax.key syntax) status)
-  in
+  let parsing_context = make_parsing_context ~lang extensions in
   let extension_args, extension_stanzas =
     List.fold_left
       extensions
@@ -374,7 +392,6 @@ let interpret_lang_and_extensions ~(lang : Lang.Instance.t) ~explicit_extensions
         match ext with
         | Not_selected (Packed e) ->
           let stanzas =
-            let open Decoder in
             let stanzas =
               match Syntax.greatest_supported_version e.syntax with
               | None -> []
@@ -388,21 +405,26 @@ let interpret_lang_and_extensions ~(lang : Lang.Instance.t) ~explicit_extensions
                     (Syntax.key e.syntax)
                     (Active greatest_supported_version)
                 in
-                parse (enter e.stanzas) parsing_context (List (Loc.of_pos __POS__, []))
+                Decoder.parse
+                  (Decoder.enter e.stanzas)
+                  parsing_context
+                  (List (Loc.of_pos __POS__, []))
                 |> snd
             in
             List.map stanzas ~f:(fun (name, _) ->
               ( name
-              , let+ _ = Syntax.get_exn e.syntax in
-                (* The above [get_exn] will raise because the extension is
+              , Syntax.get_exn e.syntax
+                |> Decoder.map ~f:(fun _ ->
+                  (* The above [get_exn] will raise because the extension is
                    inactive *)
-                assert false ))
+                  assert false) ))
           in
           args_acc, stanzas :: stanzas_acc
         | Selected instance ->
           let (Packed e) = instance.extension in
           let args_acc, stanzas =
             let args =
+              let open Decoder in
               let+ arg, stanzas = Decoder.set_many parsing_context e.stanzas in
               Univ_map.set args_acc e.key arg, stanzas
             in
@@ -410,8 +432,10 @@ let interpret_lang_and_extensions ~(lang : Lang.Instance.t) ~explicit_extensions
           in
           args_acc, stanzas :: stanzas_acc)
   in
-  let stanzas = List.concat (lang.data :: extension_stanzas) in
-  let stanza_parser = Decoder.(set_many parsing_context (sum stanzas)) in
+  let stanza_parser =
+    let stanzas = List.concat (lang.data :: extension_stanzas) in
+    Decoder.(set_many parsing_context (sum stanzas))
+  in
   parsing_context, stanza_parser, extension_args
 ;;
 
@@ -473,6 +497,25 @@ let default_name ~dir ~(packages : Package.t Package.Name.Map.t) =
     Dune_project_name.named loc (Package.Name.to_string name)
 ;;
 
+let make_exclusive_dir_packages packages =
+  match
+    Package.Name.Map.values packages
+    |> List.filter_map ~f:(fun package ->
+      Package.exclusive_dir package
+      |> Option.map ~f:(fun (loc, dir) -> loc, dir, Package.id package))
+    |> Path.Source.Map.of_list_map ~f:(fun (_loc, dir, id) -> dir, id)
+  with
+  | Ok s -> s
+  | Error (dir, (loc, _, _), (_, _, id)) ->
+    User_error.raise
+      ~loc
+      [ Pp.textf
+          "package %s is already defined in %S"
+          (Path.Source.to_string_maybe_quoted dir)
+          (Package.Name.to_string id.name)
+      ]
+;;
+
 let infer ~dir info packages =
   let lang = get_dune_lang () in
   let name = default_name ~dir ~packages in
@@ -518,6 +561,7 @@ let infer ~dir info packages =
   ; expand_aliases_in_sandbox
   ; opam_file_location
   ; including_hidden_packages = packages
+  ; exclusive_dir_packages = make_exclusive_dir_packages packages
   }
 ;;
 
@@ -560,6 +604,7 @@ let encode : t -> Dune_sexp.t list =
       ; expand_aliases_in_sandbox
       ; opam_file_location = _
       ; including_hidden_packages = _
+      ; exclusive_dir_packages = _
       } ->
   let open Encoder in
   let lang = Lang.get_exn "dune" in
@@ -678,11 +723,14 @@ let set_parsing_context t parser =
 ;;
 
 let wrapped_executables t = t.wrapped_executables
-let map_workspace_root t = t.map_workspace_root
 let executables_implicit_empty_intf t = t.executables_implicit_empty_intf
 let accept_alternative_dune_file_name t = t.accept_alternative_dune_file_name
-let () = Extension.register_simple Action.Action_plugin.syntax (return [])
-let dune_site_extension = Extension.register_unit Site.dune_site_syntax (return [])
+let () = Extension.register_simple Action.Action_plugin.syntax (Decoder.return [])
+
+let dune_site_extension =
+  Extension.register_unit Site.dune_site_syntax (Decoder.return [])
+;;
+
 let strict_package_deps t = t.strict_package_deps
 let allow_approximate_merlin t = t.allow_approximate_merlin
 let cram t = t.cram
@@ -834,6 +882,7 @@ let parse_packages
 ;;
 
 let parse ~dir ~(lang : Lang.Instance.t) ~file =
+  let open Decoder in
   String_with_vars.set_decoding_env
     (Pform.Env.initial ~stanza:lang.version ~extensions:[])
   @@ fields
@@ -1010,6 +1059,7 @@ let parse ~dir ~(lang : Lang.Instance.t) ~file =
        ; expand_aliases_in_sandbox
        ; opam_file_location
        ; including_hidden_packages = packages
+       ; exclusive_dir_packages = make_exclusive_dir_packages packages
        }
 ;;
 
@@ -1061,6 +1111,7 @@ let load =
 ;;
 
 let _oxcaml_extension =
-  (* This is required to register the extension because OxCaml doesn't have a specific decoder. *)
+  (* This is required to register the extension because OxCaml doesn't have a
+     specific decoder. *)
   Extension.register Oxcaml.syntax (Decoder.return ((), [])) Dyn.unit
 ;;

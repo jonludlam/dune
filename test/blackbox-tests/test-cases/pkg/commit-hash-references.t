@@ -1,5 +1,6 @@
 What happens if a branch has the same format as a ref?
 
+  $ . ../git-helpers.sh
   $ . ./helpers.sh
   $ mkrepo
   $ mkpkg foo 1.0
@@ -31,5 +32,5 @@ Depend on foo from the repo
 
 Which foo will we get?
 
-  $ dune pkg lock 2>&1 | head -1 | sed "s/$AMBIGUOUS_REF/\$AMBIGUOUS_REF/g"
+  $ dune pkg lock 2>&1 | grep "not found" | sed "s/$AMBIGUOUS_REF/\$AMBIGUOUS_REF/g"
   revision "$AMBIGUOUS_REF" not found in

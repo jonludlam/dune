@@ -29,6 +29,13 @@ module Toggle = struct
 
   let all : (string * t) list = [ "enabled", `Enabled; "disabled", `Disabled ]
 
+  let equal x y =
+    match x, y with
+    | `Enabled, `Enabled -> true
+    | `Enabled, _ | _, `Enabled -> false
+    | `Disabled, `Disabled -> true
+  ;;
+
   let to_string t =
     List.find_map all ~f:(fun (k, v) -> if Poly.equal v t then Some k else None)
     |> Option.value_exn
@@ -93,16 +100,6 @@ let cutoffs_that_reduce_concurrency_in_watch_mode =
     ~name:"cutoffs_that_reduce_concurrency_in_watch_mode"
     ~of_string:Toggle.of_string
     ~default:`Disabled
-;;
-
-let copy_file =
-  make
-    ~name:"copy_file"
-    ~of_string:(function
-      | "portable" -> Ok `Portable
-      | "fast" -> Ok `Best
-      | _ -> Error (sprintf "only %S and %S are allowed" "fast" "portable"))
-    ~default:`Best
 ;;
 
 let background_default =

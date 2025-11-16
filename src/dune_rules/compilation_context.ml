@@ -7,50 +7,52 @@ module Includes = struct
   let make ~project ~opaque ~direct_requires ~hidden_requires lib_config
     : _ Lib_mode.Cm_kind.Map.t
     =
-    (* TODO : some of the requires can filtered out using [ocamldep] info *)
+    (* TODO: some of the requires can filtered out using [ocamldep] info *)
     let open Resolve.Memo.O in
     let iflags direct_libs hidden_libs mode =
       Lib_flags.L.include_flags ~project ~direct_libs ~hidden_libs mode lib_config
     in
     let make_includes_args ~mode groups =
-      Command.Args.memo
-        (Resolve.Memo.args
-           (let+ direct_libs = direct_requires
-            and+ hidden_libs = hidden_requires in
-            Command.Args.S
-              [ iflags direct_libs hidden_libs mode
-              ; Hidden_deps (Lib_file_deps.deps (direct_libs @ hidden_libs) ~groups)
-              ]))
+      (let+ direct_libs = direct_requires
+       and+ hidden_libs = hidden_requires in
+       Command.Args.S
+         [ iflags direct_libs hidden_libs mode
+         ; Hidden_deps (Lib_file_deps.deps (direct_libs @ hidden_libs) ~groups)
+         ])
+      |> Resolve.Memo.args
+      |> Command.Args.memo
     in
-    let cmi_includes = make_includes_args ~mode:(Ocaml Byte) [ Ocaml Cmi ] in
-    let cmx_includes =
-      Command.Args.memo
-        (Resolve.Memo.args
-           (let+ direct_libs = direct_requires
-            and+ hidden_libs = hidden_requires in
-            Command.Args.S
-              [ iflags direct_libs hidden_libs (Ocaml Native)
-              ; Hidden_deps
-                  (if opaque
-                   then
-                     List.map (direct_libs @ hidden_libs) ~f:(fun lib ->
-                       ( lib
-                       , if Lib.is_local lib
-                         then [ Lib_file_deps.Group.Ocaml Cmi ]
-                         else [ Ocaml Cmi; Ocaml Cmx ] ))
-                     |> Lib_file_deps.deps_with_exts
-                   else
-                     Lib_file_deps.deps
-                       (direct_libs @ hidden_libs)
-                       ~groups:[ Lib_file_deps.Group.Ocaml Cmi; Ocaml Cmx ])
-              ]))
-    in
-    let melange_cmi_includes = make_includes_args ~mode:Melange [ Melange Cmi ] in
-    let melange_cmj_includes =
-      make_includes_args ~mode:Melange [ Melange Cmi; Melange Cmj ]
-    in
-    { ocaml = { cmi = cmi_includes; cmo = cmi_includes; cmx = cmx_includes }
-    ; melange = { cmi = melange_cmi_includes; cmj = melange_cmj_includes }
+    { ocaml =
+        (let cmi_includes = make_includes_args ~mode:(Ocaml Byte) [ Ocaml Cmi ] in
+         { cmi = cmi_includes
+         ; cmo = cmi_includes
+         ; cmx =
+             (let+ direct_libs = direct_requires
+              and+ hidden_libs = hidden_requires in
+              Command.Args.S
+                [ iflags direct_libs hidden_libs (Ocaml Native)
+                ; Hidden_deps
+                    (let libs = direct_libs @ hidden_libs in
+                     if opaque
+                     then
+                       List.map libs ~f:(fun lib ->
+                         ( lib
+                         , if Lib.is_local lib
+                           then [ Lib_file_deps.Group.Ocaml Cmi ]
+                           else [ Ocaml Cmi; Ocaml Cmx ] ))
+                       |> Lib_file_deps.deps_with_exts
+                     else
+                       Lib_file_deps.deps
+                         libs
+                         ~groups:[ Lib_file_deps.Group.Ocaml Cmi; Ocaml Cmx ])
+                ])
+             |> Resolve.Memo.args
+             |> Command.Args.memo
+         })
+    ; melange =
+        { cmi = make_includes_args ~mode:Melange [ Melange Cmi ]
+        ; cmj = make_includes_args ~mode:Melange [ Melange Cmi; Melange Cmj ]
+        }
     }
   ;;
 
@@ -85,6 +87,8 @@ type t =
   ; requires_compile : Lib.t list Resolve.Memo.t
   ; requires_hidden : Lib.t list Resolve.Memo.t
   ; requires_link : Lib.t list Resolve.t Memo.Lazy.t
+  ; implements : Virtual_rules.t
+  ; parameters : Module_name.t list Resolve.Memo.t
   ; includes : Includes.t
   ; preprocessing : Pp_spec.t
   ; opaque : bool
@@ -92,7 +96,6 @@ type t =
   ; js_of_ocaml : Js_of_ocaml.In_context.t option Js_of_ocaml.Mode.Pair.t
   ; sandbox : Sandbox_config.t
   ; package : Package.t option
-  ; vimpl : Vimpl.t option
   ; melange_package_name : Lib_name.t option
   ; modes : Lib_mode.Map.Set.t
   ; bin_annot : bool
@@ -110,6 +113,7 @@ let flags t = t.flags
 let requires_compile t = t.requires_compile
 let requires_hidden t = t.requires_hidden
 let requires_link t = Memo.Lazy.force t.requires_link
+let parameters t = t.parameters
 let includes t = t.includes
 let preprocessing t = t.preprocessing
 let opaque t = t.opaque
@@ -119,12 +123,25 @@ let sandbox t = t.sandbox
 let set_sandbox t sandbox = { t with sandbox }
 let package t = t.package
 let melange_package_name t = t.melange_package_name
-let vimpl t = t.vimpl
+let implements t = t.implements
 let modes t = t.modes
 let bin_annot t = t.bin_annot
 let context t = Super_context.context t.super_context
 let dep_graphs t = t.modules.dep_graphs
 let ocaml t = t.ocaml
+
+let parameters_main_modules parameters =
+  let open Resolve.Memo.O in
+  let* parameters = parameters in
+  Resolve.Memo.List.map parameters ~f:(fun param ->
+    let+ main = Lib.main_module_name param in
+    match main with
+    | Some main -> main
+    | None ->
+      Code_error.raise
+        "Expected library parameter to have a main module"
+        [ "param", Lib.to_dyn param ])
+;;
 
 let create
       ~super_context
@@ -140,7 +157,8 @@ let create
       ~js_of_ocaml
       ~package
       ~melange_package_name
-      ?vimpl
+      ?(implements = Virtual_rules.no_implements)
+      ?parameters
       ?modes
       ?bin_annot
       ?loc
@@ -164,6 +182,11 @@ let create
       in
       requires_compile, requires_hidden
   in
+  let parameters =
+    match parameters with
+    | None -> Resolve.Memo.return []
+    | Some parameters -> parameters_main_modules parameters
+  in
   let sandbox = Sandbox_config.no_special_requirements in
   let modes =
     let default =
@@ -183,7 +206,7 @@ let create
       ~sandbox
       ~obj_dir
       ~sctx:super_context
-      ~vimpl
+      ~impl:implements
       ~modules
   and+ bin_annot =
     match bin_annot with
@@ -198,6 +221,8 @@ let create
   ; requires_compile = direct_requires
   ; requires_hidden = hidden_requires
   ; requires_link
+  ; implements
+  ; parameters
   ; includes =
       Includes.make ~project ~opaque ~direct_requires ~hidden_requires ocaml.lib_config
   ; preprocessing
@@ -206,7 +231,6 @@ let create
   ; js_of_ocaml
   ; sandbox
   ; package
-  ; vimpl
   ; melange_package_name
   ; modes
   ; bin_annot
@@ -279,10 +303,10 @@ let for_module_generated_at_link_time cctx ~requires ~module_ =
        their implementation must also be compiled with -opaque *)
     Ocaml.Version.supports_opaque_for_mli cctx.ocaml.version
   in
-  let direct_requires = requires in
-  let hidden_requires = Resolve.Memo.return [] in
   let modules = singleton_modules module_ in
   let includes =
+    let hidden_requires = Resolve.Memo.return [] in
+    let direct_requires = requires in
     Includes.make
       ~project:(Scope.project cctx.scope)
       ~opaque
@@ -316,24 +340,5 @@ let for_plugin_executable t ~embed_in_plugin_libraries =
 ;;
 
 let without_bin_annot t = { t with bin_annot = false }
-
-let entry_module_names sctx t =
-  match Lib_info.entry_modules (Lib.info t) with
-  | External d -> Resolve.Memo.of_result d
-  | Local ->
-    let+ modules = Dir_contents.modules_of_local_lib sctx (Lib.Local.of_lib_exn t) in
-    modules |> Modules.entry_modules |> List.map ~f:Module.name |> Resolve.return
-;;
-
-let root_module_entries t =
-  let open Action_builder.O in
-  let* requires = Resolve.Memo.read t.requires_compile in
-  let* l =
-    Action_builder.List.map requires ~f:(fun lib ->
-      Action_builder.of_memo (entry_module_names t.super_context lib) >>= Resolve.read)
-  in
-  Action_builder.return (List.concat l)
-;;
-
 let set_obj_dir t obj_dir = { t with obj_dir }
 let set_modes t ~modes = { t with modes }

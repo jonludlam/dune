@@ -1,4 +1,4 @@
-(lang dune 3.20)
+(lang dune 3.21)
 ;          ^^^^
 ; When changing the version, don't forget to regenerate *.opam files
 ; by running [dune build].
@@ -54,10 +54,13 @@ Dune also supports multi-context builds, such as building against
 several opam roots/switches simultaneously. This helps maintaining
 packages across several versions of OCaml and gives cross-compilation
 for free.
-"))
+")
+ (documentation
+  (depends odoc)))
 
 (package
  (name dune-build-info)
+ (dir otherlibs/dune-build-info)
  (synopsis "Embed build information inside executable")
  (depends
   (ocaml (>= 4.08)))
@@ -72,6 +75,7 @@ executable was built.
 
 (package
  (name dune-private-libs)
+ (dir otherlibs/dune-private-libs)
  (synopsis "Private libraries of Dune")
  (depends
   (csexp (>= 1.5.0))
@@ -79,6 +83,7 @@ executable was built.
   (dyn (= :version))
   (stdune (= :version))
   (ocaml (>= 4.08)))
+ (maintenance_intent none)
  (description "\
 !!!!!!!!!!!!!!!!!!!!!!
 !!!!! DO NOT USE !!!!!
@@ -91,6 +96,7 @@ no stability guarantee.
 
 (package
  (name dune-configurator)
+ (dir otherlibs/configurator)
  (synopsis "Helper library for gathering system configuration")
  (depends
   (ocaml (>= 4.08.0))
@@ -109,6 +115,7 @@ Among other things, dune-configurator allows one to:
 
 (package
  (name dune-action-plugin)
+ (dir otherlibs/dune-action-plugin)
  (synopsis "[experimental] API for writing dynamic Dune actions")
  (depends
   (dune-glob (= :version))
@@ -130,30 +137,34 @@ execution of the action.
 
 (package
  (name dune-glob)
+ (dir otherlibs/dune-glob)
  (synopsis "Glob string matching language supported by dune")
  (depends
   (stdune (= :version))
   dyn
-  ordering
-  (dune-private-libs (= :version)))
+  re
+  ordering)
  (description "\
 dune-glob provides a parser and interpreter for globs as \
 understood by dune language."))
 
 (package
  (name dune-site)
+ (dir otherlibs/dune-site)
  (synopsis "Embed locations information inside executable and libraries")
  (depends (dune-private-libs (= :version)))
  (description ""))
 
 (package
  (name dune-rpc)
+ (dir otherlibs/dune-rpc)
  (synopsis "Communicate with dune using rpc")
- (depends csexp ordering dyn xdg (stdune (= :version)) (pp (>= 1.1.0)))
+ (depends ocamlc-loc csexp ordering dyn xdg (stdune (= :version)) (pp (>= 1.1.0)))
  (description "Library to connect and control a running dune instance"))
 
 (package
  (name dune-rpc-lwt)
+ (dir otherlibs/dune-rpc-lwt)
  (synopsis "Communicate with dune using rpc and Lwt")
  (depends
   (dune-rpc (= :version))
@@ -164,52 +175,84 @@ understood by dune language."))
 
 (package
  (name dyn)
+ (dir otherlibs/dyn)
  (synopsis "Dynamic type")
  (depends
   (ocaml (>= 4.08.0))
   (ordering (= :version))
   (pp (>= 1.1.0)))
+ (maintenance_intent none)
  (description "Dynamic type"))
 
 (package
  (name ordering)
+ (dir otherlibs/ordering)
  (synopsis "Element ordering")
  (depends
   (ocaml (>= 4.08.0)))
+ (maintenance_intent none)
  (description "Element ordering"))
 
 (package
  (name xdg)
+ (dir otherlibs/xdg)
  (synopsis "XDG Base Directory Specification")
  (depends
   (ocaml (>= 4.08)))
  (description "https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html"))
 
 (package
+ (name top-closure)
+ (dir otherlibs/top-closure)
+ (synopsis "Topological Closure")
+ (depends
+  (ocaml (>= 4.08)))
+ (maintenance_intent none)
+ (description "Generic Topological Closure"))
+
+(package
  (name stdune)
+ (dir otherlibs/stdune)
  (synopsis "Dune's unstable standard library")
  (depends
   (ocaml (>= 4.08.0))
   base-unix
+  (csexp (>= 1.5.0))
   (dyn (= :version))
+  (fs-io (= :version))
   (ordering (= :version))
   (pp (>= 2.0.0))
-  (csexp (>= 1.5.0)))
+  (top-closure (= :version)))
+ (maintenance_intent none)
  (description "This library offers no backwards compatibility guarantees. Use at your own risk."))
 
 (package
  (name ocamlc-loc)
+ (dir otherlibs/ocamlc-loc)
  (synopsis "Parse ocaml compiler output into structured form")
  (conflicts
   (ocaml-lsp-server (< 1.15.0)))
  (depends
   (ocaml (>= 4.08.0))
   (dyn (= :version)))
+ (maintenance_intent none)
  (description "This library offers no backwards compatibility guarantees. Use at your own risk."))
 
 (package
  (name chrome-trace)
+ (dir otherlibs/chrome-trace)
  (synopsis "Chrome trace event generation library")
  (depends
   (ocaml (>= 4.08.0)))
  (description "This library offers no backwards compatibility guarantees. Use at your own risk."))
+
+(package
+ (name fs-io)
+ (dir otherlibs/fs-io)
+ (synopsis "File System Operations")
+ (depends
+  base-unix
+  (ocaml (>= 4.08)))
+ (maintenance_intent none)
+ (description "Misc. Collection of File System Operations"))
+

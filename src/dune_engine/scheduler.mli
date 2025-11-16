@@ -1,6 +1,6 @@
 (** Scheduling *)
 
-open! Import
+open Import
 
 module Config : sig
   type t =
@@ -104,6 +104,7 @@ val wait_for_process
 type termination_reason =
   | Normal
   | Cancel
+  | Timeout
 
 val wait_for_build_process
   :  ?timeout_seconds:float

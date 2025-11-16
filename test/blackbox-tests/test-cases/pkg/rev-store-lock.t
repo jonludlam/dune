@@ -2,6 +2,7 @@ Testing whether the revision store locks properly.
 
 To start with we create a repository in with a `foo` package.
 
+  $ . ../git-helpers.sh
   $ . ./helpers.sh
   $ mkrepo
   $ mkpkg foo 1.0 <<EOF
@@ -31,6 +32,6 @@ We set the project up to depend on `foo`
 Creating a lock should thus work.
 
   $ mkdir dune-workspace-cache
-  $ XDG_CACHE_HOME=$(pwd)/fake-xdg-cache dune pkg lock
+  $ XDG_CACHE_HOME=$(pwd)/fake-xdg-cache dune_pkg_lock_normalized
   Solution for dune.lock:
   - foo.1.0

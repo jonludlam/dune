@@ -81,12 +81,7 @@ end = struct
     let+ names = if multi then multi_fields else single_fields
     and+ loc = loc
     and+ dune_syntax = Dune_lang.Syntax.get_exn Stanza.syntax
-    and+ package =
-      field_o
-        "package"
-        (let+ loc = loc
-         and+ pkg = Stanza_common.Pkg.decode in
-         loc, pkg)
+    and+ package = Stanza_pkg.field_opt ()
     and+ project = Dune_project.get_exn () in
     let names, public_names = names in
     let names =
@@ -159,7 +154,7 @@ end = struct
           Some
             { public_names
             ; package =
-                Stanza_common.Pkg.default_exn ~loc project (pluralize "executable" ~multi)
+                Stanza_pkg.default_exn ~loc project (pluralize "executable" ~multi)
             }
       | Some (loc, _), None ->
         User_error.raise
@@ -263,8 +258,9 @@ module Link_mode = struct
   let simple_representations_including_wasm = ("wasm", wasm) :: simple_representations
 
   let simple =
-    Dune_lang.Decoder.enum simple_representations
-    <|> sum [ "wasm", Syntax.since Stanza.syntax (3, 17) >>> return wasm ]
+    ("wasm", Syntax.since Stanza.syntax (3, 17) >>> return wasm)
+    :: List.map simple_representations ~f:(fun (x, y) -> x, return y)
+    |> enum'
   ;;
 
   let decode =

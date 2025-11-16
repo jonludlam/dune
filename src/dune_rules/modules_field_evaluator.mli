@@ -18,6 +18,7 @@ type kind =
   | Virtual of Virtual.t
   | Implementation of Implementation.t
   | Exe_or_normal_lib
+  | Parameter
 
 val eval
   :  expander:Expander.t
@@ -27,5 +28,5 @@ val eval
   -> kind:kind
   -> src_dir:Path.Build.t
   -> version:Dune_lang.Syntax.Version.t
-  -> Stanza_common.Modules_settings.t
+  -> Modules_settings.t
   -> ((Loc.t * Module.Source.t) Module_trie.t * Module.t Module_trie.t) Memo.t

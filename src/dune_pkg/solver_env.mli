@@ -4,6 +4,8 @@ type t
 
 val empty : t
 val equal : t -> t -> bool
+val hash : t -> int
+val digest_feed : t Dune_digest.Feed.t
 val compare : t -> t -> ordering
 val to_dyn : t -> Dyn.t
 val is_empty : t -> bool
@@ -27,6 +29,7 @@ val extend : t -> t -> t
 val with_defaults : t
 
 val pp : t -> 'a Pp.t
+val pp_oneline : t -> 'a Pp.t
 val unset_multi : t -> Package_variable_name.Set.t -> t
 
 (** [remove_all_except t names] returns an environment with the same bindings

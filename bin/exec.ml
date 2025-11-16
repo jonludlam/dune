@@ -115,48 +115,60 @@ let build_prog ~no_rebuild ~prog p =
     p
 ;;
 
-let get_path_and_build_if_necessary sctx ~no_rebuild ~dir ~prog =
+let dir_of_context common sctx =
+  let context = Dune_rules.Super_context.context sctx in
+  Path.Build.relative (Context.build_dir context) (Common.prefix_target common "")
+;;
+
+let get_path common sctx ~prog =
   let open Memo.O in
+  let dir = dir_of_context common sctx in
   match Filename.analyze_program_name prog with
   | In_path ->
     Super_context.resolve_program_memo sctx ~dir ~loc:None prog
     >>= (function
      | Error (_ : Action.Prog.Not_found.t) -> not_found_with_suggestions ~dir ~prog
-     | Ok p -> build_prog ~no_rebuild ~prog p)
+     | Ok p -> Memo.return p)
   | Relative_to_current_dir ->
     let path = Path.relative_to_source_in_build_or_external ~dir prog in
     Build_system.file_exists path
     >>= (function
-     | true -> build_prog ~no_rebuild ~prog path
+     | true -> Memo.return path
      | false -> not_found_with_suggestions ~dir ~prog)
   | Absolute ->
-    (match
-       let prog = Path.of_string prog in
-       if Path.exists prog
-       then Some prog
-       else if not Sys.win32
-       then None
-       else (
-         let prog = Path.extend_basename prog ~suffix:Bin.exe in
-         Option.some_if (Path.exists prog) prog)
-     with
-     | Some prog -> Memo.return prog
-     | None -> not_found_with_suggestions ~dir ~prog)
+    let path =
+      Path.of_string prog
+      |> Path.Expert.try_localize_external
+      |> Path.to_string
+      |> Path.relative_to_source_in_build_or_external ~dir
+    in
+    if Path.equal (Path.external_ Path.External.root) path
+    then not_found ~hints:[] ~prog
+    else
+      Build_system.file_exists path
+      >>= (function
+       | true -> Memo.return path
+       | false -> not_found_with_suggestions ~dir ~prog)
 ;;
 
-let step ~setup ~prog ~args ~common ~no_rebuild ~context ~on_exit () =
+let get_path_and_build_if_necessary common sctx ~no_rebuild ~prog =
   let open Memo.O in
-  let* sctx = setup >>| Import.Main.find_scontext_exn ~name:context in
-  let* env = Super_context.context_env sctx in
-  let expand = Cmd_arg.expand ~root:(Common.root common) ~sctx in
+  let* path = get_path common sctx ~prog in
+  match Filename.analyze_program_name prog with
+  | In_path | Relative_to_current_dir -> build_prog ~no_rebuild ~prog path
+  | Absolute -> Memo.return path
+;;
+
+let step ~prog ~args ~common ~no_rebuild ~context ~on_exit () =
+  let open Memo.O in
+  let* sctx = Super_context.find_exn context in
   let* path =
-    let dir =
-      let context = Dune_rules.Super_context.context sctx in
-      Path.Build.relative (Context.build_dir context) (Common.prefix_target common "")
-    in
-    let* prog = expand prog in
-    get_path_and_build_if_necessary sctx ~no_rebuild ~dir ~prog
-  and* args = Memo.parallel_map args ~f:expand in
+    let* prog = Cmd_arg.expand ~root:(Common.root common) ~sctx prog in
+    get_path_and_build_if_necessary common sctx ~no_rebuild ~prog
+  and* args =
+    Memo.parallel_map args ~f:(Cmd_arg.expand ~root:(Common.root common) ~sctx)
+  in
+  let* env = Super_context.context_env sctx in
   Memo.of_non_reproducible_fiber
   @@ Dune_engine.Process.run_inherit_std_in_out
        ~dir:(Path.of_string Fpath.initial_cwd)
@@ -175,7 +187,7 @@ let step ~setup ~prog ~args ~common ~no_rebuild ~context ~on_exit () =
    directory lock.
 
    Returns the absolute path to the executable. *)
-let build_prog_via_rpc_if_necessary ~dir ~no_rebuild prog =
+let build_prog_via_rpc_if_necessary ~dir ~no_rebuild builder lock_held_by prog =
   match Filename.analyze_program_name prog with
   | In_path ->
     (* This case is reached if [dune exec] is passed the name of an
@@ -213,7 +225,16 @@ let build_prog_via_rpc_if_necessary ~dir ~no_rebuild prog =
           Dune_lang.Dep_conf.File
             (Dune_lang.String_with_vars.make_text Loc.none (Path.to_string path))
         in
-        Build_cmd.build_via_rpc_server ~print_on_success:false ~targets:[ target ])
+        let targets = Rpc.Rpc_common.prepare_targets [ target ] in
+        let open Fiber.O in
+        Rpc.Rpc_common.fire_request
+          ~name:"build"
+          ~wait:true
+          ~lock_held_by
+          builder
+          Dune_rpc_impl.Decl.build
+          targets
+        >>| Rpc.Rpc_common.wrap_build_outcome_exn ~print_on_success:false)
     in
     Path.to_absolute_filename path
   | Absolute ->
@@ -222,7 +243,7 @@ let build_prog_via_rpc_if_necessary ~dir ~no_rebuild prog =
     else not_found ~hints:[] ~prog
 ;;
 
-let exec_building_via_rpc_server ~common ~prog ~args ~no_rebuild =
+let exec_building_via_rpc_server ~common ~prog ~args ~no_rebuild builder lock_held_by =
   let open Fiber.O in
   let ensure_terminal v =
     match (v : Cmd_arg.t) with
@@ -240,7 +261,9 @@ let exec_building_via_rpc_server ~common ~prog ~args ~no_rebuild =
   let dir = Context_name.build_dir context in
   let prog = ensure_terminal prog in
   let args = List.map args ~f:ensure_terminal in
-  let+ prog = build_prog_via_rpc_if_necessary ~dir ~no_rebuild prog in
+  let+ prog =
+    build_prog_via_rpc_if_necessary ~dir ~no_rebuild builder lock_held_by prog
+  in
   restore_cwd_and_execve (Common.root common) prog args Env.initial
 ;;
 
@@ -252,12 +275,11 @@ let exec_building_directly ~common ~config ~context ~prog ~args ~no_rebuild =
     Scheduler.go_with_rpc_server_and_console_status_reporting ~common ~config
     @@ fun () ->
     let open Fiber.O in
-    let* setup = Import.Main.setup () in
     let on_exit = Console.printf "Program exited with code [%d]" in
-    Scheduler.Run.poll
+    Dune_engine.Scheduler.Run.poll
     @@
     let* () = Fiber.return @@ Scheduler.maybe_clear_screen ~details_hum:[] config in
-    build @@ step ~setup ~prog ~args ~common ~no_rebuild ~context ~on_exit
+    build @@ step ~prog ~args ~common ~no_rebuild ~context ~on_exit
   | No ->
     Scheduler.go_with_rpc_server ~common ~config
     @@ fun () ->
@@ -266,16 +288,13 @@ let exec_building_directly ~common ~config ~context ~prog ~args ~no_rebuild =
     build_exn (fun () ->
       let open Memo.O in
       let* sctx = setup >>| Import.Main.find_scontext_exn ~name:context in
-      let* env = Super_context.context_env sctx in
-      let expand = Cmd_arg.expand ~root:(Common.root common) ~sctx in
-      let* prog =
-        let dir =
-          let context = Dune_rules.Super_context.context sctx in
-          Path.Build.relative (Context.build_dir context) (Common.prefix_target common "")
-        in
-        let* prog = expand prog in
-        get_path_and_build_if_necessary sctx ~no_rebuild ~dir ~prog >>| Path.to_string
-      and* args = Memo.parallel_map ~f:expand args in
+      let* env = Super_context.context_env sctx
+      and* prog =
+        let* prog = Cmd_arg.expand ~root:(Common.root common) ~sctx prog in
+        get_path_and_build_if_necessary common sctx ~no_rebuild ~prog >>| Path.to_string
+      and* args =
+        Memo.parallel_map ~f:(Cmd_arg.expand ~root:(Common.root common) ~sctx) args
+      in
       restore_cwd_and_execve (Common.root common) prog args env)
 ;;
 
@@ -303,18 +322,9 @@ let term : unit Term.t =
               | Pid_from_lockfile pid -> sprintf " (pid: %d)" pid)
          ]
      | No ->
-       if not (Common.Builder.equal builder Common.Builder.default)
-       then
-         User_warning.emit
-           [ Pp.textf
-               "Your build request is being forwarded to a running Dune instance%s. Note \
-                that certain command line arguments may be ignored."
-               (match lock_held_by with
-                | Unknown -> ""
-                | Pid_from_lockfile pid -> sprintf " (pid: %d)" pid)
-           ];
        Scheduler.go_without_rpc_server ~common ~config
-       @@ fun () -> exec_building_via_rpc_server ~common ~prog ~args ~no_rebuild)
+       @@ fun () ->
+       exec_building_via_rpc_server ~common ~prog ~args ~no_rebuild builder lock_held_by)
   | Ok () -> exec_building_directly ~common ~config ~context ~prog ~args ~no_rebuild
 ;;
 

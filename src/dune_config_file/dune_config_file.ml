@@ -1,7 +1,6 @@
 module Dune_config = struct
   open Stdune
   open Dune_lang.Decoder
-  module Spawn = Dune_spawn.Spawn
   module Display = Display
   module Scheduler = Dune_engine.Scheduler
   module Sandbox_mode = Dune_engine.Sandbox_mode
@@ -11,7 +10,6 @@ module Dune_config = struct
   module Pform = Dune_lang.Pform
   module Log = Dune_util.Log
   module Config = Dune_config.Config
-  module Execution_env = Dune_util.Execution_env
 
   (* the configuration file use the same version numbers as dune-project files for
      simplicity *)
@@ -50,6 +48,32 @@ module Dune_config = struct
         ; "maintenance_intent", f t.maintenance_intent
         ; "license", f t.license
         ]
+    ;;
+  end
+
+  module Pkg_enabled = struct
+    type t =
+      | Set of Loc.t * Dune_config.Config.Toggle.t
+      | Unset
+
+    let decode =
+      let open Dune_lang.Decoder in
+      let+ loc, value = located (enum [ "enabled", `Enabled; "disabled", `Disabled ]) in
+      Set (loc, value)
+    ;;
+
+    let equal x y =
+      match x, y with
+      | Set (x_loc, x_toggle), Set (y_loc, y_toggle) ->
+        Loc.equal x_loc y_loc && Dune_config.Config.Toggle.equal x_toggle y_toggle
+      | Set _, _ | _, Set _ -> false
+      | Unset, Unset -> true
+    ;;
+
+    let to_dyn = function
+      | Set (loc, toggle) ->
+        Dyn.variant "Set" [ Loc.to_dyn loc; Config.Toggle.to_dyn toggle ]
+      | Unset -> Dyn.variant "Unset" []
     ;;
   end
 
@@ -236,6 +260,7 @@ module Dune_config = struct
       ; action_stdout_on_success : Action_output_on_success.t field
       ; action_stderr_on_success : Action_output_on_success.t field
       ; project_defaults : Project_defaults.t field
+      ; pkg_enabled : Pkg_enabled.t field
       ; experimental : (string * (Loc.t * string)) list field
       }
   end
@@ -260,6 +285,7 @@ module Dune_config = struct
           ; action_stdout_on_success
           ; action_stderr_on_success
           ; project_defaults
+          ; pkg_enabled
           ; experimental
           }
       =
@@ -287,6 +313,7 @@ module Dune_config = struct
               (Tuple.T2.equal String.equal (Tuple.T2.equal Loc.equal String.equal)))
            t.experimental
            experimental
+      && field Pkg_enabled.equal t.pkg_enabled pkg_enabled
     ;;
   end
 
@@ -314,6 +341,7 @@ module Dune_config = struct
       ; action_stderr_on_success =
           field a.action_stderr_on_success b.action_stderr_on_success
       ; project_defaults = field a.project_defaults b.project_defaults
+      ; pkg_enabled = field a.pkg_enabled b.pkg_enabled
       ; experimental = field a.experimental b.experimental
       }
     ;;
@@ -338,6 +366,7 @@ module Dune_config = struct
           ; action_stdout_on_success
           ; action_stderr_on_success
           ; project_defaults
+          ; pkg_enabled
           ; experimental
           }
       =
@@ -358,6 +387,7 @@ module Dune_config = struct
         ; ( "action_stderr_on_success"
           , field Action_output_on_success.to_dyn action_stderr_on_success )
         ; "project_defaults", field Project_defaults.to_dyn project_defaults
+        ; "pkg_enabled", field Pkg_enabled.to_dyn pkg_enabled
         ; ( "experimental"
           , field Dyn.(list (pair string (fun (_, v) -> string v))) experimental )
         ]
@@ -382,6 +412,7 @@ module Dune_config = struct
       ; action_stdout_on_success = None
       ; action_stderr_on_success = None
       ; project_defaults = None
+      ; pkg_enabled = None
       ; experimental = None
       }
     ;;
@@ -467,6 +498,7 @@ module Dune_config = struct
         ; maintenance_intent = None
         ; license = Some [ "LICENSE" ]
         }
+    ; pkg_enabled = Unset
     ; experimental = []
     }
   ;;
@@ -533,6 +565,7 @@ module Dune_config = struct
     and+ action_stderr_on_success =
       field_o "action_stderr_on_success" (3, 0) Action_output_on_success.decode
     and+ project_defaults = field_o "project_defaults" (3, 17) Project_defaults.decode
+    and+ pkg_enabled = field_o "pkg" (3, 20) Pkg_enabled.decode
     and+ experimental =
       field_o "experimental" (3, 8) (repeat (pair string (located string)))
     in
@@ -554,6 +587,7 @@ module Dune_config = struct
     ; action_stdout_on_success
     ; action_stderr_on_success
     ; project_defaults
+    ; pkg_enabled
     ; experimental
     }
   ;;
@@ -568,8 +602,9 @@ module Dune_config = struct
   let decode_fields_of_workspace_file = decode_generic ~min_dune_version:(3, 0)
 
   let user_config_file =
-    let config_dir = Xdg.config_dir (Lazy.force Dune_util.xdg) in
-    Path.relative (Path.of_filename_relative_to_initial_cwd config_dir) "dune/config"
+    lazy
+      (let config_dir = Xdg.config_dir (Lazy.force Dune_util.xdg) in
+       Path.relative (Path.of_filename_relative_to_initial_cwd config_dir) "dune/config")
   ;;
 
   include Dune_lang.Versioned_file.Make (struct
@@ -586,6 +621,7 @@ module Dune_config = struct
   ;;
 
   let load_user_config_file () =
+    let user_config_file = Lazy.force user_config_file in
     if Path.exists user_config_file
     then load_config_file user_config_file
     else Partial.empty
@@ -617,7 +653,6 @@ module Dune_config = struct
       | Preserve -> ()
       | Clear_on_rebuild -> Console.reset ()
       | Clear_on_rebuild_and_flush_history -> Console.reset_flush_history ());
-    Stdune.Io.set_copy_impl Config.(get copy_file);
     Log.verbose
     := match t.display with
        | Simple { verbosity = Verbose; _ } -> true

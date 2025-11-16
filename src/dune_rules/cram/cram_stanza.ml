@@ -20,6 +20,20 @@ let decode_applies_to =
   subtree <|> predicate
 ;;
 
+module Conflict_markers = struct
+  type t =
+    | Error
+    | Ignore
+
+  let to_string = function
+    | Error -> "error"
+    | Ignore -> "ignore"
+  ;;
+
+  let all = [ Error; Ignore ]
+  let decode = enum (List.map all ~f:(fun x -> to_string x, x))
+end
+
 type t =
   { loc : Loc.t
   ; applies_to : applies_to
@@ -27,8 +41,10 @@ type t =
   ; deps : Dep_conf.t Bindings.t option
   ; enabled_if : Blang.t
   ; locks : Locks.t
+  ; conflict_markers : Conflict_markers.t option
   ; package : Package.t option
   ; runtest_alias : (Loc.t * bool) option
+  ; timeout : (Loc.t * float) option
   }
 
 include Stanza.Make (struct
@@ -62,18 +78,38 @@ let decode =
      and+ enabled_if = Enabled_if.decode ~allowed_vars:Any ~since:None ()
      and+ locks = Locks.field ~check:(Dune_lang.Syntax.since Stanza.syntax (2, 9)) ()
      and+ package =
-       Stanza_common.Pkg.field_opt ~check:(Dune_lang.Syntax.since Stanza.syntax (2, 8)) ()
+       Stanza_pkg.field_opt ~check:(Dune_lang.Syntax.since Stanza.syntax (2, 8)) ()
+       >>| Option.map ~f:snd
      and+ runtest_alias =
        field_o
          "runtest_alias"
          (Dune_lang.Syntax.since Stanza.syntax (3, 12) >>> located bool)
+     and+ timeout =
+       field_o
+         "timeout"
+         (Dune_lang.Syntax.since Stanza.syntax (3, 20)
+          >>> located float
+          >>| fun (loc, t) ->
+          if t >= 0.
+          then loc, t
+          else
+            User_error.raise
+              ~loc
+              [ Pp.text "Timeout value must be a non-negative float." ])
+     and+ conflict_markers =
+       field_o
+         "conflict_markers"
+         (Dune_lang.Syntax.since Stanza.syntax (3, 21) >>> Conflict_markers.decode)
      in
-     { loc; alias; deps; enabled_if; locks; applies_to; package; runtest_alias })
-;;
-
-let stanza =
-  [ ( "cram"
-    , let+ t = decode in
-      List.singleton (make_stanza t) )
-  ]
+     { loc
+     ; alias
+     ; deps
+     ; enabled_if
+     ; locks
+     ; applies_to
+     ; package
+     ; runtest_alias
+     ; timeout
+     ; conflict_markers
+     })
 ;;

@@ -2,10 +2,18 @@
  (_
   (env-vars
    (DUNE_CONFIG__BACKGROUND_SANDBOXES disabled)
-   (DUNE_CONFIG__BACKGROUND_DIGESTS disabled))
-  (binaries ../utils/dune_cmd.exe ../utils/dunepp.exe
-   ../utils/melc_stdlib_prefix.exe ../utils/refmt.exe ../utils/curl
-   ../utils/sherlodoc.exe ../utils/ocaml_index.exe)))
+   (DUNE_CONFIG__BACKGROUND_DIGESTS disabled)
+   ;; We set ocaml to always be colored since it changes the output of
+   ;; ocamlc error messages. See https://github.com/ocaml/ocaml/issues/14144
+   (OCAML_COLOR always))
+  (binaries
+   ../utils/dune_cmd.exe
+   ../utils/dunepp.exe
+   ../utils/melc_stdlib_prefix.exe
+   ../utils/refmt.exe
+   ../utils/curl
+   ../utils/sherlodoc.exe
+   ../utils/ocaml_index.exe)))
 
 (cram
  (applies_to pp-cwd)
@@ -14,8 +22,17 @@
 (cram
  (applies_to :whole_subtree)
  (deps
+  (env_var OCAML_COLOR)
   %{bin:dune_cmd}
-  (package dune)))
+  (package dune))
+ ;; We don't allow conflict markers in tests
+ (conflict_markers error)
+ ;; Tests shouldn't take longer than 60s
+ (timeout 60))
+
+(cram
+ (applies_to meta-template-version-bug version-corruption)
+ (deps ./git-helpers.sh))
 
 (cram
  (applies_to windows-diff github6644)
@@ -50,12 +67,6 @@
 ;; The following test is flaky due to platform sensitivity
 ;; see https://github.com/ocaml/dune/issues/3744
 
-(subdir
- cram
- (cram
-  (applies_to error)
-  (enabled_if false)))
-
 ;; CONDITIONALLY DISABLED TESTS
 
 (cram
@@ -76,25 +87,6 @@
   (and
    (<> %{ocaml-config:system} macosx)
    (<> %{ocaml-config:system} win))))
-
-(subdir
- cram
- ;; mac has a different sh error message
- (cram
-  (applies_to error)
-  (enabled_if
-   (<> "macosx" %{ocaml-config:system}))))
-
-(subdir
- cram
- (cram
-  (applies_to hg-access)
-  (enabled_if %{bin-available:hg})))
-
-(cram
- (applies_to link-time-transitive-deps dune-build-info-subdir)
- (deps
-  (package dune-build-info)))
 
 (cram
  (applies_to version-corruption)

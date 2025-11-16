@@ -3,7 +3,7 @@ Test that we can set variables
   $ . ./helpers.sh
 
   $ make_lockdir
-  $ cat >dune.lock/test.pkg <<EOF
+  $ make_lockpkg test <<EOF
   > (version 0.0.1)
   > (build
   >  (system "\| cat >test.config <<EOF
@@ -18,7 +18,7 @@ Test that we can set variables
   >  ))
   > EOF
 
-  $ cat >dune.lock/usetest.pkg <<EOF
+  $ make_lockpkg usetest <<EOF
   > (version 0.0.1)
   > (depends test)
   > (build
@@ -36,11 +36,11 @@ Test that we can set variables
   abool: true
   astring: foobar
   somestrings: foo bar
-  share path: ../../test/target/share/test
+  share path: ../../test.0.0.1-4720c73ae6ba1444af0517c28d2b366e/target/share/test
   version: 1.2.3
 
   $ show_pkg_cookie test
-  { files = map {}
+  { files = []
   ; variables =
       [ ("abool", Bool true)
       ; ("astring", String "foobar")
@@ -51,7 +51,7 @@ Test that we can set variables
 
 Now we demonstrate we get a proper error from invalid .config files:
 
-  $ cat >dune.lock/test.pkg <<EOF
+  $ make_lockpkg test <<EOF
   > (version 0.0.1)
   > (build
   >  (system "\| cat >test.config <<EOF
@@ -67,4 +67,5 @@ Now we demonstrate we get a proper error from invalid .config files:
            ^^
   Error parsing test.config
   Reason: Parse error
-  -> required by _build/_private/default/.pkg/test/target
+  -> required by
+     _build/_private/default/.pkg/test.0.0.1-69ac79828345d1ca458538ce94b5c970/target

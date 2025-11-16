@@ -31,7 +31,7 @@ let%expect_test "persistent digests" =
     48031a13035ffa6b93b6b79ce277d39c
     ---
 
-    INSTALL-COOKIE version 2
+    INSTALL-COOKIE version 3
     da4ce847dd41df462849adecfe43f4eb
     ---
 
@@ -43,8 +43,12 @@ let%expect_test "persistent digests" =
     72eb282c39bb084e69d6bd1615b8aaec
     ---
 
-    merlin-conf version 7
-    a14a4700929a15bb2030e36f71e66d20
+    CRAM-RESULT version 1
+    65e543aaf5ccc8148d50a1305aa3622b
+    ---
+
+    merlin-conf version 8
+    699a5c5c686662da218d0be3cb2f161c
     ---
 
     INCREMENTAL-DB version 6

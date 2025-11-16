@@ -1,4 +1,3 @@
-open! Stdune
 open Import
 module Inotify_lib = Async_inotify_for_dune.Async_inotify
 module Console = Dune_console
@@ -157,8 +156,6 @@ type t =
   ; sync_table : (string, Sync_id.t) Table.t
     (* Pending fs sync operations indexed by the special sync filename. *)
   }
-
-module Re = Dune_re
 
 let create_should_exclude_predicate ~watch_exclusions =
   (* TODO we should really take the predicate directly and not depend on

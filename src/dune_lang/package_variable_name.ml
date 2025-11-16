@@ -28,6 +28,8 @@ include (
   end) :
     Dune_util.Stringlike with type t := t)
 
+let hash t = String.hash (to_string t)
+let digest_feed = Dune_digest.Feed.contramap Dune_digest.Feed.string ~f:to_string
 let arch = of_string "arch"
 let os = of_string "os"
 let os_version = of_string "os-version"

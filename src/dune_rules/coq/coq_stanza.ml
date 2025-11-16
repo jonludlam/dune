@@ -15,6 +15,7 @@ let coq_syntax =
     ; (0, 8), `Since (3, 8)
     ; (0, 9), `Since (3, 16)
     ; (0, 10), `Since (3, 17)
+    ; (0, 11), `Since (3, 21)
     ]
 ;;
 
@@ -67,7 +68,7 @@ module Coqpp = struct
       include Poly
     end)
 
-  let p = "coq.pp", decode >>| fun x -> [ make_stanza x ]
+  let p = "coq.pp", decode_stanza decode
 end
 
 module Buildable = struct
@@ -156,7 +157,7 @@ module Extraction = struct
       include Poly
     end)
 
-  let p = "coq.extraction", decode >>| fun x -> [ make_stanza x ]
+  let p = "coq.extraction", decode_stanza decode
 end
 
 module Theory = struct
@@ -172,9 +173,12 @@ module Theory = struct
     ; buildable : Buildable.t
     ; coqdep_flags : Ordered_set_lang.Unexpanded.t
     ; coqdoc_flags : Ordered_set_lang.Unexpanded.t
+    ; coqdoc_header : String_with_vars.t option
+    ; coqdoc_footer : String_with_vars.t option
     }
 
   let coq_public_decode =
+    let* mask = Dune_lang.Package_mask.decode () in
     map_validate
       (let+ project = Dune_project.get_exn ()
        and+ loc_name =
@@ -196,7 +200,7 @@ module Theory = struct
             | None -> Package.Name.of_string name
             | Some (pkg, _) -> Package.Name.of_string pkg
           in
-          Stanza_common.Pkg.resolve project pkg
+          Stanza_pkg.resolve project mask (loc, pkg)
           |> Result.map ~f:(fun pkg -> Some (loc, pkg)))
   ;;
 
@@ -239,7 +243,7 @@ module Theory = struct
   let decode =
     fields
       (let+ name = field "name" Coq_lib_name.decode
-       and+ package = field_o "package" Stanza_common.Pkg.decode
+       and+ package = Stanza_pkg.field_opt () >>| Option.map ~f:snd
        and+ project = Dune_project.get_exn ()
        and+ public = coq_public_decode
        and+ synopsis = field_o "synopsis" string
@@ -259,6 +263,14 @@ module Theory = struct
          Ordered_set_lang.Unexpanded.field
            "coqdoc_flags"
            ~check:(Dune_lang.Syntax.since coq_syntax (0, 8))
+       and+ coqdoc_header =
+         field_o
+           "coqdoc_header"
+           (Dune_lang.Syntax.since coq_syntax (0, 11) >>> String_with_vars.decode)
+       and+ coqdoc_footer =
+         field_o
+           "coqdoc_footer"
+           (Dune_lang.Syntax.since coq_syntax (0, 11) >>> String_with_vars.decode)
        in
        (* boot libraries cannot depend on other theories *)
        check_boot_has_no_deps boot buildable;
@@ -274,6 +286,8 @@ module Theory = struct
        ; enabled_if
        ; coqdep_flags
        ; coqdoc_flags
+       ; coqdoc_header
+       ; coqdoc_footer
        })
   ;;
 
@@ -293,8 +307,8 @@ module Theory = struct
     x
   ;;
 
-  let coqlib_p = "coqlib", decode >>| fun x -> [ make_stanza (coqlib_warn x) ]
-  let p = "coq.theory", decode >>| fun x -> [ make_stanza x ]
+  let coqlib_p = "coqlib", decode_stanza (decode >>| coqlib_warn)
+  let p = "coq.theory", decode_stanza decode
 end
 
 let unit_stanzas =

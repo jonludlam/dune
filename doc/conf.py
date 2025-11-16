@@ -30,6 +30,30 @@ lexers[DuneLexer.name] = DuneLexer(startinline=True)
 lexers[OpamLexer.name] = OpamLexer()
 lexers[CramLexer.name] = CramLexer()
 
+from pathlib import Path
+import re
+
+# Read constant from a file
+version_file = Path(__file__).parent.parent / "otherlibs/dune-rpc/private/types.ml"
+text = version_file.read_text()
+
+match = re.search(r"\s*let\s+latest\s*=\s*(\d+),\s*(\d+)", text)
+if not match:
+    raise RuntimeError("Could not find latest version in " + version_file)
+
+major, minor = match.groups()
+LATEST = f"{major}.{minor}"
+
+from sphinx.application import Sphinx
+
+def replace_substitutions(app, docname, source):
+    src = source[0]
+    source[0] = src.replace("{{latest}}", app.config.latest)
+
+def setup(app: Sphinx):
+    app.add_config_value("latest", LATEST, "env")
+    app.connect("source-read", replace_substitutions)
+
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
@@ -101,12 +125,21 @@ html_theme = 'furo'
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
-html_theme_options = {}
+html_theme_options = {
+    "top_of_page_buttons": ["edit", "view"],
+
+    "source_repository": "https://github.com/ocaml/dune/",
+    "source_branch": "main",
+    "source_directory": "doc/",
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-# html_static_path = ['_static']
+html_static_path = ['_static']
+html_css_files = [
+    'css/custom.css'
+]
 
 
 # -- Options for HTMLHelp output ------------------------------------------
@@ -164,11 +197,3 @@ texinfo_documents = [
      author, 'dune', 'One line description of project.',
      'Miscellaneous'),
 ]
-
-html_context = {
-    'display_github': True,
-    'github_user': 'ocaml',
-    'github_repo': 'dune',
-    'github_version': 'main',
-    'conf_py_path': '/doc/',
-}

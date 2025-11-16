@@ -1,3 +1,4 @@
+  $ . ../git-helpers.sh
   $ . ./helpers.sh
 
 When we fetch a package source we should also fetch any submodules. Since we
@@ -30,7 +31,7 @@ someotherrepo as a submodule.
 
   $ mkdir foo && cd foo
   $ make_lockdir
-  $ cat >dune.lock/test.pkg <<EOF
+  $ make_lockpkg test <<EOF
   > (version 0.0.1)
   > (source (fetch (url "git+file://$SOMEREPO")))
   > (build (progn (run cat foo) (run cat mysubmodule/bar)))
@@ -41,16 +42,11 @@ not the case and only somerepo is pulled.
 
   $ build_pkg test 2>&1 | sed -E 's|.*/cat|cat|'
   hello
-  File "dune.lock/test.pkg", line 3, characters 33-36:
-  3 | (build (progn (run cat foo) (run cat mysubmodule/bar)))
-                                       ^^^
-  Error: Logs for package test
-  cat: mysubmodule/bar: No such file or directory
-  
+  world
+
 When the above works it should act like:
 
-  $ make_lockdir
-  $ cat >dune.lock/test.pkg <<EOF
+  $ make_lockpkg test <<EOF
   > (version 0.0.1)
   > (source (fetch (url "git+file://$SOMEREPO")))
   > (build 

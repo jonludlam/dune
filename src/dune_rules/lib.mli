@@ -12,6 +12,7 @@ val to_dyn : t -> Dyn.t
 val name : t -> Lib_name.t
 
 val implements : t -> t Resolve.Memo.t option
+val parameters : t -> t list Resolve.Memo.t
 
 (** [is_local t] returns [true] whenever [t] is defined in the local workspace *)
 val is_local : t -> bool
@@ -88,6 +89,13 @@ module DB : sig
 
   (** A database allow to resolve library names *)
   type t = db
+
+  val with_parent : t -> parent:t option -> t
+
+  (** Create a library database from a specified list of library paths. A
+      library path is a path to a "lib" directory such as those found in the
+      OCAMLPATH variable or the "path" field of findlib.conf. *)
+  val of_paths : Context.t -> paths:Path.t list -> t Memo.t
 
   val installed : Context.t -> t Memo.t
 

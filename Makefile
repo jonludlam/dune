@@ -23,11 +23,17 @@ help:
 
 .PHONY: bootstrap
 bootstrap:
+	rm -rf _boot
 	$(MAKE) -B $(BIN)
 
 .PHONY: test-bootstrap
 test-bootstrap:
+	rm -rf _test_boot
 	@ocaml boot/bootstrap.ml --boot-dir _test_boot
+
+.PHONY: test-bootstrap-script
+test-bootstrap-script:
+	@ocamlc -i boot/bootstrap.ml
 
 .PHONY: release
 release: $(BIN)
@@ -108,6 +114,9 @@ test-all: $(BIN)
 
 test-all-sans-melange: $(BIN)
 	$(BIN) build @runtest @runtest-js @runtest-coq
+
+test-ox: $(BIN)
+	$(BIN) runtest test/blackbox-tests/test-cases/oxcaml
 
 .PHONY: check
 check: $(BIN)

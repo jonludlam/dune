@@ -336,9 +336,8 @@ include Sub_system.Register_end_point (struct
           ~link_args
           ~promote:None
       in
-      let partitions_flags =
-        partition_flags ~expander ~lib_name:(snd lib.name) ~backends
-      in
+      let lib_name = snd lib.name in
+      let partitions_flags = partition_flags ~expander ~lib_name ~backends in
       let deps, sandbox =
         let sandbox =
           let project = Scope.project scope in
@@ -368,11 +367,23 @@ include Sub_system.Register_end_point (struct
           | Native | Best | Byte -> Memo.return Alias0.runtest
           | Jsoo mode -> Jsoo_rules.js_of_ocaml_runtest_alias ~dir ~mode
         in
+        let alias =
+          [ Alias.Name.to_string runtest_alias; Lib_name.Local.to_string lib_name ]
+          |> String.concat ~sep:"-"
+          |> Alias.Name.of_string
+          |> Alias.make ~dir
+        in
+        let* () =
+          let runtest_alias = Alias.make ~dir runtest_alias in
+          Dep.alias alias
+          |> Action_builder.dep
+          |> Rules.Produce.Alias.add_deps runtest_alias ~loc
+        in
         Super_context.add_alias_action
           sctx
           ~dir
           ~loc:info.loc
-          (Alias.make ~dir runtest_alias)
+          alias
           (let open Action_builder.O in
            let source_files = List.concat_map source_modules ~f:Module.sources in
            let+ actions =

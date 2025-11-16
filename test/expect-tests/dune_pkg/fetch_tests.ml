@@ -1,6 +1,7 @@
 open Stdune
 module Scheduler = Dune_engine.Scheduler
 module Checksum = Dune_pkg.Checksum
+module Rev_store = Dune_pkg.Rev_store
 module Fetch = Dune_pkg.Fetch
 
 let plaintext_md = "tar-inputs/plaintext.md"
@@ -73,7 +74,9 @@ let run thunk =
   let config : Scheduler.Config.t =
     { concurrency = 1; stats = None; print_ctrl_c_warning = false; watch_exclusions = [] }
   in
-  Scheduler.Run.go config ~on_event thunk
+  Scheduler.Run.go config ~on_event (fun () ->
+    let open Fiber.O in
+    Rev_store_tests.git_init_and_config_user (Path.of_string ".") >>> thunk ())
 ;;
 
 let%expect_test "downloading simple file" =
@@ -206,7 +209,8 @@ let%expect_test "downloading, tarball with no checksum match" =
 
 let download_git rev_store url ~target =
   let open Fiber.O in
-  Fetch.fetch_git rev_store ~target ~url:(Loc.none, url)
+  Rev_store_tests.git_init_and_config_user (Path.of_string ".")
+  >>> Fetch.fetch_git rev_store ~target ~url:(Loc.none, url)
   >>| function
   | Error _ ->
     let errs = [ Pp.text "Failure while downloading" ] in
@@ -217,14 +221,13 @@ let download_git rev_store url ~target =
 let%expect_test "downloading via git" =
   let source = subdir "source-repository" in
   let url = OpamUrl.parse (sprintf "git+file://%s" (Path.to_string source)) in
-  let rev_store_dir = subdir "rev-store" in
   let target = subdir "checkout-into-here" in
   (* The file at [entry] is created by [create_repo_at] *)
   let entry = Path.relative target "entry" in
   Path.mkdir_p target;
   run (fun () ->
     let open Fiber.O in
-    let* rev_store = Dune_pkg.Rev_store.load_or_create ~dir:rev_store_dir in
+    let* rev_store = Rev_store.get in
     let* (_commit : string) = Rev_store_tests.create_repo_at source in
     let+ () = download_git rev_store url ~target in
     print_endline (Io.read_file entry));
@@ -234,12 +237,11 @@ let%expect_test "downloading via git" =
 let%expect_test "attempting to download an invalid git url" =
   let source = subdir "source" in
   let url = OpamUrl.parse "git+file://foo/bar" in
-  let rev_store_dir = subdir "rev-store-dir" in
   let target = subdir "target" in
   let entry = Path.relative target "e" in
   run (fun () ->
     let open Fiber.O in
-    let* rev_store = Dune_pkg.Rev_store.load_or_create ~dir:rev_store_dir in
+    let* rev_store = Rev_store.get in
     let* (_commit : string) = Rev_store_tests.create_repo_at source in
     let+ () = download_git rev_store url ~target in
     print_endline (Io.read_file entry));

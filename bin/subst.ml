@@ -120,8 +120,8 @@ let subst_string s path ~map =
 ;;
 
 let subst_file path ~map opam_package_files =
-  match Io.with_file_in (Path.source path) ~f:Io.read_all_unless_large with
-  | Error () ->
+  match Io.with_file_in (Path.source path) ~f:Fs_io.read_all_unless_large with
+  | Error exn ->
     let hints =
       if Sys.word_size = 32
       then
@@ -133,7 +133,7 @@ let subst_file path ~map opam_package_files =
     in
     User_warning.emit
       ~hints
-      [ Pp.textf "Ignoring large file: %s" (Path.Source.to_string path) ]
+      [ Pp.textf "Ignoring file: %s" (Path.Source.to_string path); Exn.pp exn ]
   | Ok s ->
     let version =
       if Path.Source.Set.mem opam_package_files path
@@ -153,7 +153,7 @@ let subst_file path ~map opam_package_files =
       | None, Some x -> Some x
       | Some x, Some y -> Some (x ^ "\n" ^ y)
     in
-    Option.iter contents ~f:(Io.write_file path)
+    Option.iter ~f:(Io.overwrite_file path) contents
 ;;
 
 (* Extending the Dune_project APIs, but adding capability to modify *)

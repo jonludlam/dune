@@ -83,7 +83,7 @@ Add ".ocamlformat" file.
   > EOF
 
 Lock the to trigger package management
-  $ dune pkg lock
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - printer.2.0
 
@@ -116,7 +116,7 @@ dependencies of the project are isolated from one another.
   > EOF
 
 Relock the project.
-  $ dune pkg lock
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   (no dependencies to lock)
 
@@ -126,7 +126,6 @@ There is no leak here. It is not taking the "printer" lib from dev-tools.
   3 |  (libraries printer))
                   ^^^^^^^
   Error: Library "printer" not found.
-  -> required by _build/default/.foo.eobjs/byte/dune__exe__Foo.cmi
   -> required by _build/default/.foo.eobjs/native/dune__exe__Foo.cmx
   -> required by _build/default/foo.exe
   -> required by _build/install/default/bin/foo

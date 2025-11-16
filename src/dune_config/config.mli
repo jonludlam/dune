@@ -17,6 +17,7 @@ module Toggle : sig
     ]
 
   val all : (string * t) list
+  val equal : t -> t -> bool
   val of_string : string -> (t, string) result
   val to_string : t -> string
   val to_dyn : t -> Dyn.t
@@ -37,9 +38,6 @@ val global_lock : Toggle.t t
 (** whether dune should add cutoff to various memoized functions where it
     reduces concurrency *)
 val cutoffs_that_reduce_concurrency_in_watch_mode : Toggle.t t
-
-(** whether dune should optimize file copying on Linux/MacOS *)
-val copy_file : [ `Portable | `Best ] t
 
 (** Execute some actions in background threads. See [Action_exec] for the
     concrete list of actions *)

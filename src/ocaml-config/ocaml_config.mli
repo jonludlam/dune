@@ -118,6 +118,8 @@ val cmt_magic_number : t -> string
 val natdynlink_supported : t -> bool
 val supports_shared_libraries : t -> bool
 val windows_unicode : t -> bool
+val ox : t -> bool
+val parameterised_modules : t -> bool
 
 (** {1 Values} *)
 

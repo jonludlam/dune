@@ -198,17 +198,15 @@ module Options_implied_by_dash_p = struct
 
   let options =
     let+ root =
+      let doc =
+        "Use this directory as workspace root instead of guessing it. Note that this \
+         option doesn't change the interpretation of targets given on the command line. \
+         It is only intended for scripts."
+      in
       Arg.(
         value
         & opt (some dir) None
-        & info
-            [ "root" ]
-            ~docs
-            ~docv:"DIR"
-            ~doc:
-              "Use this directory as workspace root instead of guessing it. Note that \
-               this option doesn't change the interpretation of targets given on the \
-               command line. It is only intended for scripts.")
+        & info [ "root" ] ~docs ~docv:"DIR" ~doc ~env:(Cmd.Env.info ~doc "DUNE_ROOT"))
     and+ ignore_promoted_rules =
       Arg.(
         value
@@ -520,6 +518,7 @@ let shared_with_config_file =
   ; action_stdout_on_success
   ; action_stderr_on_success
   ; project_defaults = None
+  ; pkg_enabled = None
   ; experimental = None
   }
 ;;
@@ -1240,12 +1239,7 @@ let print_entering_message c =
 
 (* CR-someday rleshchinskiy: The split between `build` and `init` seems quite arbitrary,
    we should probably refactor that at some point. *)
-let build (builder : Builder.t) =
-  let root =
-    Workspace_root.create_exn
-      ~default_is_cwd:builder.default_root_is_cwd
-      ~specified_by_user:builder.root
-  in
+let build (root : Workspace_root.t) (builder : Builder.t) =
   let stats =
     Option.map builder.stats_trace_file ~f:(fun f ->
       let stats =
@@ -1301,8 +1295,8 @@ let maybe_init_cache (cache_config : Dune_cache.Config.t) =
        Disabled)
 ;;
 
-let init (builder : Builder.t) =
-  let c = build builder in
+let init_with_root ~(root : Workspace_root.t) (builder : Builder.t) =
+  let c = build root builder in
   if c.root.dir <> Filename.current_dir_name then Sys.chdir c.root.dir;
   Path.set_root (normalize_path (Path.External.cwd ()));
   Path.Build.set_build_dir (Path.Outside_build_dir.of_string c.builder.build_dir);
@@ -1351,7 +1345,7 @@ let init (builder : Builder.t) =
   Log.info
     [ Pp.textf
         "Shared cache location: %s"
-        (Path.to_string Dune_cache_storage.Layout.root_dir)
+        (Path.to_string (Lazy.force Dune_cache_storage.Layout.root_dir))
     ];
   Dune_rules.Main.init
     ~stats:c.stats
@@ -1412,6 +1406,17 @@ let init (builder : Builder.t) =
       let path = Path.external_ file in
       Dune_util.Gc.serialize ~path stat);
   c, config
+;;
+
+let init (builder : Builder.t) =
+  let root =
+    Workspace_root.create_exn
+      ~from:Filename.current_dir_name
+      ~default_is_cwd:builder.default_root_is_cwd
+      ~specified_by_user:builder.root
+      ()
+  in
+  init_with_root ~root builder
 ;;
 
 let footer =

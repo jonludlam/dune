@@ -3,6 +3,8 @@ open Stdune
 
 type t
 
+(* [x t] returns the [Context_name.t] of of the cross-compilation context, if
+  there is any *)
 val x : t -> Dune_engine.Context_name.t option
 val capture_outputs : t -> bool
 val root : t -> Workspace_root.t
@@ -42,12 +44,19 @@ module Builder : sig
   val default : t
 end
 
-(** [init] creates a [Common.t] by executing a sequence of side-effecting actions to
-    initialize Dune's working environment based on the options determined in the\
-    [Builder.t].
+(** [init_with_root] creates a [Common.t] by executing a sequence of
+    side-effecting actions to initialize Dune's working environment based on the
+    options determined in the\ [Builder.t].
 
     Return the [Common.t] and the final configuration, which is the same as the one
     returned in the [config] field of [Dune_rules.Workspace.workspace ()]) *)
+val init_with_root
+  :  root:Workspace_root.t
+  -> Builder.t
+  -> t * Dune_config_file.Dune_config.t
+
+(** [init] is like [init_with_root], where [root] is the Workspace root
+    corresponding to the current working directory. *)
 val init : Builder.t -> t * Dune_config_file.Dune_config.t
 
 (** [examples [("description", "dune cmd foo"); ...]] is an [EXAMPLES] manpage

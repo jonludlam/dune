@@ -1,4 +1,4 @@
-open! Import
+open Import
 
 (* Currently only string values can be represented. Opam silently converts
    between strings to booleans when appropriate so this doesn't prevent boolean
@@ -17,6 +17,8 @@ let true_ = "true"
 let false_ = "false"
 let string = Fun.id
 let equal = String.equal
+let hash = String.hash
+let digest_feed = Dune_digest.Feed.string
 let compare = String.compare
 let to_dyn = Dyn.string
 let to_string = Fun.id

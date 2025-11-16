@@ -26,7 +26,8 @@ module Group_root : sig
 end
 
 type t =
-  | Lock_dir
+  | Lock_dir of
+      Source_tree.Dir.t (* XXX Will have to be modified once lock dirs are targets *)
   | Generated
   | Source_only of Source_tree.Dir.t
   | Standalone of Source_tree.Dir.t * Dune_file.t
@@ -52,3 +53,13 @@ val directory_targets
         -> bool Memo.t)
   -> dir:Path.Build.t
   -> Loc.t Path.Build.Map.t Memo.t
+
+val find_directory_target_ancestor
+  :  Path.Build.t
+  -> jsoo_enabled:
+       (eval:(Blang.t -> bool Memo.t)
+        -> dir:Path.Build.t
+        -> in_context:Js_of_ocaml.In_context.t Js_of_ocaml.Mode.Pair.t
+        -> mode:Js_of_ocaml.Mode.t
+        -> bool Memo.t)
+  -> Path.Build.t option Memo.t

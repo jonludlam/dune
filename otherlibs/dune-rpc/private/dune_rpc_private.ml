@@ -10,34 +10,9 @@ include Exported_types
 module Version_error = Versioned.Version_error
 module Decl = Decl
 module Sub = Sub
+module Public = Public
 
 module type Fiber = Fiber_intf.S
-
-module Public = struct
-  module Request = struct
-    type ('a, 'b) t = ('a, 'b) Decl.Request.witness
-
-    let ping = Procedures.Public.ping.decl
-    let diagnostics = Procedures.Public.diagnostics.decl
-    let format_dune_file = Procedures.Public.format_dune_file.decl
-    let promote = Procedures.Public.promote.decl
-    let build_dir = Procedures.Public.build_dir.decl
-  end
-
-  module Notification = struct
-    type 'a t = 'a Decl.Notification.witness
-
-    let shutdown = Procedures.Public.shutdown.decl
-  end
-
-  module Sub = struct
-    type 'a t = 'a Sub.t
-
-    let diagnostic = Sub.of_procedure Procedures.Poll.diagnostic
-    let progress = Sub.of_procedure Procedures.Poll.progress
-    let running_jobs = Sub.of_procedure Procedures.Poll.running_jobs
-  end
-end
 
 module Server_notifications = struct
   let abort = Procedures.Server_side.abort.decl
@@ -480,7 +455,7 @@ module Client = struct
           Response.Error.create
             ~kind:Connection_dead
             ~payload
-            ~message:"connection terminated. this request will never receive a response"
+            ~message:"Connection terminated. This request will never receive a response."
             ()
         in
         Error error
@@ -640,9 +615,12 @@ module Client = struct
       Builder.declare_request t Procedures.Public.diagnostics;
       Builder.declare_request t Procedures.Poll.(poll running_jobs);
       Builder.declare_notification t Procedures.Public.shutdown;
+      Builder.declare_request t Procedures.Public.format;
       Builder.declare_request t Procedures.Public.format_dune_file;
       Builder.declare_request t Procedures.Public.promote;
+      Builder.declare_request t Procedures.Public.promote_many;
       Builder.declare_request t Procedures.Public.build_dir;
+      Builder.declare_request t Procedures.Public.runtest;
       Builder.implement_notification t Procedures.Server_side.abort (fun () ->
         handler.abort);
       Builder.implement_notification t Procedures.Server_side.log (fun () -> handler.log);

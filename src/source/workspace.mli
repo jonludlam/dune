@@ -8,7 +8,8 @@ module Lib_name := Dune_lang.Lib_name
 
 module Lock_dir : sig
   type t =
-    { path : Path.Source.t
+    { loc : Loc.t
+    ; path : Path.Source.t
     ; version_preference : Dune_pkg.Version_preference.t option
     ; solver_env : Dune_pkg.Solver_env.t option
     ; unset_solver_vars : Dune_lang.Package_variable_name.Set.t option
@@ -24,7 +25,7 @@ module Lock_dir : sig
 end
 
 module Lock_dir_selection : sig
-  (** A dsl for selecting a lockdir either by literally naming it or using a
+  (** A DSL for selecting a lockdir either by literally naming it or using a
       cond expression to select a lockdir based on blangs *)
   type t
 
@@ -129,7 +130,7 @@ type t = private
 val equal : t -> t -> bool
 val to_dyn : t -> Dyn.t
 val hash : t -> int
-val find_lock_dir : t -> Path.Source.t -> Lock_dir.t option
+val find_lock_dir : t -> Path.t -> Lock_dir.t option
 val add_repo : t -> Dune_pkg.Pkg_workspace.Repository.t -> t
 val default_repositories : Dune_pkg.Pkg_workspace.Repository.t list
 

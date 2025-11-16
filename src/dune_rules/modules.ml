@@ -185,16 +185,9 @@ module Mangle = struct
                |> Module_name.of_string
            ; public = main_module_name
            })
-    | Exe ->
-      sprintf "dune__exe"
-      |> Module_name.of_string
-      |> Visibility.Map.make_both
-      |> Option.some
+    | Exe -> Module_name.of_string "dune__exe" |> Visibility.Map.make_both |> Option.some
     | Melange ->
-      sprintf "melange"
-      |> Module_name.of_string
-      |> Visibility.Map.make_both
-      |> Option.some
+      Module_name.of_string "melange" |> Visibility.Map.make_both |> Option.some
     | Unwrapped -> None
   ;;
 
@@ -227,9 +220,8 @@ module Mangle = struct
       then None
       else
         Some
-          (Path.Local.L.relative
-             Path.Local.root
-             (List.map ~f:Module_name.uncapitalize path)
+          (List.map ~f:Module_name.uncapitalize path
+           |> Path.Local.L.relative Path.Local.root
            |> Path.Local.set_extension ~ext:".ml")
     in
     Module.generated ?install_as path ~obj_name ~kind ~src_dir:obj_dir
@@ -418,7 +410,9 @@ module Group = struct
     fun acc modules m -> loop acc modules (Module.path m)
   ;;
 
-  let parents (t : t) m = parents_modules [ t ] t.modules m
+  (* [parents acc modules m] returns [acc] followed by all parent groups of 
+     module [m], ordered from innermost to outermost parent. *)
+  let parents (t : t) m = parents_modules [ t ] t.modules m |> List.rev
 
   module Memo_traversals = struct
     let rec parallel_map ({ alias; modules; name = _ } as t) ~f =
@@ -461,8 +455,11 @@ module Group = struct
         (* XXX ocamldep can't currently give us precise dependencies for
            modules under [(include_subdirs qualified)] directories. For that
            reason we currently depend on everything under the sub-directory. *)
-        Module_name.Map.values g.modules |> List.concat_map ~f:closure_node
-      | _ -> [ lib_interface ]
+        let closure =
+          Module_name.Map.values g.modules |> List.concat_map ~f:closure_node
+        in
+        lib_interface :: closure
+      | _ -> [ g.alias; lib_interface ]
 
     and closure_node = function
       | Module m -> [ m ]
@@ -490,7 +487,10 @@ module Group = struct
       Ok (if Module_name.equal name (Module.name li) then [ li ] else [])
     | _ ->
       (* TODO don't recompute this *)
-      let parents = parents t of_ |> List.map ~f:(fun g -> g.modules, Some g.name) in
+      let parents =
+        parents_modules [ t ] t.modules of_
+        |> List.map ~f:(fun g -> g.modules, Some g.name)
+      in
       Find_dep.find_dep_of_parents parents name
   ;;
 
@@ -1027,19 +1027,6 @@ module With_vlib = struct
     function
     | Modules t -> lib_interface t
     | Impl { impl = _; vlib; _ } -> lib_interface vlib
-  ;;
-
-  let main_module_name =
-    let main_module_name t =
-      match t.modules with
-      | Singleton m -> Some (Module.name m)
-      | Unwrapped _ -> None
-      | Wrapped w -> Some w.group.name
-      | Stdlib w -> Some w.main_module_name
-    in
-    function
-    | Modules t -> main_module_name t
-    | Impl { vlib; impl = _; _ } -> main_module_name vlib
   ;;
 
   let impl =

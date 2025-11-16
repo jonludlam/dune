@@ -18,7 +18,7 @@ Set up a project that depends on a package that is being downloaded
   $ echo test.tar > fake-curls
   $ SRC_PORT=1
   $ SRC_CHECKSUM=$(md5sum test.tar | cut -f1 -d' ')
-  $ cat >dune.lock/test.pkg <<EOF
+  $ make_lockpkg test <<EOF
   > (version 0.0.1)
   > (source
   >  (fetch
@@ -48,7 +48,7 @@ cache, it will fail, as the source is 404 now:
   File "dune.lock/test.pkg", line 4, characters 7-25:
   4 |   (url http://localhost:1)
              ^^^^^^^^^^^^^^^^^^
-  Error: download failed with code 404
+  Error: Download failed with code 404
          
   [1]
 

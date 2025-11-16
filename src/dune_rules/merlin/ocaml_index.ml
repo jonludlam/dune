@@ -1,8 +1,27 @@
 open Import
 open Memo.O
 
+let ocaml_index_dev_tool_exe_path_building_if_necessary () =
+  let open Action_builder.O in
+  let path = Path.build (Pkg_dev_tool.exe_path Ocaml_index) in
+  let+ () = Action_builder.path path in
+  Ok path
+;;
+
+let ocaml_index_dev_tool_exists () =
+  Lock_dir.dev_tool_source_lock_dir Ocaml_index |> Path.source |> Path.Untracked.exists
+;;
+
 let ocaml_index sctx ~dir =
-  Super_context.resolve_program ~loc:None ~dir sctx "ocaml-index"
+  match ocaml_index_dev_tool_exists () with
+  | true -> ocaml_index_dev_tool_exe_path_building_if_necessary ()
+  | false ->
+    Super_context.resolve_program
+      sctx
+      ~dir
+      "ocaml-index"
+      ~loc:None
+      ~hint:"opam install ocaml-index"
 ;;
 
 let index_file_name = "cctx.ocaml-index"
@@ -64,7 +83,12 @@ let cctx_rules cctx =
     in
     (* Indexation also depends on the current stanza's modules *)
     let modules_deps =
-      let cm_kind = Lib_mode.Cm_kind.(Ocaml Cmi) in
+      let modes = Compilation_context.modes cctx in
+      let cm_kind =
+        if modes.ocaml.native || modes.ocaml.byte
+        then Lib_mode.Cm_kind.(Ocaml Cmi)
+        else Lib_mode.Cm_kind.(Melange Cmi)
+      in
       (* We only index occurrences in user-written modules *)
       Compilation_context.modules cctx
       |> Modules.With_vlib.drop_vlib
@@ -104,6 +128,8 @@ let context_indexes sctx =
       match Stanza.repr stanza with
       | Executables.T exes | Tests.T { exes; _ } -> Some (Executables.obj_dir ~dir exes)
       | Library.T lib -> Some (Library.obj_dir ~dir lib)
+      | Melange_stanzas.Emit.T { target; _ } ->
+        Some (Obj_dir.make_melange_emit ~dir ~name:target)
       | _ -> None
     in
     match obj with

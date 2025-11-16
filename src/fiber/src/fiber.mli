@@ -4,7 +4,7 @@
     {{:https://en.wikipedia.org/wiki/Structured_concurrency} "structured
     concurrency"}. *)
 
-open! Stdune
+open Stdune
 
 (** {1 Generals} *)
 
@@ -123,13 +123,13 @@ module Var : sig
   type 'a t
 
   (** Create a new variable *)
-  val create : unit -> 'a t
+  val create : 'a -> 'a t
 
   (** [get var] reads the value of [var]. *)
-  val get : 'a t -> 'a option fiber
+  val get : 'a t -> 'a fiber
 
   (** Same as [get] but raises if [var] is unset. *)
-  val get_exn : 'a t -> 'a fiber
+  val get_exn : 'a option t -> 'a fiber
 
   (** [set var value fiber] sets [var] to [value] during the execution of
       [fiber].
@@ -141,7 +141,9 @@ module Var : sig
       ]} *)
   val set : 'a t -> 'a -> (unit -> 'b fiber) -> 'b fiber
 
-  val unset : 'a t -> (unit -> 'b fiber) -> 'b fiber
+  (** [update var ~f fiber] runs [fiber] with [var] updated by applying [f] to its current
+      value. Warning: do not use a lot of stack space in [f]. *)
+  val update : 'a t -> f:('a -> 'a) -> (unit -> 'b fiber) -> 'b fiber
 end
 
 (** {1 Error handling} *)
@@ -246,6 +248,34 @@ module Svar : sig
 
   (** [write t a] sets the current value of [t] to [a] *)
   val write : 'a t -> 'a -> unit fiber
+end
+
+(** {1 Lazy fibers} *)
+module Lazy : sig
+  (** An asynchronous computation which is executed once only when forced. *)
+  type 'a t
+
+  (** Create an already evaluated lazy computation. *)
+  val of_value : 'a -> 'a t
+
+  (** An already evaluated lazy computation of unit type (a more efficient shortcut for
+      [of_value ()]. *)
+  val unit : unit t
+
+  (** Create a lazy computation from a thunk which will only be executed when forced. *)
+  val create : (unit -> 'a fiber) -> 'a t
+
+  (** Check if a lazy computation has successfully finished. Note that this does not force
+      the computation and a [false] result does not guarantee that the computation hasn't
+      finished. *)
+  val is_value : 'a t -> bool
+
+  (** Force the lazy computation and return its result or reraise its exceptions. *)
+  val force : 'a t -> 'a fiber
+
+  (** Concurrently force multiple lazy computation and wait until they all finish,
+      reraising any exceptions. *)
+  val force_all_unit : unit t list -> unit fiber
 end
 
 module Mutex : sig

@@ -13,12 +13,35 @@ dune="dune"
 
 pkg_root="_build/_private/default/.pkg"
 
+default_lock_dir="dune.lock"
+source_lock_dir="${default_lock_dir}"
+
+# Prints the directory containing the package target and source dirs within the
+# _build directory.
+get_build_pkg_dir() {
+  package_name=$1
+  digest=$($dune pkg print-digest $package_name)
+  status=$?
+  if [ "$status" -eq "0" ]; then
+    echo "$pkg_root/$digest"
+  else
+    return 1
+  fi
+}
+
 build_pkg() {
-  $dune build $pkg_root/$1/target/
+  prefix=$(get_build_pkg_dir $1)
+  status=$?
+  if [ "$status" -eq "0" ]; then
+    $dune build "$prefix/target"
+  else
+    return 1
+  fi
 }
 
 show_pkg() {
-  find $pkg_root/$1 | sort | sed "s#$pkg_root/$1##"
+  prefix="$(get_build_pkg_dir $1)"
+  find "$prefix" | sort | sed "s#$prefix##"
 }
 
 strip_sandbox() {
@@ -26,11 +49,12 @@ strip_sandbox() {
 }
 
 show_pkg_targets() {
-  find $pkg_root/$1/target | sort | sed "s#$pkg_root/$1/target##"
+  prefix="$(get_build_pkg_dir $1)/target"
+  find "$prefix" | sort | sed "s#$prefix##"
 }
 
 show_pkg_cookie() {
-  $dune internal dump $pkg_root/$1/target/cookie
+  $dune internal dump "$(get_build_pkg_dir $1)/target/cookie"
 }
 
 mock_packages="mock-opam-repository/packages"
@@ -52,6 +76,27 @@ mkpkg() {
   cat >>$mock_packages/$name/$name.$version/opam
 }
 
+set_pkg_to () {
+  local value="${1}"
+  if grep "(pkg .*)" dune-workspace > /dev/null; then
+    sed -i.bak "s/(pkg .*)/(pkg ${value})/" dune-workspace
+  else
+    echo "(pkg ${value})" >> dune-workspace
+  fi
+}
+
+enable_pkg() {
+  set_pkg_to "enabled"
+}
+
+disable_pkg() {
+  set_pkg_to "disabled"
+}
+
+unset_pkg() {
+  sed -i.bak "/(pkg/d" dune-workspace
+}
+
 add_mock_repo_if_needed() {
   # default, but can be overridden, e.g. if git is required
   repo="${1:-file://$(pwd)/mock-opam-repository}"
@@ -59,7 +104,7 @@ add_mock_repo_if_needed() {
   if [ ! -e dune-workspace ]
   then
       cat >dune-workspace <<EOF
-(lang dune 3.10)
+(lang dune 3.20)
 (lock_dir
  (repositories mock))
 (repository
@@ -67,7 +112,7 @@ add_mock_repo_if_needed() {
  (url "${repo}"))
 EOF
   else
-    if ! grep '(name mock)' > /dev/null dune-workspace
+    if ! grep '(name mock)' dune-workspace > /dev/null
     then
       # add the repo definition
       cat >>dune-workspace <<EOF
@@ -76,11 +121,9 @@ EOF
  (url "${repo}"))
 EOF
  
-      # reference the repo
-      if grep -s '(repositories'
+      # reference the repo - only add lock_dir if no existing lock_dir references mock
+      if ! grep '(repositories' dune-workspace | grep 'mock' > /dev/null
       then
-        sed -i '' -e 's/(repositories \(.*\))/(repositories mock \1)/' dune-workspace
-      else
         cat >>dune-workspace <<EOF
 (lock_dir
  (repositories mock))
@@ -91,22 +134,61 @@ EOF
   fi
 }
 
+create_mock_repo() {
+  # Always create a fresh workspace with mock repository configuration
+  repo="${1:-file://$(pwd)/mock-opam-repository}"
+  cat >dune-workspace <<EOF
+(lang dune 3.20)
+(lock_dir
+ (repositories mock))
+(repository
+ (name mock)
+ (url "${repo}"))
+EOF
+}
+
 make_lockpkg() {
-  local dir="dune.lock"
-  mkdir -p $dir
-  local f="$dir/$1.pkg"
-  cat >$f
+  mkdir -p "${source_lock_dir}"
+  local f="${source_lock_dir}/$1.pkg"
+  cat > "$f"
+}
+
+append_to_lockpkg() {
+  local pkg="${1}"
+  cat >> "${source_lock_dir}/${pkg}.pkg"
+}
+
+make_lockpkg_file() {
+  local pkg="${1}"
+  local filename="${2}"
+  mkdir -p "${source_lock_dir}/${pkg}.files"
+  cat > "${source_lock_dir}/${pkg}.files/${filename}"
+}
+
+dune_pkg_lock_normalized() {
+  if dune pkg lock $@ 2> solve-stderr.txt; then
+    if [ "$DUNE_CONFIG__PORTABLE_LOCK_DIR" = "disabled" ]; then
+      cat solve-stderr.txt
+    else
+      cat solve-stderr.txt \
+        | awk '/Solution/{printf"%s:\n",$0;f=0};f{print};/Dependencies.*:/{f=1}' \
+        | sed 's/(none)/(no dependencies to lock)/'
+    fi
+  else
+    cat solve-stderr.txt | sed '/The dependency solver failed to find a solution for the following platforms:/,/\.\.\.with this error:/d'
+    return 1
+  fi
 }
 
 solve_project() {
   cat >dune-project
   add_mock_repo_if_needed
-  dune pkg lock $@
+  dune_pkg_lock_normalized $@
 }
 
 make_lockdir() {
-  mkdir -p dune.lock
-  cat >dune.lock/lock.dune <<EOF
+  mkdir -p "${source_lock_dir}"
+  cat > "${source_lock_dir}"/lock.dune <<EOF
 (lang package 0.1)
 (repositories (complete true))
 EOF
@@ -114,7 +196,7 @@ EOF
 
 make_project() {
   cat <<EOF
-(lang dune 3.11)
+(lang dune 3.20)
  (package
   (name x)
   (allow_empty)
@@ -123,9 +205,19 @@ EOF
 }
 
 print_source() {
-  cat dune.lock/$1.pkg | sed -n "/source/,//p" | sed "s#$PWD#PWD#g" | tr '\n' ' '| tr -s " "
+  cat "${default_lock_dir}"/"$1".pkg | sed -n "/source/,//p" | sed "s#$PWD#PWD#g" | tr '\n' ' '| tr -s " "
 }
 
 solve() {
   make_project $@ | solve_project
+}
+
+# Pass a string of the form PACKAGE_NAME.PACKAGE_VERSION and replaces the
+# hashes in all package digests matching the specified package with
+# "DIGEST_HASH". Use this for packages whose lockfiles have different contents
+# on different machines, such as lockfiles generated by expanding the "$PWD"
+# variable.
+sanitize_pkg_digest() {
+    local pkg_name_and_version="${1}"
+    sed "s#$pkg_name_and_version-[0-9a-f]*#$pkg_name_and_version-DIGEST_HASH#"
 }

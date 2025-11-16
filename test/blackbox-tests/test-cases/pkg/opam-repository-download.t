@@ -1,5 +1,6 @@
 Helper shell function that generates an opam file for a package:
 
+  $ . ../git-helpers.sh
   $ . ./helpers.sh
   $ mkrepo
 
@@ -27,7 +28,7 @@ Make a mock repo tarball that will get used by dune to download the package
   > EOF
   $ add_mock_repo_if_needed "git+file://$(pwd)/mock-opam-repository"
 
-  $ dune pkg lock
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - bar.0.0.1
   - foo.0.0.1
@@ -39,19 +40,19 @@ Our cache folder should be populated with a revision store:
 
 Make sure lock.dune contains the repo hash:
 
-  $ grep "mock-opam-repository#$REPO_HASH" dune.lock/lock.dune > /dev/null
+  $ grep "mock-opam-repository#$REPO_HASH" ${default_lock_dir}/lock.dune > /dev/null
 
 Now try it with an a path. Given it is not a git URL, it can't be reproduced on
 other systems and thus shouldn't be included.
 
-  $ rm -r dune.lock dune-workspace
+  $ rm -r ${default_lock_dir} dune-workspace
   $ add_mock_repo_if_needed "file://$(pwd)/mock-opam-repository"
-  $ dune pkg lock
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - bar.0.0.1
   - foo.0.0.1
 
-  $ grep "mock-opam-repository#$REPO_HASH" dune.lock/lock.dune > /dev/null || echo "not found"
+  $ grep "mock-opam-repository#$REPO_HASH" ${default_lock_dir}/lock.dune > /dev/null || echo "not found"
   not found
 
 We also test that it is possible to specify a specific commit when locking a
@@ -66,24 +67,24 @@ in the repo and make sure it locks the older version.
   $ NEW_REPO_HASH=$(git rev-parse HEAD)
   $ cd ..
 
-  $ rm -r dune.lock dune-workspace
+  $ rm -r ${default_lock_dir} dune-workspace
   $ add_mock_repo_if_needed "git+file://$(pwd)/mock-opam-repository#${REPO_HASH}"
-  $ dune pkg lock
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - bar.0.0.1
   - foo.0.0.1
-  $ grep "mock-opam-repository#$REPO_HASH" dune.lock/lock.dune > /dev/null
+  $ grep "mock-opam-repository#$REPO_HASH" ${default_lock_dir}/lock.dune > /dev/null
 
 If we specify no branch however, it should be using the latest commit in the
 repository and thus the new foo package.
 
   $ rm dune-workspace
   $ add_mock_repo_if_needed "git+file://$(pwd)/mock-opam-repository"
-  $ dune pkg lock
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - bar.0.0.1
   - foo.0.1.0
-  $ grep "mock-opam-repository#$NEW_REPO_HASH" dune.lock/lock.dune > /dev/null
+  $ grep "mock-opam-repository#$NEW_REPO_HASH" ${default_lock_dir}/lock.dune > /dev/null
 
 A new package is released in the repo:
 
@@ -108,8 +109,8 @@ To be safe it doesn't access the repo, we make sure to move the mock-repo away
 
 So now the test should work as it can't access the repo:
 
-  $ rm -r dune.lock
-  $ dune pkg lock
+  $ rm -r ${default_lock_dir}
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - bar.0.0.1
   - foo.0.1.0
@@ -120,8 +121,8 @@ restored the repo to where it was before)
   $ rm -r dune-workspace
   $ add_mock_repo_if_needed "git+file://$(pwd)/mock-opam-repository#${NEWEST_REPO_HASH}"
   $ mv elsewhere mock-opam-repository
-  $ rm -r dune.lock
-  $ dune pkg lock
+  $ rm -r ${default_lock_dir}
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - bar.1.0.0
   - foo.0.1.0
@@ -145,8 +146,8 @@ sure that the default branch differs from `bar-2`).
 
 Locking that branch should work and pick `bar.2.0.0`:
 
-  $ rm -r dune.lock
-  $ dune pkg lock
+  $ rm -r ${default_lock_dir}
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - bar.2.0.0
   - foo.0.1.0
@@ -171,8 +172,8 @@ The repo should be using the `1.0` tag, as we don't want `bar.3.0.0`.
 
 So we should get `bar.1.0.0` when locking.
 
-  $ rm -r dune.lock
-  $ dune pkg lock
+  $ rm -r ${default_lock_dir}
+  $ dune_pkg_lock_normalized
   Solution for dune.lock:
   - bar.1.0.0
   - foo.0.1.0

@@ -35,6 +35,11 @@ module Public = struct
     let decl = Decl.Notification.make ~method_:"shutdown" ~generations:[ v1 ]
   end
 
+  module Format = struct
+    let v1 = Decl.Request.make_current_gen ~req:Conv.unit ~resp:Conv.unit ~version:1
+    let decl = Decl.Request.make ~method_:"format" ~generations:[ v1 ]
+  end
+
   module Format_dune_file = struct
     module V1 = struct
       let req =
@@ -56,17 +61,42 @@ module Public = struct
     let decl = Decl.Request.make ~method_:"promote" ~generations:[ v1 ]
   end
 
+  module Promote_many = struct
+    let v1 =
+      Decl.Request.make_current_gen
+        ~req:Files_to_promote.sexp
+        ~resp:Build_outcome_with_diagnostics.sexp
+        ~version:1
+    ;;
+
+    let decl = Decl.Request.make ~method_:"promote_many" ~generations:[ v1 ]
+  end
+
   module Build_dir = struct
     let v1 = Decl.Request.make_current_gen ~req:Conv.unit ~resp:Path.sexp ~version:1
     let decl = Decl.Request.make ~method_:"build_dir" ~generations:[ v1 ]
   end
 
+  module Runtest = struct
+    let v1 =
+      Decl.Request.make_current_gen
+        ~req:Conv.(list string)
+        ~resp:Build_outcome_with_diagnostics.sexp
+        ~version:1
+    ;;
+
+    let decl = Decl.Request.make ~method_:"runtest" ~generations:[ v1 ]
+  end
+
   let ping = Ping.decl
   let diagnostics = Diagnostics.decl
   let shutdown = Shutdown.decl
+  let format = Format.decl
   let format_dune_file = Format_dune_file.decl
   let promote = Promote.decl
+  let promote_many = Promote_many.decl
   let build_dir = Build_dir.decl
+  let runtest = Runtest.decl
 end
 
 module Server_side = struct

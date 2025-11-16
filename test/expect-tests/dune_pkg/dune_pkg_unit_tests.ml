@@ -65,16 +65,14 @@ module Update = struct
 end
 
 let lock_dir_encode_decode_round_trip_test ?commit ~lock_dir_path ~lock_dir () =
-  let lock_dir_path = Path.Source.of_string lock_dir_path in
+  let lock_dir_path = Path.of_string lock_dir_path in
   Lock_dir.Write_disk.(
     prepare ~portable_lock_dir:false ~lock_dir_path ~files:Package_name.Map.empty lock_dir
     |> commit);
   let lock_dir_round_tripped =
     try Lock_dir.read_disk_exn lock_dir_path with
     | User_error.E _ as exn ->
-      let metadata_path =
-        Path.Source.relative lock_dir_path Lock_dir.metadata_filename |> Path.source
-      in
+      let metadata_path = Path.relative lock_dir_path Lock_dir.metadata_filename in
       let metadata_file_contents = Io.read_file metadata_path in
       print_endline
         "Failed to parse lockdir. Dumping raw metadata file to assist debugging.";
@@ -116,7 +114,8 @@ let%expect_test "encode/decode round trip test for lockdir with no deps" =
          ~ocaml:None
          ~repos:None
          ~expanded_solver_variable_bindings:Expanded_variable_bindings.empty
-         ~solved_for_platform:None)
+         ~solved_for_platform:None
+         ~portable_lock_dir:false)
     ();
   [%expect
     {|
@@ -169,6 +168,7 @@ let%expect_test "encode/decode round trip test for lockdir with simple deps" =
            ; unset_variables = [ Package_variable_name.os_family ]
            }
          ~solved_for_platform:None
+         ~portable_lock_dir:false
          (Package_name.Map.of_list_exn
             [ mk_pkg_basic ~name:"foo" ~version:(Package_version.of_string "0.1.0")
             ; mk_pkg_basic ~name:"bar" ~version:(Package_version.of_string "0.2.0")
@@ -330,6 +330,7 @@ let%expect_test "encode/decode round trip test for lockdir with complex deps" =
       ~repos:(Some [ opam_repo ])
       ~expanded_solver_variable_bindings:Expanded_variable_bindings.empty
       ~solved_for_platform:None
+      ~portable_lock_dir:false
       (Package_name.Map.of_list_exn [ pkg_a; pkg_b; pkg_c ])
   in
   lock_dir_encode_decode_round_trip_test ~lock_dir_path:"complex_lock_dir" ~lock_dir ();
@@ -477,6 +478,7 @@ let%expect_test "encode/decode round trip test with locked repo revision" =
         ~repos:(Some [ opam_repo ])
         ~expanded_solver_variable_bindings:Expanded_variable_bindings.empty
         ~solved_for_platform:None
+        ~portable_lock_dir:false
         (Package_name.Map.of_list_exn [ pkg_a; pkg_b; pkg_c ])
     in
     lock_dir_encode_decode_round_trip_test

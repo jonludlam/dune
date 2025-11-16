@@ -22,12 +22,12 @@ We don't need bar, so we skip it
   Solution for dune.lock:
   - foo.0.0.1
 
-  $ cat dune.lock/foo.pkg
+  $ cat ${default_lock_dir}/foo.0.0.1.pkg
   (version 0.0.1)
 
 We should also skip any artifacts that bar references:
 
-  $ [ -d dune.lock/bar.files ] && ls -1 -x dune.lock/bar.files
+  $ [ -d ${default_lock_dir}/bar.files ] && ls -1 -x ${default_lock_dir}/bar.files
   [1]
 
 Self dependency
@@ -40,7 +40,7 @@ Self dependency
   Solution for dune.lock:
   - foo.0.0.1
 
-  $ cat dune.lock/foo.pkg
+  $ cat ${default_lock_dir}/foo.0.0.1.pkg
   (version 0.0.1)
 
 Using post to break cycle:
@@ -58,11 +58,12 @@ Using post to break cycle:
   - bar.0.0.1
   - foo.0.0.1
 
-  $ cat dune.lock/foo.pkg dune.lock/bar.pkg
+  $ cat ${default_lock_dir}/foo.0.0.1.pkg ${default_lock_dir}/bar.0.0.1.pkg
   (version 0.0.1)
   (version 0.0.1)
   
-  (depends foo)
+  (depends
+   (all_platforms (foo)))
 
 post "cycle":
 
@@ -78,7 +79,7 @@ post "cycle":
   Solution for dune.lock:
   - foo.0.0.1
 
-  $ cat dune.lock/foo.pkg
+  $ cat ${default_lock_dir}/foo.0.0.1.pkg
   (version 0.0.1)
 
 In depopts:

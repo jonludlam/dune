@@ -19,13 +19,10 @@ Make a directory to contain a test project and change to it.
   $ cd project
 
 Create a lockdir for the project.
-  $ mkdir dune.lock
-  $ cat > dune.lock/lock.dune <<EOF
-  > (lang package 0.1)
-  > EOF
+  $ make_lockdir
 
 The package "foo" exercises copying package sources from a local directory.
-  $ cat > dune.lock/foo.pkg <<EOF
+  $ make_lockpkg foo <<EOF
   > (version 0.0.1)
   > (source
   >  (fetch
@@ -34,7 +31,7 @@ The package "foo" exercises copying package sources from a local directory.
   > EOF
 
 The package "bar" exercises extracting a source archive from a local file.
-  $ cat > dune.lock/bar.pkg <<EOF
+  $ make_lockpkg bar <<EOF
   > (version 0.0.1)
   > (source
   >  (fetch
@@ -43,7 +40,7 @@ The package "bar" exercises extracting a source archive from a local file.
   > EOF
 
 The package "bar" exercises extracting a source archive from a downloaded file.
-  $ cat > dune.lock/baz.pkg <<EOF
+  $ make_lockpkg baz <<EOF
   > (version 0.0.1)
   > (source
   >  (fetch
@@ -69,9 +66,9 @@ Build the packages.
   $ build_pkg baz
 
 All files were copied except for the broken symlinks:
-  $ ls _build/_private/default/.pkg/foo/source
+  $ ls _build/_private/default/.pkg/foo.*/source
   a.txt
-  $ ls _build/_private/default/.pkg/bar/source
+  $ ls _build/_private/default/.pkg/bar.*/source
   a.txt
-  $ ls _build/_private/default/.pkg/baz/source
+  $ ls _build/_private/default/.pkg/baz.*/source
   a.txt

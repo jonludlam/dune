@@ -55,6 +55,7 @@ let with_lib_deps (t : Context.t) merlin_ident ~dir ~f =
 type kind =
   | Executables of Buildable.t * (Loc.t * string) list
   | Library of Buildable.t * Lib_name.Local.t
+  | Parameter of Buildable.t * Lib_name.Local.t
   | Melange of
       { preprocess : Preprocess.With_instrumentation.t Preprocess.Per_module.t
       ; preprocessor_deps : Dep_conf.t list
@@ -93,6 +94,9 @@ let modules_rules
       ~preprocessor_deps
       ~lint
       ~empty_module_interface_if_absent
+      ~ctypes
+      ~modules_loc
+      ~buildable_loc
       sctx
       expander
       ~dir
@@ -134,6 +138,39 @@ let modules_rules
         fun name -> default || List.mem executable_names name ~equal:Module_name.equal)
       else fun _ -> default
   in
+  let* () =
+    match ctypes with
+    | Some ctypes ->
+      let (ctypes : Ctypes_field.t) = ctypes in
+      let modules = Modules.With_vlib.modules modules in
+      (* Here we collect all the modules that ctypes expects to be present in
+         that stanza in order to validate their existence. We do this using
+         [Memo.parallel_iter] in order to collect all the errors rather than
+         just the first occurances. *)
+      (ctypes.type_description.functor_loc, ctypes.type_description.functor_)
+      :: List.map
+           ~f:(fun (x : Ctypes_field.Function_description.t) -> x.functor_loc, x.functor_)
+           ctypes.function_description
+      |> Memo.parallel_iter ~f:(fun ((functor_loc, m) : Loc.t * Module_name.t) ->
+        match Modules.With_vlib.find modules m with
+        | Some _ -> Memo.return ()
+        | None ->
+          let loc =
+            Option.first_some modules_loc buildable_loc
+            |> Option.value
+                 ~default:
+                   (Path.build dir |> Path.drop_optional_build_context |> Loc.in_dir)
+          in
+          User_error.raise
+            ~loc
+            [ Pp.textf
+                "Module %s is required by ctypes at %s but is missing in the modules \
+                 field of the stanza."
+                (Module_name.to_string m)
+                (Loc.to_file_colon_line functor_loc)
+            ])
+    | None -> Memo.return ()
+  in
   let+ modules =
     Modules.map_user_written modules ~f:(fun m ->
       let* m = Pp_spec.pp_module pp m in
@@ -145,31 +182,62 @@ let modules_rules
 ;;
 
 let modules_rules sctx kind expander ~dir scope modules =
-  let preprocess, preprocessor_deps, lint, empty_module_interface_if_absent =
+  let* () =
     match kind with
-    | Executables (buildable, _) | Library (buildable, _) ->
+    | Executables _ | Library _ | Melange _ -> Memo.return ()
+    | Parameter _ ->
+      let* ocaml = Super_context.context sctx |> Context.ocaml in
+      if Ocaml_config.parameterised_modules ocaml.ocaml_config
+      then Memo.return ()
+      else
+        User_error.raise
+          [ Pp.text "The compiler you are using is not compatible with library parameter"
+          ]
+  in
+  let ( preprocess
+      , preprocessor_deps
+      , lint
+      , empty_module_interface_if_absent
+      , ctypes
+      , modules_loc
+      , buildable_loc )
+    =
+    match kind with
+    | Executables (buildable, _) | Library (buildable, _) | Parameter (buildable, _) ->
       ( buildable.preprocess
       , buildable.preprocessor_deps
       , buildable.lint
-      , buildable.empty_module_interface_if_absent )
+      , buildable.empty_module_interface_if_absent
+      , buildable.ctypes
+      , Ordered_set_lang.Unexpanded.loc buildable.modules.modules
+      , Some buildable.loc )
     | Melange { preprocess; preprocessor_deps; lint; empty_module_interface_if_absent } ->
-      preprocess, preprocessor_deps, lint, empty_module_interface_if_absent
+      ( preprocess
+      , preprocessor_deps
+      , lint
+      , empty_module_interface_if_absent
+      , None
+      , None
+      , None )
   in
   let lib_name =
     match kind with
     | Executables _ | Melange _ -> None
-    | Library (_, name) -> Some name
+    | Library (_, name) | Parameter (_, name) -> Some name
   in
   let empty_intf_modules =
     match kind with
     | Executables (_, modules) -> Some modules
-    | Library _ | Melange _ -> None
+    | Library _ | Melange _ | Parameter _ -> None
   in
   modules_rules
     ~preprocess
     ~preprocessor_deps
     ~lint
     ~empty_module_interface_if_absent
+    ~ctypes
+    ~modules_loc
+    ~buildable_loc
     sctx
     expander
     ~dir

@@ -1,4 +1,4 @@
-open! Stdune
+open Stdune
 open Path
 open Dune_tests_common
 
@@ -513,14 +513,6 @@ let%expect_test _ =
   [%expect
     {|
 true
-|}]
-;;
-
-let%expect_test _ =
-  Path.is_strict_descendant_of_build_dir Path.build_dir |> Dyn.bool |> print_dyn;
-  [%expect
-    {|
-false
 |}]
 ;;
 

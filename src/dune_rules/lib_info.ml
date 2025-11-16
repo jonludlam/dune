@@ -318,13 +318,13 @@ type 'path t =
   ; jsoo_runtime : 'path list
   ; wasmoo_runtime : 'path list
   ; requires : Lib_dep.t list
+  ; parameters : (Loc.t * Lib_name.t) list
   ; ppx_runtime_deps : (Loc.t * Lib_name.t) list
   ; preprocess : Preprocess.With_instrumentation.t Preprocess.Per_module.t
   ; enabled : Enabled_status.t Memo.t
   ; virtual_deps : (Loc.t * Lib_name.t) list
   ; dune_version : Dune_lang.Syntax.Version.t option
   ; sub_systems : Sub_system_info.t Sub_system_name.Map.t
-  ; virtual_ : bool
   ; entry_modules : (Module_name.t list, User_message.t) result Source.t
   ; implements : (Loc.t * Lib_name.t) option
   ; default_implementation : (Loc.t * Lib_name.t) option
@@ -337,6 +337,7 @@ type 'path t =
   ; instrumentation_backend : (Loc.t * Lib_name.t) option
   ; path_kind : 'path path
   ; melange_runtime_deps : 'path File_deps.t
+  ; root_module : Module_name.t option
   }
 
 let name t = t.name
@@ -345,6 +346,7 @@ let version t = t.version
 let dune_version t = t.dune_version
 let loc t = t.loc
 let requires t = t.requires
+let parameters t = t.parameters
 let preprocess t = t.preprocess
 let ppx_runtime_deps t = t.ppx_runtime_deps
 let sub_systems t = t.sub_systems
@@ -359,6 +361,7 @@ let public_headers t = t.public_headers
 let exit_module t = t.exit_module
 let instrumentation_backend t = t.instrumentation_backend
 let melange_runtime_deps t = t.melange_runtime_deps
+let root_module t = t.root_module
 let plugins t = t.plugins
 let src_dir t = t.src_dir
 let enabled t = t.enabled
@@ -366,7 +369,7 @@ let status t = t.status
 let kind t = t.kind
 let default_implementation t = t.default_implementation
 let obj_dir t = t.obj_dir
-let virtual_ t = t.virtual_
+let virtual_ t = t.kind = Virtual
 let implements t = t.implements
 let synopsis t = t.synopsis
 let wrapped t = t.wrapped
@@ -403,6 +406,7 @@ let create
       ~main_module_name
       ~sub_systems
       ~requires
+      ~parameters
       ~foreign_objects
       ~public_headers
       ~plugins
@@ -417,7 +421,6 @@ let create
       ~enabled
       ~virtual_deps
       ~dune_version
-      ~virtual_
       ~entry_modules
       ~implements
       ~default_implementation
@@ -428,6 +431,7 @@ let create
       ~exit_module
       ~instrumentation_backend
       ~melange_runtime_deps
+      ~root_module
   =
   { loc
   ; name
@@ -440,6 +444,7 @@ let create
   ; version
   ; synopsis
   ; requires
+  ; parameters
   ; main_module_name
   ; foreign_objects
   ; public_headers
@@ -456,7 +461,6 @@ let create
   ; virtual_deps
   ; dune_version
   ; sub_systems
-  ; virtual_
   ; entry_modules
   ; implements
   ; default_implementation
@@ -468,6 +472,7 @@ let create
   ; instrumentation_backend
   ; path_kind
   ; melange_runtime_deps
+  ; root_module
   }
 ;;
 
@@ -536,6 +541,7 @@ let to_dyn
       ; version
       ; synopsis
       ; requires
+      ; parameters
       ; main_module_name
       ; foreign_objects
       ; public_headers
@@ -552,7 +558,6 @@ let to_dyn
       ; virtual_deps
       ; dune_version
       ; sub_systems
-      ; virtual_
       ; implements
       ; default_implementation
       ; modes
@@ -563,6 +568,7 @@ let to_dyn
       ; instrumentation_backend
       ; melange_runtime_deps
       ; entry_modules
+      ; root_module
       }
   =
   let open Dyn in
@@ -588,11 +594,11 @@ let to_dyn
     ; "jsoo_runtime", list path jsoo_runtime
     ; "wasmoo_runtime", list path wasmoo_runtime
     ; "requires", list Lib_dep.to_dyn requires
+    ; "parameters", list (snd Lib_name.to_dyn) parameters
     ; "ppx_runtime_deps", list (snd Lib_name.to_dyn) ppx_runtime_deps
     ; "virtual_deps", list (snd Lib_name.to_dyn) virtual_deps
     ; "dune_version", option Dune_lang.Syntax.Version.to_dyn dune_version
     ; "sub_systems", Sub_system_name.Map.to_dyn Dyn.opaque sub_systems
-    ; "virtual_", bool virtual_
     ; ( "entry_modules"
       , Source.to_dyn
           (Result.to_dyn (list Module_name.to_dyn) string)
@@ -608,6 +614,7 @@ let to_dyn
     ; "exit_module", option Module_name.to_dyn exit_module
     ; "instrumentation_backend", option (snd Lib_name.to_dyn) instrumentation_backend
     ; "melange_runtime_deps", File_deps.to_dyn path melange_runtime_deps
+    ; "root_module", option Module_name.to_dyn root_module
     ]
 ;;
 
@@ -626,6 +633,7 @@ let for_dune_package
       ~foreign_objects
       ~obj_dir
       ~implements
+      ~parameters
       ~default_implementation
       ~sub_systems
       ~melange_runtime_deps
@@ -657,6 +665,7 @@ let for_dune_package
   ; foreign_objects
   ; obj_dir
   ; implements
+  ; parameters
   ; default_implementation
   ; sub_systems
   ; orig_src_dir

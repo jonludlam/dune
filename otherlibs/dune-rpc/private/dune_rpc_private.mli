@@ -194,9 +194,15 @@ module Procedures : sig
     val ping : (unit, unit) Decl.Request.t
     val diagnostics : (unit, Diagnostic.t list) Decl.Request.t
     val shutdown : unit Decl.Notification.t
+    val format : (unit, unit) Decl.Request.t
     val format_dune_file : (Path.t * [ `Contents of string ], string) Decl.Request.t
     val promote : (Path.t, unit) Decl.Request.t
+
+    val promote_many
+      : (Files_to_promote.t, Build_outcome_with_diagnostics.t) Decl.Request.t
+
     val build_dir : (unit, Path.t) Decl.Request.t
+    val runtest : (string list, Build_outcome_with_diagnostics.t) Decl.Request.t
   end
 
   module Server_side : sig
@@ -238,9 +244,12 @@ module Public : sig
 
     val ping : (unit, unit) t
     val diagnostics : (unit, Diagnostic.t list) t
+    val format : (unit, unit) t
     val format_dune_file : (Path.t * [ `Contents of string ], string) t
     val promote : (Path.t, unit) t
+    val promote_many : (Files_to_promote.t, Build_outcome_with_diagnostics.t) t
     val build_dir : (unit, Path.t) t
+    val runtest : (string list, Build_outcome_with_diagnostics.t) t
   end
 
   module Notification : sig
