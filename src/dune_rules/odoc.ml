@@ -391,6 +391,71 @@ module Paths_for_mode = struct
   ;;
 end
 
+(* Remap generation helpers *)
+
+(* Get list of local workspace packages *)
+let get_workspace_packages () =
+  let* packages = Dune_load.packages () in
+  Memo.return (Package.Name.Map.keys packages)
+;;
+
+(* Get package version - stub for now, always returns "latest" *)
+let get_package_version _sctx pkg_name =
+  let (_ : Package.Name.t) = pkg_name in
+  Memo.return None
+;;
+
+(* Generate remap mappings for external (non-local) packages *)
+let generate_remap_mappings sctx ~local_packages ~all_deps =
+  let local_pkg_set = Package.Name.Set.of_list local_packages in
+
+  (* Filter to non-local (external/installed) packages *)
+  let external_deps =
+    List.filter all_deps ~f:(fun target ->
+      match target with
+      | Pkg pkg_name -> not (Package.Name.Set.mem local_pkg_set pkg_name)
+      | Lib (pkg_name, _lib) -> not (Package.Name.Set.mem local_pkg_set pkg_name))
+  in
+
+  (* Generate mappings: local_path:remote_url *)
+  let* mappings =
+    Memo.List.map external_deps ~f:(fun target ->
+      match target with
+      | Pkg pkg_name ->
+        let* version_opt = get_package_version sctx pkg_name in
+        let version = Option.value version_opt ~default:"latest" in
+        let local_path = Package.Name.to_string pkg_name in
+        let remote_url =
+          Printf.sprintf "https://ocaml.org/p/%s/%s/doc/"
+            (Package.Name.to_string pkg_name) version
+        in
+        Memo.return [ (local_path, remote_url) ]
+      | Lib (pkg_name, lib) ->
+        let* version_opt = get_package_version sctx pkg_name in
+        let version = Option.value version_opt ~default:"latest" in
+        let pkg_path = Package.Name.to_string pkg_name in
+        let lib_path = pkg_path ^ "/" ^ Lib_name.to_string (Lib.name lib) in
+        let base_url =
+          Printf.sprintf "https://ocaml.org/p/%s/%s/doc/"
+            (Package.Name.to_string pkg_name) version
+        in
+        Memo.return
+          [ (pkg_path, base_url)
+          ; (lib_path, base_url ^ Lib_name.to_string (Lib.name lib) ^ "/")
+          ])
+  in
+  Memo.return (List.concat mappings)
+;;
+
+(* Write remap file with given mappings *)
+let write_remap_file sctx ~remap_file ~mappings =
+  let contents =
+    String.concat ~sep:"\n"
+      (List.map mappings ~f:(fun (local, remote) -> Printf.sprintf "%s:%s" local remote))
+  in
+  add_rule sctx (Action_builder.write_file remap_file contents)
+;;
+
 let odoc_ext = ".odoc"
 
 module Mld : sig
