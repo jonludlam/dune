@@ -291,10 +291,33 @@ module Doc_mode = struct
   let all = [ Local_only; Full ]
 end
 
+module Paths_for_mode = struct
+  let html_root ctx mode = Paths.root ctx ++ Doc_mode.output_subdir mode
+
+  let html ctx mode target =
+    match target with
+    | Lib (pkg, lib) ->
+      let lib_name = Lib.name lib in
+      html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+    | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
+  ;;
+
+  let odoc_support ctx mode = html_root ctx mode ++ Paths.odoc_support_dirname
+  let toplevel_index ctx mode = html_root ctx mode ++ "index.html"
+
+  let remap_file ctx pkg_name =
+    Paths.root ctx ++ "_remap" ++ Printf.sprintf "remap-%s.txt" (Package.Name.to_string pkg_name)
+  ;;
+end
+
 module Dep : sig
   (** [format_alias output ctx target] returns the alias that depends on all
-      targets produced by odoc for [target] in output format [output]. *)
+      targets produced by odoc for [target] in output format [output].
+      Uses Local_only mode (default @doc alias). *)
   val format_alias : Output_format.t -> Context.t -> target -> Alias.t
+
+  (** [format_alias_for_mode output mode ctx target] returns the mode-aware alias. *)
+  val format_alias_for_mode : Output_format.t -> Doc_mode.t -> Context.t -> target -> Alias.t
 
   (** [deps ctx pkg libraries] returns all odoc dependencies of [libraries]. If
       [libraries] are all part of a package [pkg], then the odoc dependencies of
@@ -310,6 +333,9 @@ module Dep : sig
   val setup_deps : Context.t -> target -> Path.Set.t -> unit Memo.t
 end = struct
   let format_alias f ctx m = Output_format.alias f ~dir:(Paths.html ctx m)
+
+  let format_alias_for_mode f mode ctx m =
+    Output_format.alias f ~dir:(Paths_for_mode.html ctx mode m)
   let alias = Alias.make (Alias.Name.of_string ".odoc-all")
 
   let deps ctx pkg requires =
@@ -368,26 +394,6 @@ end = struct
           target_name
       ];
     Rules.Produce.Alias.add_deps (alias ctx m) (Action_builder.path_set files)
-  ;;
-end
-
-(* Mode-aware path helpers *)
-module Paths_for_mode = struct
-  let html_root ctx mode = Paths.root ctx ++ Doc_mode.output_subdir mode
-
-  let html ctx mode target =
-    match target with
-    | Lib (pkg, lib) ->
-      let lib_name = Lib.name lib in
-      html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-    | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
-  ;;
-
-  let odoc_support ctx mode = html_root ctx mode ++ Paths.odoc_support_dirname
-  let toplevel_index ctx mode = html_root ctx mode ++ "index.html"
-
-  let remap_file ctx pkg_name =
-    Paths.root ctx ++ "_remap" ++ Printf.sprintf "remap-%s.txt" (Package.Name.to_string pkg_name)
   ;;
 end
 
@@ -2485,23 +2491,47 @@ let generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~library_artifacts
       then Memo.return None (* Synthetic package - no remap *)
       else (
         let pkg_name = Package.Name.of_string pkg_or_lib_name in
-        (* TODO: For now, skip remap file generation as it requires dependency tracking *)
-        (* This will be implemented in Phase 4 when we set up proper alias configuration *)
-        let (_ : Package.Name.t) = pkg_name in
-        Memo.return None)
+        (* Get all dependencies for this package *)
+        let* all_artifacts_targets =
+          Memo.return
+            (List.map (library_artifacts @ package_pages) ~f:(fun artifact -> artifact.target))
+        in
+        (* Get workspace packages to filter *)
+        let* workspace_pkgs = get_workspace_packages () in
+        (* Generate remap mappings for external (non-workspace) dependencies *)
+        let* mappings = generate_remap_mappings sctx ~local_packages:workspace_pkgs ~all_deps:all_artifacts_targets in
+        if List.is_empty mappings
+        then Memo.return None
+        else (
+          let remap_file = Paths_for_mode.remap_file ctx pkg_name in
+          let* () = write_remap_file sctx ~remap_file ~mappings in
+          Memo.return (Some remap_file)))
     | Doc_mode.Full -> Memo.return None
   in
   (* Generate HTML for all visible artifacts *)
   let* () =
     Memo.parallel_iter visible_artifacts ~f:(fun artifact ->
-      generate_html_artifact
-        sctx
-        ~artifact
-        ~search_db
-        ~sidebar_file:sidebar_file_opt
-        ?remap_file:remap_file_opt
-        ~mode
-        ())
+      let call =
+        match remap_file_opt with
+        | None ->
+          generate_html_artifact
+            sctx
+            ~artifact
+            ~search_db
+            ~sidebar_file:sidebar_file_opt
+            ~mode
+            ()
+        | Some rf ->
+          generate_html_artifact
+            sctx
+            ~artifact
+            ~search_db
+            ~sidebar_file:sidebar_file_opt
+            ~remap_file:(Some rf)
+            ~mode
+            ()
+      in
+      call)
   in
   (* Create format aliases for all output formats *)
   let pkg_name = Package.Name.of_string pkg_or_lib_name in
@@ -2989,8 +3019,115 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
   Rules.Produce.Alias.add_deps alias deps_action
 ;;
 
+let setup_package_aliases_format_for_mode sctx (pkg : Package.t) (output : Output_format.t)
+    (mode : Doc_mode.t) =
+  let ctx = Super_context.context sctx in
+  let name = Package.name pkg in
+  let alias =
+    let pkg_dir = Package.dir pkg in
+    let dir = Path.Build.append_source (Context.build_dir ctx) pkg_dir in
+    Doc_mode.alias output mode ~dir
+  in
+  (* Wrap the entire transitive closure computation in Action_builder. *)
+  let deps_action =
+    let open Action_builder.O in
+    let* dep_set =
+      Action_builder.of_memo
+        (let open Memo.O in
+         (* Reuse the same dependency computation logic from setup_package_aliases_format *)
+         let* local_libs = Context.name ctx |> libs_of_pkg ~pkg:name in
+         let* doc_dep_libs =
+           let doc = Package.info pkg |> Package_info.documentation in
+           let doc_pkg_names =
+             List.map doc.packages ~f:(fun (dep : Package_dependency.t) -> dep.name)
+           in
+           let* pkg_discovery = Package_discovery.create ~context:ctx in
+           Memo.List.map doc_pkg_names ~f:(fun pkg_name ->
+             Memo.return (Package_discovery.libraries_of_package pkg_discovery pkg_name))
+           >>| List.concat
+         in
+         let seed_libs = List.map local_libs ~f:Lib.Local.to_lib @ doc_dep_libs in
+         let* stdlib_opt = stdlib_lib (Context.name ctx) in
+         let* all_dep_libs =
+           let+ closures =
+             Memo.List.map seed_libs ~f:(fun lib ->
+               let* closure = Lib.closure (lib :: Option.to_list stdlib_opt) ~linking:false in
+               Resolve.read_memo closure)
+           in
+           let libs_from_closure =
+             closures |> List.concat |> Lib.Set.of_list |> Lib.Set.to_list
+           in
+           match stdlib_opt with
+           | Some stdlib -> stdlib :: libs_from_closure
+           | None -> libs_from_closure
+         in
+         let* all_expanded_libs = expand_libs_with_odoc_config ctx all_dep_libs in
+         let* pkg_discovery = Package_discovery.create ~context:ctx in
+         let* all_targets =
+           Memo.List.map all_expanded_libs ~f:(fun lib ->
+             let* pkg =
+               match Lib.Local.of_lib lib with
+               | Some local_lib ->
+                 Memo.return (Package.Name.of_string (pkg_or_lnu local_lib))
+               | None ->
+                 (match Package_discovery.package_of_library pkg_discovery lib with
+                  | Some p -> Memo.return p
+                  | None ->
+                    (match Lib_info.package (Lib.info lib) with
+                     | Some p -> Memo.return p
+                     | None ->
+                       Memo.return
+                         (Package.Name.of_string (Lib_name.to_string (Lib.name lib)))))
+             in
+             Memo.return (Lib (pkg, lib)))
+         in
+         let pkg_targets_from_libs =
+           List.filter_map all_targets ~f:(fun target ->
+             match target with
+             | Lib (pkg, _) -> Some (Pkg pkg)
+             | Pkg _ -> None)
+         in
+         let all_targets_with_pkg = Pkg name :: all_targets @ pkg_targets_from_libs in
+         (* Filter based on mode: Local_only includes only workspace packages *)
+         let* filtered_targets =
+           match mode with
+           | Doc_mode.Local_only ->
+             let+ workspace_pkgs = get_workspace_packages () in
+             let workspace_pkg_set = Package.Name.Set.of_list workspace_pkgs in
+             List.filter all_targets_with_pkg ~f:(fun target ->
+               match target with
+               | Pkg p -> Package.Name.Set.mem workspace_pkg_set p
+               | Lib (p, _) -> Package.Name.Set.mem workspace_pkg_set p)
+           | Doc_mode.Full ->
+             (* Include all dependencies *)
+             Memo.return all_targets_with_pkg
+         in
+         let unique_targets =
+           List.sort_uniq filtered_targets ~compare:(fun t1 t2 ->
+             match t1, t2 with
+             | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
+             | Lib (_, l1), Lib (_, l2) ->
+               let name1 = Lib.name l1 in
+               let name2 = Lib.name l2 in
+               Lib_name.compare name1 name2
+             | Pkg _, Lib _ -> Ordering.Lt
+             | Lib _, Pkg _ -> Ordering.Gt)
+         in
+         Memo.return
+           (unique_targets
+            |> List.map ~f:(Dep.format_alias_for_mode output mode ctx)
+            |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)))
+    in
+    Action_builder.deps dep_set
+  in
+  Rules.Produce.Alias.add_deps alias deps_action
+;;
+
 let setup_package_aliases sctx (pkg : Package.t) =
-  Output_format.iter ~f:(setup_package_aliases_format sctx pkg)
+  (* Set up aliases for both modes *)
+  Memo.List.iter Doc_mode.all ~f:(fun mode ->
+    Output_format.iter ~f:(fun output ->
+      setup_package_aliases_format_for_mode sctx pkg output mode))
 ;;
 
 let default_index ~pkg entry_modules =
