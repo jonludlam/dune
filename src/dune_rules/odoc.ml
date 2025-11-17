@@ -1200,12 +1200,15 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
 
 (* Unified HTML generation function for artifacts.
    Takes an artifact, search_db, and optional sidebar file, generates HTML for it.
-   This follows the same pattern as compile_artifact and link_artifact. *)
-let generate_html_artifact sctx ~artifact ~search_db ~sidebar_file =
+   This follows the same pattern as compile_artifact and link_artifact.
+   Mode parameter determines output directory and whether to use remap file. *)
+let generate_html_artifact sctx ~artifact ~search_db ~sidebar_file
+    ?(remap_file : Path.Build.t option = None) ?(mode = Doc_mode.Local_only) () =
   let ctx = Super_context.context sctx in
-  let odoc_support_path = Paths.odoc_support ctx in
+  let html_root = Paths_for_mode.html_root ctx mode in
+  let odoc_support_path = Paths_for_mode.odoc_support ctx mode in
   let search_args =
-    Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:(Paths.html_root ctx)
+    Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:html_root
   in
   (* Generate HTML for all output formats *)
   Memo.List.iter Output_format.all ~f:(fun out ->
@@ -1218,7 +1221,6 @@ let generate_html_artifact sctx ~artifact ~search_db ~sidebar_file =
     (* Check if the HTML file is in a subdirectory (v3 path for modules) or not (v2 path or package mlds) *)
     let html_dir_opt =
       let html_dir = Path.Build.parent_exn html_file in
-      let html_root = Paths.html_root ctx in
       if Path.Build.equal html_dir html_root then None else Some html_dir
     in
     (* Suppress output for installed packages *)
@@ -1230,17 +1232,20 @@ let generate_html_artifact sctx ~artifact ~search_db ~sidebar_file =
     let run_odoc =
       run_odoc
         sctx
-        ~dir:(Path.build (Paths.html_root ctx))
+        ~dir:(Path.build html_root)
         "html-generate"
         ~quiet
         ~flags_for:None
         [ search_args
         ; A "-o"
-        ; Path (Path.build (Paths.html_root ctx))
+        ; Path (Path.build html_root)
         ; A "--support-uri"
         ; Path (Path.build odoc_support_path)
         ; A "--theme-uri"
         ; Path (Path.build odoc_support_path)
+        ; (match remap_file with
+           | None -> S []
+           | Some rf -> S [ A "--remap-file"; Dep (Path.build rf) ])
         ; (match sidebar_file with
            | Some sf -> S [ A "--sidebar"; Dep (Path.build sf) ]
            | None -> S [])
@@ -2432,6 +2437,123 @@ let handle_sidebar_artifacts sctx pkg_or_lib_name =
     Memo.return (Build_config.Gen_rules.make rules))
 ;;
 
+(* Helper function to generate HTML for a package in a specific mode *)
+let generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~library_artifacts
+    ~package_pages ~artifacts_by_lib_complete ~dir ~mode () =
+  (* Combine library artifacts and package pages for HTML generation *)
+  let all_artifacts_for_html = library_artifacts @ package_pages in
+  (* Filter to only visible artifacts for HTML generation *)
+  let visible_artifacts = List.filter all_artifacts_for_html ~f:(fun a -> not a.hidden) in
+  Log.info
+    [ Pp.textf
+        "odoc v3: generate_html_for_package for %s (mode=%s): %d visible artifacts"
+        pkg_or_lib_name
+        (match mode with
+         | Doc_mode.Local_only -> "Local_only"
+         | Doc_mode.Full -> "Full")
+        (List.length visible_artifacts)
+    ];
+  (* Generate JSON sidebar and reference binary sidebar for non-synthetic packages *)
+  let* sidebar_file_opt =
+    if String.contains pkg_or_lib_name '@'
+    then
+      (* Synthetic package (private lib) - no sidebar *)
+      Memo.return None
+    else (
+      (* Real package - generate JSON sidebar and reference binary sidebar *)
+      let pkg = Package.Name.of_string pkg_or_lib_name in
+      let index_file = Paths.index_file ctx pkg in
+      let* () = generate_sidebar_json sctx ~pkg ~index_file in
+      Memo.return (Some (Paths.sidebar_file ctx pkg)))
+  in
+  (* Create search_db for the entire package (all visible artifacts) *)
+  let* search_db =
+    let odocls = List.map visible_artifacts ~f:(fun artifact -> artifact.odocl_file) in
+    Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
+  in
+  Log.info
+    [ Pp.textf
+        "odoc v3: created search_db with %d odocls for %s"
+        (List.length visible_artifacts)
+        pkg_or_lib_name
+    ];
+  (* Generate remap file for Local_only mode (skip for synthetic packages) *)
+  let* remap_file_opt =
+    match mode with
+    | Doc_mode.Local_only ->
+      if String.contains pkg_or_lib_name '@'
+      then Memo.return None (* Synthetic package - no remap *)
+      else (
+        let pkg_name = Package.Name.of_string pkg_or_lib_name in
+        (* TODO: For now, skip remap file generation as it requires dependency tracking *)
+        (* This will be implemented in Phase 4 when we set up proper alias configuration *)
+        let (_ : Package.Name.t) = pkg_name in
+        Memo.return None)
+    | Doc_mode.Full -> Memo.return None
+  in
+  (* Generate HTML for all visible artifacts *)
+  let* () =
+    Memo.parallel_iter visible_artifacts ~f:(fun artifact ->
+      generate_html_artifact
+        sctx
+        ~artifact
+        ~search_db
+        ~sidebar_file:sidebar_file_opt
+        ?remap_file:remap_file_opt
+        ~mode
+        ())
+  in
+  (* Create format aliases for all output formats *)
+  let pkg_name = Package.Name.of_string pkg_or_lib_name in
+  let* () =
+    Output_format.iter ~f:(fun output ->
+      (* Create package-level alias with all HTML files *)
+      let all_paths =
+        List.map visible_artifacts ~f:(fun artifact ->
+          Path.build (Output_format.target output artifact))
+      in
+      let pkg_alias = Dep.format_alias output ctx (Pkg pkg_name) in
+      Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_paths))
+  in
+  (* Also create library-level aliases for each library *)
+  Lib_name.Map.to_list artifacts_by_lib_complete
+  |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
+    let visible_lib_artifacts = List.filter lib_artifacts ~f:(fun a -> not a.hidden) in
+    if List.is_empty visible_lib_artifacts
+    then (
+      (* Even for libraries with no artifacts, create empty aliases *)
+      (* We need to construct a target for this library *)
+      (* Since we have no artifacts, we need to look up the library *)
+      let pkg_name = Package.Name.of_string pkg_or_lib_name in
+      let* lib_opt =
+        let* pkg_discovery = Package_discovery.create ~context:ctx in
+        let installed_libs =
+          Package_discovery.libraries_of_package pkg_discovery pkg_name
+        in
+        Memo.return
+          (List.find installed_libs ~f:(fun lib -> Lib_name.equal (Lib.name lib) lib_name))
+      in
+      match lib_opt with
+      | Some lib ->
+        Output_format.iter ~f:(fun output ->
+          let lib_alias = Dep.format_alias output ctx (Lib (pkg_name, lib)) in
+          Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths []))
+      | None -> Memo.return ())
+    else
+      Output_format.iter ~f:(fun output ->
+        let lib_paths =
+          List.map visible_lib_artifacts ~f:(fun artifact ->
+            Path.build (Output_format.target output artifact))
+        in
+        (* Create library-level alias - need to find the Lib.Local.t for this lib_name *)
+        (* For now, use the artifact's target which should be Lib lib *)
+        match (List.hd visible_lib_artifacts).target with
+        | Lib (pkg, lib) ->
+          let lib_alias = Dep.format_alias output ctx (Lib (pkg, lib)) in
+          Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths lib_paths)
+        | Pkg _ -> Memo.return () (* Package artifacts don't have library aliases *)))
+;;
+
 let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
   let ctx = Super_context.context sctx in
   Log.info
@@ -2634,106 +2756,31 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           in
           Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_odocl_paths)))
     | "_html" ->
-      (* HTML generation *)
+      (* HTML generation for local packages only *)
       Rules.collect_unit (fun () ->
-        (* Combine library artifacts and package pages for HTML generation *)
-        let all_artifacts_for_html = library_artifacts @ package_pages in
-        (* Filter to only visible artifacts for HTML generation *)
-        let visible_artifacts =
-          List.filter all_artifacts_for_html ~f:(fun a -> not a.hidden)
-        in
-        Log.info
-          [ Pp.textf
-              "odoc v3: _html handler for %s: %d visible artifacts"
-              pkg_or_lib_name
-              (List.length visible_artifacts)
-          ];
-        (* Generate JSON sidebar and reference binary sidebar for non-synthetic packages *)
-        let* sidebar_file_opt =
-          if String.contains pkg_or_lib_name '@'
-          then
-            (* Synthetic package (private lib) - no sidebar *)
-            Memo.return None
-          else (
-            (* Real package - generate JSON sidebar and reference binary sidebar *)
-            let pkg = Package.Name.of_string pkg_or_lib_name in
-            let index_file = Paths.index_file ctx pkg in
-            let* () = generate_sidebar_json sctx ~pkg ~index_file in
-            Memo.return (Some (Paths.sidebar_file ctx pkg)))
-        in
-        (* Create search_db for the entire package (all visible artifacts) *)
-        let* search_db =
-          let odocls =
-            List.map visible_artifacts ~f:(fun artifact -> artifact.odocl_file)
-          in
-          Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
-        in
-        Log.info
-          [ Pp.textf
-              "odoc v3: _html handler created search_db with %d odocls"
-              (List.length visible_artifacts)
-          ];
-        (* Generate HTML for all visible artifacts *)
-        let* () =
-          Memo.parallel_iter visible_artifacts ~f:(fun artifact ->
-            generate_html_artifact
-              sctx
-              ~artifact
-              ~search_db
-              ~sidebar_file:sidebar_file_opt)
-        in
-        (* Create format aliases for all output formats *)
-        let pkg_name = Package.Name.of_string pkg_or_lib_name in
-        let* () =
-          Output_format.iter ~f:(fun output ->
-            (* Create package-level alias with all HTML files *)
-            let all_paths =
-              List.map visible_artifacts ~f:(fun artifact ->
-                Path.build (Output_format.target output artifact))
-            in
-            let pkg_alias = Dep.format_alias output ctx (Pkg pkg_name) in
-            Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_paths))
-        in
-        (* Also create library-level aliases for each library *)
-        Lib_name.Map.to_list artifacts_by_lib_complete
-        |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
-          let visible_lib_artifacts =
-            List.filter lib_artifacts ~f:(fun a -> not a.hidden)
-          in
-          if List.is_empty visible_lib_artifacts
-          then (
-            (* Even for libraries with no artifacts, create empty aliases *)
-            (* We need to construct a target for this library *)
-            (* Since we have no artifacts, we need to look up the library *)
-            let pkg_name = Package.Name.of_string pkg_or_lib_name in
-            let* lib_opt =
-              let* pkg_discovery = Package_discovery.create ~context:ctx in
-              let installed_libs =
-                Package_discovery.libraries_of_package pkg_discovery pkg_name
-              in
-              Memo.return
-                (List.find installed_libs ~f:(fun lib ->
-                   Lib_name.equal (Lib.name lib) lib_name))
-            in
-            match lib_opt with
-            | Some lib ->
-              Output_format.iter ~f:(fun output ->
-                let lib_alias = Dep.format_alias output ctx (Lib (pkg_name, lib)) in
-                Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths []))
-            | None -> Memo.return ())
-          else
-            Output_format.iter ~f:(fun output ->
-              let lib_paths =
-                List.map visible_lib_artifacts ~f:(fun artifact ->
-                  Path.build (Output_format.target output artifact))
-              in
-              (* Create library-level alias - need to find the Lib.Local.t for this lib_name *)
-              (* For now, use the artifact's target which should be Lib lib *)
-              match (List.hd visible_lib_artifacts).target with
-              | Lib (pkg, lib) ->
-                let lib_alias = Dep.format_alias output ctx (Lib (pkg, lib)) in
-                Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths lib_paths)
-              | Pkg _ -> Memo.return () (* Package artifacts don't have library aliases *))))
+        generate_html_for_package
+          sctx
+          ~ctx
+          ~pkg_or_lib_name
+          ~library_artifacts
+          ~package_pages
+          ~artifacts_by_lib_complete
+          ~dir
+          ~mode:Doc_mode.Local_only
+          ())
+    | "_html_full" ->
+      (* HTML generation for all packages (full mode) *)
+      Rules.collect_unit (fun () ->
+        generate_html_for_package
+          sctx
+          ~ctx
+          ~pkg_or_lib_name
+          ~library_artifacts
+          ~package_pages
+          ~artifacts_by_lib_complete
+          ~dir
+          ~mode:Doc_mode.Full
+          ())
     | _ -> failwith ("Unexpected path_prefix: " ^ path_prefix)
   in
   Memo.return
@@ -3441,6 +3488,34 @@ let gen_rules sctx ~dir rest =
     | [ "_html"; pkg_or_lib_name ] ->
       (* HTML generation: use unified handler *)
       handle_package_artifacts sctx ~dir ~path_prefix:"_html" pkg_or_lib_name
+    | [ "_html_full" ] ->
+      (* Root HTML_full directory - allow all package subdirectories *)
+      let ctx = Super_context.context sctx in
+      let* packages = Dune_load.packages () in
+      let pkg_subdirs =
+        Package.Name.Map.keys packages |> List.map ~f:Package.Name.to_string
+      in
+      let directory_targets =
+        Path.Build.Map.singleton (Paths_for_mode.odoc_support ctx Doc_mode.Full) Loc.none
+      in
+      let rules =
+        Rules.collect_unit (fun () ->
+          (* Set up CSS/support files and sherlodoc for _html_full *)
+          let html_root = Paths_for_mode.html_root ctx Doc_mode.Full in
+          Sherlodoc.sherlodoc_dot_js sctx ~dir:html_root
+          >>> Memo.return ())
+      in
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~directory_targets
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton
+                ~dir
+                (Subdir_set.of_list pkg_subdirs))
+           rules)
+    | [ "_html_full"; pkg_or_lib_name ] ->
+      (* HTML generation (full mode): use unified handler *)
+      handle_package_artifacts sctx ~dir ~path_prefix:"_html_full" pkg_or_lib_name
     | [ "_sidebar" ] ->
       (* Root sidebar directory - allow subdirs *)
       Memo.return

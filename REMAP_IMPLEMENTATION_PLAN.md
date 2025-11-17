@@ -147,94 +147,97 @@ let get_package_version sctx pkg_name =
 
 ### Phase 3: Refactor HTML Generation
 
-#### 3.1 Modify `generate_html_artifact`
+**UPDATED APPROACH**: Extract HTML generation logic into a shared helper function to avoid code duplication.
 
-Add `?remap_file` and `doc_mode` parameters ([odoc.ml:1096-1170](src/dune_rules/odoc.ml#L1096-L1170)):
+#### 3.1 Modify `generate_html_artifact` (DONE)
+
+Add `?remap_file` and `?mode` parameters:
 
 ```ocaml
 let generate_html_artifact sctx ~artifact ~search_db ~sidebar_file
-    ?(remap_file : Path.Build.t option) ~doc_mode =
+    ?(remap_file : Path.Build.t option = None) ?(mode = Doc_mode.Local_only) () =
   let ctx = Super_context.context sctx in
-  let odoc_support_path = Paths.odoc_support ctx doc_mode in
-  let html_root = Paths.html_root ctx doc_mode in
-  let search_args =
-    Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:html_root
-  in
-
-  Memo.List.iter Output_format.all ~f:(fun out ->
-    let html_file = Output_format.target out artifact in
-
-    let remap_args = match remap_file with
-      | None -> S []
-      | Some rf -> S [ A "--remap-file"; Dep (Path.build rf) ]
-    in
-
-    let run_odoc =
-      run_odoc sctx ~dir:(Path.build html_root)
-        "html-generate" ~quiet ~flags_for:None
-        [ search_args
-        ; A "-o"; Path (Path.build html_root)
-        ; A "--support-uri"; Path (Path.build odoc_support_path)
-        ; A "--theme-uri"; Path (Path.build odoc_support_path)
-        ; remap_args  (* NEW: Add remap file argument *)
-        ; (match sidebar_file with
-           | Some sf -> S [ A "--sidebar"; Dep (Path.build sf) ]
-           | None -> S [])
-        ; Dep (Path.build artifact.odocl_file)
-        ; Output_format.args out
-        ]
-    in
-    (* Rest of function unchanged *)
-    add_rule sctx rule)
+  let odoc_support_path = Paths_for_mode.odoc_support ctx mode in
+  let html_root = Paths_for_mode.html_root ctx mode in
+  (* ... rest of implementation with mode-aware paths ... *)
 ```
 
-#### 3.2 Refactor `handle_package_artifacts`
+**Status**: ✓ Completed. The function now accepts mode and remap_file parameters.
 
-Parameterize HTML generation case to support both modes ([odoc.ml:2315-2626](src/dune_rules/odoc.ml#L2315-L2626)):
+#### 3.2 Extract HTML generation helper (NEW)
+
+Extract the HTML generation logic from the `"_html"` case into a reusable helper:
 
 ```ocaml
-let handle_package_artifacts sctx path_parts =
+let generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~library_artifacts
+    ~package_pages ~artifacts_by_lib_complete ~dir ~mode () =
+  (* Combine library artifacts and package pages for HTML generation *)
+  let all_artifacts_for_html = library_artifacts @ package_pages in
+  let visible_artifacts =
+    List.filter all_artifacts_for_html ~f:(fun a -> not a.hidden)
+  in
+
+  (* Generate sidebar for non-synthetic packages *)
+  let* sidebar_file_opt = ... in
+
+  (* Create search_db for the entire package *)
+  let* search_db = ... in
+
+  (* Generate remap file for Local_only mode *)
+  let* remap_file_opt =
+    match mode with
+    | Doc_mode.Local_only ->
+      (* TODO: Implement remap generation based on dependencies *)
+      Memo.return None
+    | Doc_mode.Full -> Memo.return None
+  in
+
+  (* Generate HTML for all visible artifacts *)
+  let* () =
+    Memo.parallel_iter visible_artifacts ~f:(fun artifact ->
+      generate_html_artifact sctx ~artifact ~search_db ~sidebar_file:sidebar_file_opt
+        ?remap_file:remap_file_opt ~mode ())
+  in
+
+  (* Create format aliases *)
+  (* ... alias setup logic ... *)
+```
+
+#### 3.3 Update `handle_package_artifacts`
+
+Modify the routing to call the helper for both `_html` and `_html_full`:
+
+```ocaml
+let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
   (* ... existing artifact discovery logic ... *)
 
-  (* HTML generation - now iterate over both modes *)
-  Memo.List.iter Doc_mode.all ~f:(fun doc_mode ->
-    let output_dir = Paths.html ctx doc_mode target in
+  let rules =
+    match path_prefix with
+    | "_odoc" -> (* ... existing compilation logic ... *)
+    | "_odocls" -> (* ... existing linking logic ... *)
+    | "_html" ->
+      (* HTML generation for local packages only *)
+      generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~library_artifacts
+        ~package_pages ~artifacts_by_lib_complete ~dir ~mode:Doc_mode.Local_only ()
+    | "_html_full" ->
+      (* HTML generation for all packages (full mode) *)
+      generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~library_artifacts
+        ~package_pages ~artifacts_by_lib_complete ~dir ~mode:Doc_mode.Full ()
+    | _ -> (* ... other cases ... *)
+```
 
-    (* Generate remap file for Local_only mode *)
-    let* remap_file_opt =
-      match doc_mode with
-      | Local_only ->
-        (* Get local packages from workspace *)
-        let+ local_packages = get_workspace_packages sctx in
-        let+ all_deps = compute_all_dependencies sctx target in
-        let+ mappings = generate_remap_mappings sctx
-          ~local_packages ~all_deps in
+#### 3.4 Update route dispatcher
 
-        if List.is_empty mappings then None
-        else
-          let remap_file = Paths.remap_file ctx pkg_name in
-          let+ () = write_remap_file sctx ~remap_file ~mappings in
-          Some remap_file
+Add routing for `_html_full` in the main dispatcher:
 
-      | Full -> Memo.return None
-    in
-
-    (* Generate sidebar for this mode *)
-    let+ sidebar_file =
-      generate_sidebar sctx ~target ~artifacts ~doc_mode in
-
-    (* Generate search DB for this mode *)
-    let+ search_db =
-      Sherlodoc.search_db sctx ~artifacts ~doc_mode in
-
-    (* Generate HTML for each artifact *)
-    let+ () = Memo.List.iter visible_artifacts ~f:(fun artifact ->
-      generate_html_artifact sctx ~artifact ~search_db ~sidebar_file
-        ?remap_file:remap_file_opt ~doc_mode)
-    in
-
-    (* Setup format aliases for this mode *)
-    setup_format_aliases_for_mode sctx ~target ~doc_mode ~visible_artifacts)
+```ocaml
+| [ "_html"; pkg_or_lib_name ] ->
+  handle_package_artifacts sctx ~dir ~path_prefix:"_html" pkg_or_lib_name
+| [ "_html_full" ] ->
+  (* Root html_full directory - allow subdirs *)
+  Memo.return (Build_config.Gen_rules.make ...)
+| [ "_html_full"; pkg_or_lib_name ] ->
+  handle_package_artifacts sctx ~dir ~path_prefix:"_html_full" pkg_or_lib_name
 ```
 
 ---
