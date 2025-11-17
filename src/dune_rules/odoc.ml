@@ -213,6 +213,7 @@ module Paths = struct
   let odoc_support ctx = html_root ctx ++ odoc_support_dirname
   let toplevel_index ctx = html_root ctx ++ "index.html"
 
+
   (* Sidebar root directory - separate from _odocls for cleaner organization *)
   let sidebar_root ctx = root ctx ++ "_sidebar"
 
@@ -266,6 +267,28 @@ module Output_format = struct
     | Html -> base
     | Json -> Path.Build.extend_basename base ~suffix:".json"
   ;;
+end
+
+module Doc_mode = struct
+  type t =
+    | Local_only (* @doc - only local packages, with remapping *)
+    | Full (* @doc-full - all packages, no remapping *)
+
+  let output_subdir = function
+    | Local_only -> "_html"
+    | Full -> "_html_full"
+  ;;
+
+  let alias output_format mode ~dir =
+    match mode with
+    | Local_only -> Output_format.alias output_format ~dir
+    | Full ->
+      (match output_format with
+       | Output_format.Html -> Alias.make (Alias.Name.of_string "doc-full") ~dir
+       | Output_format.Json -> Alias.make (Alias.Name.of_string "doc-json-full") ~dir)
+  ;;
+
+  let all = [ Local_only; Full ]
 end
 
 module Dep : sig
@@ -345,6 +368,26 @@ end = struct
           target_name
       ];
     Rules.Produce.Alias.add_deps (alias ctx m) (Action_builder.path_set files)
+  ;;
+end
+
+(* Mode-aware path helpers *)
+module Paths_for_mode = struct
+  let html_root ctx mode = Paths.root ctx ++ Doc_mode.output_subdir mode
+
+  let html ctx mode target =
+    match target with
+    | Lib (pkg, lib) ->
+      let lib_name = Lib.name lib in
+      html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+    | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
+  ;;
+
+  let odoc_support ctx mode = html_root ctx mode ++ Paths.odoc_support_dirname
+  let toplevel_index ctx mode = html_root ctx mode ++ "index.html"
+
+  let remap_file ctx pkg_name =
+    Paths.root ctx ++ "_remap" ++ Printf.sprintf "remap-%s.txt" (Package.Name.to_string pkg_name)
   ;;
 end
 
