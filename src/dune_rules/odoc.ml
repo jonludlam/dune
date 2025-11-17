@@ -1386,6 +1386,18 @@ let create_artifact_local ctx ~target ~source ~kind ~odoc_config ~lib_modules ~i
   (* For hierarchical pages, use in_doc to determine paths *)
   let in_doc_str = Path.Local.to_string in_doc in
   let in_doc_name = Filename.remove_extension in_doc_str in
+  let () =
+    match kind with
+    | Page { name; _ } ->
+      Log.info
+        [ Pp.textf
+            "create_artifact_local Page: name=%s, in_doc_str=%s, in_doc_name=%s"
+            name
+            in_doc_str
+            in_doc_name
+        ]
+    | Module _ -> ()
+  in
   (* Compute the odoc file path based on in_doc for pages, source for modules *)
   let odoc_file =
     match kind with
@@ -2864,8 +2876,14 @@ let mlds sctx pkg =
   (* Convert mld list to (path, name) pairs, preserving hierarchical paths *)
   let mlds_pairs =
     List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
-      (* Use full in_doc path to preserve hierarchy (e.g., "deprecated/index.mld") *)
-      let name = Path.Local.to_string mld.in_doc in
+      (* Use full in_doc path to preserve hierarchy (e.g., "deprecated/index.mld")
+         Remove .mld extension to get the page name *)
+      let in_doc_str = Path.Local.to_string mld.in_doc in
+      let name =
+        match String.drop_suffix in_doc_str ~suffix:".mld" with
+        | Some n -> n
+        | None -> Filename.remove_extension in_doc_str
+      in
       mld.path, name)
   in
   Memo.return (mlds_pairs, mlds_list)

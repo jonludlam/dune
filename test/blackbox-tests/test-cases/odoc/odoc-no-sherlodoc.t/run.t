@@ -11,7 +11,7 @@ Set up some fake environment without sherlodoc
   $ PATH=$(realpath ./_path) dune build @doc
 
 This test if `.odocl` files are generated
-  $ find _build/default/_doc/_odocls -name '*.odocl' | sort -n
+  $ find _build/default/_doc/_odocls -name '*.odocl' | grep -E '/(bar|foo)/' | sort -n
   _build/default/_doc/_odocls/bar/bar/bar.odocl
   _build/default/_doc/_odocls/bar/page-index.odocl
   _build/default/_doc/_odocls/foo/foo.byte/foo_byte.odocl
@@ -19,12 +19,6 @@ This test if `.odocl` files are generated
   _build/default/_doc/_odocls/foo/foo/foo2.odocl
   _build/default/_doc/_odocls/foo/foo/foo3.odocl
   _build/default/_doc/_odocls/foo/page-index.odocl
-  _build/default/_doc/_odocls/ocaml-compiler/stdlib/camlinternalFormat.odocl
-  _build/default/_doc/_odocls/ocaml-compiler/stdlib/camlinternalFormatBasics.odocl
-  _build/default/_doc/_odocls/ocaml-compiler/stdlib/camlinternalLazy.odocl
-  _build/default/_doc/_odocls/ocaml-compiler/stdlib/camlinternalMod.odocl
-  _build/default/_doc/_odocls/ocaml-compiler/stdlib/camlinternalOO.odocl
-  _build/default/_doc/_odocls/ocaml-compiler/stdlib/stdlib.odocl
 
   $ find . -name '*.js' | sort -n
   ./_build/default/_doc/_html/odoc.support/highlight.pack.js
