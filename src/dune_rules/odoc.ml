@@ -3290,9 +3290,18 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
                in
                Memo.return (Lib (pkg, lib)))
            in
+           (* Filter to only local libraries (exclude installed/external dependencies) *)
+           let filtered_targets =
+             List.filter all_targets ~f:(fun target ->
+               match target with
+               | Pkg _ -> false (* We don't add Pkg targets for private libs *)
+               | Lib (_, lib) ->
+                 (* Keep only local libraries, filter out installed ones *)
+                 Option.is_some (Lib.Local.of_lib lib))
+           in
            (* Deduplicate targets *)
            let unique_targets =
-             List.sort_uniq all_targets ~compare:(fun t1 t2 ->
+             List.sort_uniq filtered_targets ~compare:(fun t1 t2 ->
                match t1, t2 with
                | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
                | Lib (_, l1), Lib (_, l2) ->
