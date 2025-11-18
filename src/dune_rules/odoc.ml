@@ -556,35 +556,26 @@ let generate_remap_mappings pkg_discovery ~local_packages ~all_deps =
   let* mappings =
     Memo.List.map external_deps ~f:(fun target ->
       match target with
-      | Pkg pkg_name ->
-        let* version_opt = get_package_version pkg_discovery pkg_name in
-        let version = Option.value version_opt ~default:"latest" in
-        let local_path = Package.Name.to_string pkg_name in
-        let remote_url =
-          Printf.sprintf
-            "https://ocaml.org/p/%s/%s/doc/"
-            (Package.Name.to_string pkg_name)
-            version
-        in
-        Memo.return [ local_path, remote_url ]
-      | Lib (pkg_name, lib) ->
+      | Private_lib _ ->
+        (* Private libs are local, should never appear in external_deps *)
+        Memo.return []
+      | Pkg pkg_name | Lib (pkg_name, _) ->
+        (* Get package version and construct package URL *)
         let* version_opt = get_package_version pkg_discovery pkg_name in
         let version = Option.value version_opt ~default:"latest" in
         let pkg_path = Package.Name.to_string pkg_name in
-        let lib_path = pkg_path ^ "/" ^ Lib_name.to_string (Lib.name lib) in
-        let base_url =
-          Printf.sprintf
-            "https://ocaml.org/p/%s/%s/doc/"
-            (Package.Name.to_string pkg_name)
-            version
+        let pkg_url =
+          Printf.sprintf "https://ocaml.org/p/%s/%s/doc/" pkg_path version
         in
-        Memo.return
-          [ pkg_path, base_url
-          ; lib_path, base_url ^ Lib_name.to_string (Lib.name lib) ^ "/"
-          ]
-      | Private_lib _ ->
-        (* Private libs are local, should never appear in external_deps *)
-        Memo.return [])
+        (* Both package and library entries point to the same package URL.
+           Odoc appends library paths automatically when resolving links. *)
+        let pkg_mapping = pkg_path, pkg_url in
+        (match target with
+         | Lib (_, lib) ->
+           let lib_path = pkg_path ^ "/" ^ Lib_name.to_string (Lib.name lib) in
+           (* Library also maps to package URL, matching odoc_driver behavior *)
+           Memo.return [ pkg_mapping; lib_path, pkg_url ]
+         | _ -> Memo.return [ pkg_mapping ]))
   in
   Memo.return (List.concat mappings)
 ;;
