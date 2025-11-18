@@ -2,8 +2,14 @@
 
 open Import
 
+module Doc_mode : sig
+  type t =
+    | Local_only
+    | Full
+end
+
 module Paths : sig
-  val toplevel_index : Context.t -> Path.Build.t
+  val toplevel_index : Context.t -> Doc_mode.t -> Path.Build.t
 end
 
 val lib_unique_name : Lib.Local.t -> string

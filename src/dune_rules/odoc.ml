@@ -88,7 +88,9 @@ let lib_unique_id_string (lib : Lib.t) =
 
 type target =
   | Lib of Package.Name.t * Lib.t
-    (* Package name and library - package overrides Lib_info.package for installed libs *)
+    (* Library with a real package - package overrides Lib_info.package for installed libs *)
+  | Private_lib of string * Lib.t
+    (* Library without a real package - uses lib_unique_name as identifier *)
   | Pkg of Package.Name.t
 
 (* Artifact types - tracking documentation units through the pipeline *)
@@ -172,12 +174,13 @@ end = struct
   let pkg t =
     match t.target with
     | Lib (pkg, _) -> Some pkg
+    | Private_lib _ -> None
     | Pkg pkg -> Some pkg
   ;;
 
   let lib_name t =
     match t.target with
-    | Lib (_, lib) -> Lib.name lib
+    | Lib (_, lib) | Private_lib (_, lib) -> Lib.name lib
     | Pkg pkg -> Lib_name.of_string (Package.Name.to_string pkg)
   ;;
 
@@ -240,7 +243,7 @@ end = struct
   let html_output_file t ~html_base ~suffix =
     let basename, _ = get_basename_info t in
     match t.kind, t.target with
-    | Module _, Lib _ ->
+    | Module _, (Lib _ | Private_lib _) ->
       let html_dir = html_base ++ Stdune.String.capitalize basename in
       html_dir ++ ("index" ^ suffix)
     | Page _, Pkg _ ->
@@ -254,8 +257,8 @@ end = struct
        | None ->
          let html_path = html_base ++ basename in
          Path.Build.extend_basename html_path ~suffix)
-    | Module _, Pkg _ -> assert false (* Modules should have Lib targets, not Pkg *)
-    | Page _, Lib _ -> assert false (* Pages should have Pkg targets, not Lib *)
+    | Module _, Pkg _ -> assert false (* Modules should have Lib or Private_lib targets, not Pkg *)
+    | Page _, (Lib _ | Private_lib _) -> assert false (* Pages should have Pkg targets, not Lib *)
   ;;
 
   let html_file ctx output_subdir t =
@@ -280,23 +283,19 @@ end = struct
   let compute_parent_id ~kind ~target =
     match kind, target with
     | Module _, Lib (pkg, lib) ->
-      (* Check if this library has a real package or uses a synthetic one.
-         For libraries without real packages, pkg is already the synthetic package
-         (created from lib_unique_name), so parent_id is just the package name. *)
-      let lib_info = Lib.info lib in
-      let has_real_package = Option.is_some (Lib_info.package lib_info) in
-      let pkg_str = Package.Name.to_string pkg in
-      if has_real_package
-      then pkg_str ^ "/" ^ Lib_name.to_string (Lib.name lib)
-      else pkg_str
+      (* Library with real package: parent_id is "pkg/lib" *)
+      Package.Name.to_string pkg ^ "/" ^ Lib_name.to_string (Lib.name lib)
+    | Module _, Private_lib (lib_unique_name, _) ->
+      (* Private library: parent_id is just the lib_unique_name *)
+      lib_unique_name
     | Page { name = in_doc_name; _ }, Pkg pkg ->
       (* For hierarchical pages, parent_id includes the subdirectory.
          For example, "deprecated/index.mld" has parent_id "odoc/deprecated" *)
       (match String.rsplit2 in_doc_name ~on:'/' with
        | Some (parent_path, _) -> Package.Name.to_string pkg ^ "/" ^ parent_path
        | None -> Package.Name.to_string pkg)
-    | Module _, Pkg _ -> assert false (* Modules should have Lib targets, not Pkg *)
-    | Page _, Lib _ -> assert false (* Pages should have Pkg targets, not Lib *)
+    | Module _, Pkg _ -> assert false (* Modules should have Lib or Private_lib targets, not Pkg *)
+    | Page _, (Lib _ | Private_lib _) -> assert false (* Pages should have Pkg targets, not Lib *)
   ;;
 
   let create ~doc_root ~kind ~source ~target ~odoc_config ~lib_modules =
@@ -315,26 +314,32 @@ let add_rule sctx =
   Super_context.add_rule sctx ~dir
 ;;
 
+(* Doc_mode type and helpers - defined early to avoid circular dependencies *)
+module Doc_mode = struct
+  type t =
+    | Local_only (* @doc - only local packages, with remapping *)
+    | Full (* @doc-full - all packages, no remapping *)
+
+  let output_subdir = function
+    | Local_only -> "_html"
+    | Full -> "_html_full"
+  ;;
+
+  let all = [ Local_only; Full ]
+end
+
 module Paths = struct
   let odoc_support_dirname = "odoc.support"
   let root (context : Context.t) = Path.Build.relative (Context.build_dir context) "_doc"
 
   let odocs ctx = function
     | Lib (pkg, lib) ->
-      (* Check if this library has a real package or uses a synthetic one.
-         Libraries without real packages use lib_unique_name as the package,
-         and their files go directly in _odoc/{synthetic_pkg}/ not _odoc/{pkg}/{lib}/. *)
-      let lib_info = Lib.info lib in
-      let has_real_package = Option.is_some (Lib_info.package lib_info) in
-      let pkg_str = Package.Name.to_string pkg in
-      if has_real_package
-      then (
-        (* Real package: _doc/_odoc/{package}/{library} *)
-        let lib_name = Lib.name lib in
-        root ctx ++ "_odoc" ++ pkg_str ++ Lib_name.to_string lib_name)
-      else
-        (* Synthetic package (lib without real package): _doc/_odoc/{lib_unique_name} *)
-        root ctx ++ "_odoc" ++ pkg_str
+      (* Library with real package: _doc/_odoc/{package}/{library} *)
+      let lib_name = Lib.name lib in
+      root ctx ++ "_odoc" ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+    | Private_lib (lib_unique_name, _) ->
+      (* Private library: _doc/_odoc/{lib_unique_name} *)
+      root ctx ++ "_odoc" ++ lib_unique_name
     | Pkg pkg -> root ctx ++ "_odoc" ++ Package.Name.to_string pkg
   ;;
 
@@ -347,6 +352,7 @@ module Paths = struct
     match m with
     | Pkg pkg -> Package.Name.to_string pkg
     | Lib (pkg, _lib) -> Package.Name.to_string pkg
+    | Private_lib (lib_unique_name, _) -> lib_unique_name
   ;;
 
   let html ctx mode target =
@@ -354,6 +360,9 @@ module Paths = struct
     | Lib (pkg, lib) ->
       let lib_name = Lib.name lib in
       html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+    | Private_lib (lib_unique_name, _) ->
+      (* Private library: use lib_unique_name as the complete identifier *)
+      html_root ctx mode ++ lib_unique_name
     | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
   ;;
 
@@ -361,6 +370,9 @@ module Paths = struct
     | Lib (pkg, lib) ->
       let lib_name = Lib.name lib in
       odocl_root ctx ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+    | Private_lib (lib_unique_name, _) ->
+      (* Private library: use lib_unique_name as the complete identifier *)
+      odocl_root ctx ++ lib_unique_name
     | Pkg pkg -> odocl_root ctx ++ Package.Name.to_string pkg
   ;;
 
@@ -418,53 +430,12 @@ module Output_format = struct
     | Json -> Alias.make Alias0.doc_json ~dir
   ;;
 
-  let toplevel_index_path format ctx =
-    let base = Paths.toplevel_index ctx in
+  let toplevel_index_path format ctx mode =
+    let base = Paths.toplevel_index ctx mode in
     match format with
     | Html -> base
     | Json -> Path.Build.extend_basename base ~suffix:".json"
   ;;
-end
-
-module Doc_mode = struct
-  type t =
-    | Local_only (* @doc - only local packages, with remapping *)
-    | Full (* @doc-full - all packages, no remapping *)
-
-  let output_subdir = function
-    | Local_only -> "_html"
-    | Full -> "_html_full"
-  ;;
-
-  let alias output_format mode ~dir =
-    match mode with
-    | Local_only -> Output_format.alias output_format ~dir
-    | Full ->
-      (match output_format with
-       | Output_format.Html -> Alias.make (Alias.Name.of_string "doc-full") ~dir
-       | Output_format.Json -> Alias.make (Alias.Name.of_string "doc-json-full") ~dir)
-  ;;
-
-  let all = [ Local_only; Full ]
-end
-
-module Paths_for_mode = struct
-  let html_root ctx mode = Paths.root ctx ++ Doc_mode.output_subdir mode
-
-  let html ctx mode target =
-    match target with
-    | Lib (pkg, lib) ->
-      let lib_name = Lib.name lib in
-      html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-    | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
-  ;;
-
-  let odoc_support ctx mode = html_root ctx mode ++ Paths.odoc_support_dirname
-  let toplevel_index ctx mode = html_root ctx mode ++ "index.html"
-  let sidebar_json ctx mode pkg = html_root ctx mode ++ Package.Name.to_string pkg ++ "sidebar.json"
-
-  (* Single remap file for all external dependencies *)
-  let remap_file ctx = Paths.root ctx ++ "_remap" ++ "remap.txt"
 end
 
 module Dep : sig
@@ -491,7 +462,7 @@ module Dep : sig
   val setup_deps : Context.t -> target -> Path.Set.t -> unit Memo.t
 end = struct
   let format_alias f mode ctx m =
-    Output_format.alias f ~dir:(Paths_for_mode.html ctx mode m)
+    Output_format.alias f ~dir:(Paths.html ctx mode m)
   ;;
 
   let alias = Alias.make (Alias.Name.of_string ".odoc-all")
@@ -543,6 +514,8 @@ end = struct
       match m with
       | Lib (pkg, lib) ->
         "lib:" ^ Package.Name.to_string pkg ^ "/" ^ Lib_name.to_string (Lib.name lib)
+      | Private_lib (lib_unique_name, lib) ->
+        "private_lib:" ^ lib_unique_name ^ "/" ^ Lib_name.to_string (Lib.name lib)
       | Pkg pkg -> "pkg:" ^ Package.Name.to_string pkg
     in
     Log.info
@@ -576,7 +549,8 @@ let generate_remap_mappings pkg_discovery ~local_packages ~all_deps =
     List.filter all_deps ~f:(fun target ->
       match target with
       | Pkg pkg_name -> not (Package.Name.Set.mem local_pkg_set pkg_name)
-      | Lib (pkg_name, _lib) -> not (Package.Name.Set.mem local_pkg_set pkg_name))
+      | Lib (pkg_name, _lib) -> not (Package.Name.Set.mem local_pkg_set pkg_name)
+      | Private_lib _ -> false (* Private libs have no package - they are LOCAL *))
   in
   (* Generate mappings: local_path:remote_url *)
   let* mappings =
@@ -607,7 +581,10 @@ let generate_remap_mappings pkg_discovery ~local_packages ~all_deps =
         Memo.return
           [ pkg_path, base_url
           ; lib_path, base_url ^ Lib_name.to_string (Lib.name lib) ^ "/"
-          ])
+          ]
+      | Private_lib _ ->
+        (* Private libs are local, should never appear in external_deps *)
+        Memo.return [])
   in
   Memo.return (List.concat mappings)
 ;;
@@ -1086,7 +1063,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
     | Local_source _ ->
       (* Check if this is a vendored library *)
       (match Artifact.target odoc_file with
-       | Lib (_, lib) -> is_lib_vendored lib
+       | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
        | Pkg _ -> Memo.return false)
   in
   (* Add -L flag for the library itself so modules can reference each other,
@@ -1094,7 +1071,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
      odoc_lib_flags already handles libraries in requires + stdlib. *)
   let* self_lib_flag =
     match Artifact.target odoc_file with
-    | Lib (_pkg_name, lib) ->
+    | Lib (_, lib) | Private_lib (_, lib) ->
       let* libs_with_flags = Resolve.read_memo requires in
       (* Check if this library is already in requires or is stdlib *)
       let is_already_included =
@@ -1126,7 +1103,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
   let run_odoc =
     run_odoc
       sctx
-      ~dir:(Path.build (Paths.html_root ctx))
+      ~dir:(Path.build (Paths.html_root ctx Doc_mode.Local_only))
       "link"
       ~quiet
       ~flags_for:(Some (Artifact.odoc_file odoc_file))
@@ -1153,7 +1130,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
     | Local_source _ ->
       (* Check if this is a vendored library *)
       (match Artifact.target odoc_file with
-       | Lib (_, lib) -> is_lib_vendored lib
+       | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
        | Pkg _ -> Memo.return false)
   in
   let run_odoc =
@@ -1276,7 +1253,7 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
   (* Get TRANSITIVE closure of dependencies (not just direct requires) *)
   let* requires_closure =
     match Artifact.target artifact with
-    | Lib (_, lib) ->
+    | Lib (_, lib) | Private_lib (_, lib) ->
       (* Include stdlib in the closure unless we're compiling stdlib itself *)
       let libs_to_close =
         if is_stdlib_artifact then [ lib ] else lib :: Option.to_list stdlib_opt
@@ -1288,7 +1265,7 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
   (* Filter out the library itself from the closure *)
   let requires_from_deps =
     match Artifact.target artifact with
-    | Lib (_, lib) ->
+    | Lib (_, lib) | Private_lib (_, lib) ->
       Resolve.map requires_closure ~f:(fun all_libs ->
         List.filter all_libs ~f:(fun dep_lib ->
           not (Lib_name.equal (Lib.name dep_lib) (Lib.name lib))))
@@ -1327,6 +1304,10 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
                   let lib_dir = Paths.odocs ctx (Lib (pkg, lib)) in
                   Command.Args.S
                     [ Command.Args.A "-I"; Command.Args.Path (Path.build lib_dir) ]
+                | Private_lib (lib_unique_name, lib) ->
+                  let lib_dir = Paths.odocs ctx (Private_lib (lib_unique_name, lib)) in
+                  Command.Args.S
+                    [ Command.Args.A "-I"; Command.Args.Path (Path.build lib_dir) ]
                 | Pkg _ -> Command.Args.S [])
              ; Command.Args.A "--output-dir"
              ; Command.Args.A "_doc/_odoc"
@@ -1336,7 +1317,7 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
              ; (* Add --unique-id and --warnings-tag flags for library artifacts.
              Both use the package name to identify which package the module belongs to. *)
                (match Artifact.target artifact with
-                | Lib (_, lib) ->
+                | Lib (_, lib) | Private_lib (_, lib) ->
                   let pkg_name = lib_unique_id_string lib in
                   Command.Args.As [ "--unique-id"; pkg_name; "--warnings-tag"; pkg_name ]
                 | Pkg _ ->
@@ -1352,7 +1333,7 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
     | Local_source _ ->
       (* Check if this is a vendored library *)
       (match Artifact.target artifact with
-       | Lib (_, lib) -> is_lib_vendored lib
+       | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
        | Pkg _ -> Memo.return false)
   in
   let run_odoc =
@@ -1379,8 +1360,8 @@ let generate_html_artifact
       ()
   =
   let ctx = Super_context.context sctx in
-  let html_root = Paths_for_mode.html_root ctx mode in
-  let odoc_support_path = Paths_for_mode.odoc_support ctx mode in
+  let html_root = Paths.html_root ctx mode in
+  let odoc_support_path = Paths.odoc_support ctx mode in
   let output_subdir = Doc_mode.output_subdir mode in
   let search_args = Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:html_root in
   (* Generate HTML for all output formats *)
@@ -1436,7 +1417,7 @@ let generate_html_artifact
       | Local_source _ ->
         (* Check if this is a vendored library *)
         (match Artifact.target artifact with
-         | Lib (_, lib) -> is_lib_vendored lib
+         | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
          | Pkg _ -> Memo.return false)
     in
     let run_odoc =
@@ -1457,7 +1438,7 @@ let generate_html_artifact
 
 let setup_css_rule sctx ~mode =
   let ctx = Super_context.context sctx in
-  let dir = Paths_for_mode.odoc_support ctx mode in
+  let dir = Paths.odoc_support ctx mode in
   let run_odoc =
     let cmd =
       run_odoc
@@ -1555,17 +1536,17 @@ module Toplevel_index = struct
   ;;
 end
 
-let setup_toplevel_index_rule sctx output =
+let setup_toplevel_index_rule sctx output mode =
   let* packages = Dune_load.packages () in
   let index = Toplevel_index.of_packages packages in
   let content = Toplevel_index.content output index in
   let ctx = Super_context.context sctx in
-  let path = Output_format.toplevel_index_path output ctx in
+  let path = Output_format.toplevel_index_path output ctx mode in
   add_rule sctx (Action_builder.write_file path content)
 ;;
 
-let setup_toplevel_index_rules sctx =
-  Output_format.iter ~f:(setup_toplevel_index_rule sctx)
+let setup_toplevel_index_rules sctx mode =
+  Output_format.iter ~f:(fun output -> setup_toplevel_index_rule sctx output mode)
 ;;
 
 let libs_of_pkg ctx ~pkg =
@@ -1587,7 +1568,7 @@ let compute_link_requires sctx ~artifact =
   let ctx = Super_context.context sctx in
   let* base_requires =
     match Artifact.kind artifact, Artifact.target artifact with
-    | Module _, Lib (_, lib) ->
+    | Module _, Lib (_, lib) | Module _, Private_lib (_, lib) ->
       (* Module in a library: use library's dependencies PLUS the library itself.
        This ensures all modules in the library (including hidden/wrapped ones) are compiled
        before any module is linked. Critical for wrapped libraries. *)
@@ -1602,7 +1583,7 @@ let compute_link_requires sctx ~artifact =
     | Module _, Pkg _ ->
       (* This shouldn't happen - modules should have Lib targets *)
       Memo.return (Resolve.return [])
-    | Page { pkg_libs = _; _ }, Lib (_, lib) ->
+    | Page { pkg_libs = _; _ }, Lib (_, lib) | Page { pkg_libs = _; _ }, Private_lib (_, lib) ->
       (* Page in a library target - just use that library *)
       Memo.return (Resolve.return [ lib ])
   in
@@ -1899,8 +1880,7 @@ let create_artifact_v2_module
       }
   in
   let lib_t = Lib.Local.to_lib local_lib in
-  let synthetic_pkg = Package.Name.of_string lib_unique_name in
-  let target = Lib (synthetic_pkg, lib_t) in
+  let target = Private_lib (lib_unique_name, lib_t) in
   let obj_dir = Lib.Local.obj_dir local_lib in
   let source_file = Obj_dir.Module.cmti_file obj_dir module_ ~cm_kind:(Ocaml Cmi) in
   Artifact.create
@@ -2005,7 +1985,7 @@ let compile_library_artifacts sctx _ctx ~pkg_name:_ ~lib_name ~lib_artifacts
   Log.info
     [ Pp.textf "odoc v3: compile_library_artifacts - examining first artifact's target" ];
   match Artifact.target first_artifact with
-  | Pkg _ | Lib _ ->
+  | Pkg _ | Lib _ | Private_lib _ ->
     Log.info
       [ Pp.textf
           "odoc v3: compile_library_artifacts for lib=%s with %d artifacts"
@@ -2284,14 +2264,14 @@ let generate_sidebar_binary sctx ~pkg ~index_file =
 (* Generate JSON sidebar file for a package from its index - called in _html handler *)
 let generate_sidebar_json sctx ~mode ~pkg ~index_file =
   let ctx = Super_context.context sctx in
-  let sidebar_json = Paths_for_mode.sidebar_json ctx mode pkg in
+  let sidebar_json = Paths.sidebar_json ctx mode pkg in
   (* Generate JSON sidebar - run from mode-specific html directory with relative path to index *)
   let action =
     let open Action_builder.With_targets.O in
     Action_builder.with_no_targets (Action_builder.path (Path.build index_file))
     >>> run_odoc
           sctx
-          ~dir:(Path.build (Paths_for_mode.html_root ctx mode))
+          ~dir:(Path.build (Paths.html_root ctx mode))
           "sidebar-generate"
           ~quiet:false
           ~flags_for:None
@@ -2358,7 +2338,7 @@ let handle_remap_artifacts sctx =
             Memo.return
               (List.filter_map all_artifacts ~f:(fun artifact ->
                  match Artifact.target artifact with
-                 | Lib (_pkg, lib) -> Some lib
+                 | Lib (_, lib) | Private_lib (_, lib) -> Some lib
                  | Pkg _ -> None)))
       in
       (* Create package discovery for package identification and version lookup *)
@@ -2388,17 +2368,9 @@ let handle_remap_artifacts sctx =
             match Package_discovery.package_of_library pkg_discovery dep_lib with
             | Some pkg -> Memo.return (Lib (pkg, dep_lib))
             | None ->
-              (* Fallback: use synthetic package name for private libraries *)
-              let lib_name = Lib.name dep_lib in
-              let lib_info = Lib.info dep_lib in
-              let status = Lib_info.status lib_info in
-              let synthetic_pkg_name =
-                match status with
-                | Lib_info.Status.Private (project, _) ->
-                  Scope_key.to_string lib_name project
-                | _ -> Lib_name.to_string lib_name
-              in
-              Memo.return (Lib (Package.Name.of_string synthetic_pkg_name, dep_lib)))
+              (* No package found: this is a private library *)
+              let lib_unique_name = lib_unique_id_string dep_lib in
+              Memo.return (Private_lib (lib_unique_name, dep_lib)))
       in
       (* Generate remap mappings for external dependencies *)
       let* mappings =
@@ -2410,7 +2382,7 @@ let handle_remap_artifacts sctx =
       if List.is_empty mappings
       then Memo.return ()
       else (
-        let remap_file = Paths_for_mode.remap_file ctx in
+        let remap_file = Paths.remap_file ctx in
         write_remap_file sctx ~remap_file ~mappings))
   in
   Memo.return (Build_config.Gen_rules.make rules)
@@ -2475,7 +2447,7 @@ let generate_html_for_package
     | Doc_mode.Local_only ->
       if String.contains pkg_or_lib_name '@'
       then None (* Synthetic package - no remap *)
-      else Some (Paths_for_mode.remap_file ctx)
+      else Some (Paths.remap_file ctx)
     | Doc_mode.Full -> None
   in
   (* Generate HTML for all visible artifacts *)
@@ -2554,6 +2526,9 @@ let generate_html_for_package
         | Lib (pkg, lib) ->
           let lib_alias = Dep.format_alias output mode ctx (Lib (pkg, lib)) in
           Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths lib_paths)
+        | Private_lib (lib_unique_name, lib) ->
+          let lib_alias = Dep.format_alias output mode ctx (Private_lib (lib_unique_name, lib)) in
+          Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths lib_paths)
         | Pkg _ -> Memo.return () (* Package artifacts don't have library aliases *)))
 ;;
 
@@ -2579,7 +2554,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
   let library_artifacts, package_pages =
     List.partition_map all_artifacts ~f:(fun artifact ->
       match Artifact.target artifact with
-      | Lib _ -> Left artifact (* Library artifacts *)
+      | Lib _ | Private_lib _ -> Left artifact (* Library artifacts *)
       | Pkg _ -> Right artifact (* Package-level pages *))
   in
   (* Group library artifacts by library *)
@@ -2906,7 +2881,13 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
   let alias =
     let pkg_dir = Package.dir pkg in
     let dir = Path.Build.append_source (Context.build_dir ctx) pkg_dir in
-    Doc_mode.alias output mode ~dir
+    (* Inline Doc_mode.alias logic *)
+    match mode with
+    | Doc_mode.Local_only -> Output_format.alias output ~dir
+    | Doc_mode.Full ->
+      (match output with
+       | Output_format.Html -> Alias.make (Alias.Name.of_string "doc-full") ~dir
+       | Output_format.Json -> Alias.make (Alias.Name.of_string "doc-json-full") ~dir)
   in
   (* Wrap the entire transitive closure computation in Action_builder. *)
   let deps_action =
@@ -2946,26 +2927,36 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
          let* pkg_discovery = Package_discovery.create ~context:ctx in
          let* all_targets =
            Memo.List.map all_expanded_libs ~f:(fun lib ->
-             let* pkg =
-               match Lib.Local.of_lib lib with
-               | Some local_lib ->
-                 Memo.return (Package.Name.of_string (pkg_or_lnu local_lib))
-               | None ->
-                 (match Package_discovery.package_of_library pkg_discovery lib with
-                  | Some p -> Memo.return p
-                  | None ->
-                    (match Lib_info.package (Lib.info lib) with
-                     | Some p -> Memo.return p
-                     | None ->
-                       Memo.return
-                         (Package.Name.of_string (Lib_name.to_string (Lib.name lib)))))
-             in
-             Memo.return (Lib (pkg, lib)))
+             let lib_info = Lib.info lib in
+             let has_real_package = Option.is_some (Lib_info.package lib_info) in
+             if not has_real_package
+             then (
+               (* Library without a real package - use Private_lib *)
+               let lib_unique_name = lib_unique_id_string lib in
+               Memo.return (Private_lib (lib_unique_name, lib)))
+             else (
+               (* Library with a real package - use Lib *)
+               let* pkg =
+                 match Lib.Local.of_lib lib with
+                 | Some local_lib ->
+                   Memo.return (Package.Name.of_string (pkg_or_lnu local_lib))
+                 | None ->
+                   (match Package_discovery.package_of_library pkg_discovery lib with
+                    | Some p -> Memo.return p
+                    | None ->
+                      (match Lib_info.package lib_info with
+                       | Some p -> Memo.return p
+                       | None ->
+                         Memo.return
+                           (Package.Name.of_string (Lib_name.to_string (Lib.name lib)))))
+               in
+               Memo.return (Lib (pkg, lib))))
          in
          let pkg_targets_from_libs =
            List.filter_map all_targets ~f:(fun target ->
              match target with
              | Lib (pkg, _) -> Some (Pkg pkg)
+             | Private_lib _ -> None (* Private libs have no package *)
              | Pkg _ -> None)
          in
          let all_targets_with_pkg = (Pkg name :: all_targets) @ pkg_targets_from_libs in
@@ -2978,7 +2969,8 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
              List.filter all_targets_with_pkg ~f:(fun target ->
                match target with
                | Pkg p -> Package.Name.Set.mem workspace_pkg_set p
-               | Lib (p, _) -> Package.Name.Set.mem workspace_pkg_set p)
+               | Lib (p, _) -> Package.Name.Set.mem workspace_pkg_set p
+               | Private_lib _ -> true (* Private libs are always local *))
            | Doc_mode.Full ->
              (* Include all dependencies *)
              Memo.return all_targets_with_pkg
@@ -2991,8 +2983,12 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
                let name1 = Lib.name l1 in
                let name2 = Lib.name l2 in
                Lib_name.compare name1 name2
-             | Pkg _, Lib _ -> Ordering.Lt
-             | Lib _, Pkg _ -> Ordering.Gt)
+             | Private_lib (_, l1), Private_lib (_, l2) ->
+               Lib_name.compare (Lib.name l1) (Lib.name l2)
+             | Pkg _, (Lib _ | Private_lib _) -> Ordering.Lt
+             | (Lib _ | Private_lib _), Pkg _ -> Ordering.Gt
+             | Lib _, Private_lib _ -> Ordering.Lt
+             | Private_lib _, Lib _ -> Ordering.Gt)
          in
          Memo.return
            (unique_targets
@@ -3003,7 +2999,7 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
       match mode with
       | Doc_mode.Local_only ->
         (* Add remap file as dependency for Local_only mode *)
-        let remap_file = Paths_for_mode.remap_file ctx in
+        let remap_file = Paths.remap_file ctx in
         let+ _ = Action_builder.path (Path.build remap_file) in
         dep_set
       | Doc_mode.Full -> Action_builder.return dep_set
@@ -3158,35 +3154,44 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
              | Some stdlib -> stdlib :: libs_from_closure
              | None -> libs_from_closure
            in
-           (* Convert to targets: now we can use Lib for all libraries since target uses Lib.t *)
+           (* Convert to targets, using Private_lib for libraries without real packages *)
            let* pkg_discovery = Package_discovery.create ~context:ctx in
            let* all_targets =
              Memo.List.map all_dep_libs ~f:(fun lib ->
-               let* pkg =
-                 match Lib.Local.of_lib lib with
-                 | Some local_lib ->
-                   (* Local library - use pkg_or_lnu which handles both v3 and v2 *)
-                   Memo.return (Package.Name.of_string (pkg_or_lnu local_lib))
-                 | None ->
-                   (* Installed library - use Package_discovery to get correct package *)
-                   (match Package_discovery.package_of_library pkg_discovery lib with
-                    | Some p -> Memo.return p
-                    | None ->
-                      (* Fallback if Package_discovery doesn't know about it *)
-                      (match Lib_info.package (Lib.info lib) with
-                       | Some p -> Memo.return p
-                       | None ->
-                         Memo.return
-                           (Package.Name.of_string (Lib_name.to_string (Lib.name lib)))))
-               in
-               Memo.return (Lib (pkg, lib)))
+               let lib_info = Lib.info lib in
+               let has_real_package = Option.is_some (Lib_info.package lib_info) in
+               if not has_real_package
+               then (
+                 (* Library without a real package - use Private_lib *)
+                 let lib_unique_name = lib_unique_id_string lib in
+                 Memo.return (Private_lib (lib_unique_name, lib)))
+               else (
+                 (* Library with a real package - use Lib *)
+                 let* pkg =
+                   match Lib.Local.of_lib lib with
+                   | Some local_lib ->
+                     (* Local library - use pkg_or_lnu which handles both v3 and v2 *)
+                     Memo.return (Package.Name.of_string (pkg_or_lnu local_lib))
+                   | None ->
+                     (* Installed library - use Package_discovery to get correct package *)
+                     (match Package_discovery.package_of_library pkg_discovery lib with
+                      | Some p -> Memo.return p
+                      | None ->
+                        (* Fallback if Package_discovery doesn't know about it *)
+                        (match Lib_info.package lib_info with
+                         | Some p -> Memo.return p
+                         | None ->
+                           Memo.return
+                             (Package.Name.of_string (Lib_name.to_string (Lib.name lib)))))
+                 in
+                 Memo.return (Lib (pkg, lib))))
            in
            (* Filter to only local libraries (exclude installed/external dependencies) *)
            let filtered_targets =
              List.filter all_targets ~f:(fun target ->
                match target with
                | Pkg _ -> false (* We don't add Pkg targets for private libs *)
-               | Lib (_, lib) ->
+               | Lib (_, lib) | Private_lib (_, lib) ->
                  (* Keep only local libraries, filter out installed ones *)
                  Option.is_some (Lib.Local.of_lib lib))
            in
@@ -3200,8 +3205,12 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
                  let name1 = Lib.name l1 in
                  let name2 = Lib.name l2 in
                  Lib_name.compare name1 name2
-               | Pkg _, Lib _ -> Ordering.Lt
-               | Lib _, Pkg _ -> Ordering.Gt)
+               | Private_lib (_, l1), Private_lib (_, l2) ->
+                 Lib_name.compare (Lib.name l1) (Lib.name l2)
+               | Pkg _, (Lib _ | Private_lib _) -> Ordering.Lt
+               | (Lib _ | Private_lib _), Pkg _ -> Ordering.Gt
+               | Lib _, Private_lib _ -> Ordering.Lt
+               | Private_lib _, Lib _ -> Ordering.Gt)
            in
            (* Return the dep set *)
            Memo.return
@@ -3444,13 +3453,13 @@ let gen_rules sctx ~dir rest =
         Package.Name.Map.keys packages |> List.map ~f:Package.Name.to_string
       in
       let directory_targets =
-        Path.Build.Map.singleton (Paths.odoc_support ctx) Loc.none
+        Path.Build.Map.singleton (Paths.odoc_support ctx Doc_mode.Local_only) Loc.none
       in
       let rules =
         Rules.collect_unit (fun () ->
-          Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx)
+          Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx Doc_mode.Local_only)
           >>> setup_css_rule sctx ~mode:Doc_mode.Local_only
-          >>> setup_toplevel_index_rules sctx)
+          >>> setup_toplevel_index_rules sctx Doc_mode.Local_only)
       in
       Memo.return
         (Build_config.Gen_rules.make
@@ -3532,12 +3541,12 @@ let gen_rules sctx ~dir rest =
         Package.Name.Map.keys packages |> List.map ~f:Package.Name.to_string
       in
       let directory_targets =
-        Path.Build.Map.singleton (Paths_for_mode.odoc_support ctx Doc_mode.Full) Loc.none
+        Path.Build.Map.singleton (Paths.odoc_support ctx Doc_mode.Full) Loc.none
       in
       let rules =
         Rules.collect_unit (fun () ->
           (* Set up CSS/support files and sherlodoc for _html_full *)
-          let html_root = Paths_for_mode.html_root ctx Doc_mode.Full in
+          let html_root = Paths.html_root ctx Doc_mode.Full in
           Sherlodoc.sherlodoc_dot_js sctx ~dir:html_root
           >>> setup_css_rule sctx ~mode:Doc_mode.Full
           >>> Memo.return ())
