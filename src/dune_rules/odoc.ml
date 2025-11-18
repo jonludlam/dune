@@ -2370,11 +2370,9 @@ let handle_remap_artifacts sctx =
           ~local_packages:workspace_pkgs
           ~all_deps:dep_targets
       in
-      if List.is_empty mappings
-      then Memo.return ()
-      else (
-        let remap_file = Paths.remap_file ctx in
-        write_remap_file sctx ~remap_file ~mappings))
+      (* Always create the remap file, even if empty, since it's required as a dependency *)
+      let remap_file = Paths.remap_file ctx in
+      write_remap_file sctx ~remap_file ~mappings)
   in
   Memo.return (Build_config.Gen_rules.make rules)
 ;;
