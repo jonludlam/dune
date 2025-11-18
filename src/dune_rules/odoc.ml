@@ -338,7 +338,7 @@ module Paths = struct
     | Pkg pkg -> root ctx ++ "_odoc" ++ Package.Name.to_string pkg
   ;;
 
-  let html_root ctx = root ctx ++ "_html"
+  let html_root ctx mode = root ctx ++ Doc_mode.output_subdir mode
   let odocl_root ctx = root ctx ++ "_odocls"
 
   let add_pkg_lnu base m =
@@ -349,11 +349,12 @@ module Paths = struct
     | Lib (pkg, _lib) -> Package.Name.to_string pkg
   ;;
 
-  let html ctx = function
+  let html ctx mode target =
+    match target with
     | Lib (pkg, lib) ->
       let lib_name = Lib.name lib in
-      html_root ctx ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-    | Pkg pkg -> html_root ctx ++ Package.Name.to_string pkg
+      html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+    | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
   ;;
 
   let odocl ctx = function
@@ -364,8 +365,8 @@ module Paths = struct
   ;;
 
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
-  let odoc_support ctx = html_root ctx ++ odoc_support_dirname
-  let toplevel_index ctx = html_root ctx ++ "index.html"
+  let odoc_support ctx mode = html_root ctx mode ++ odoc_support_dirname
+  let toplevel_index ctx mode = html_root ctx mode ++ "index.html"
 
   (* Sidebar root directory - separate from _odocls for cleaner organization *)
   let sidebar_root ctx = root ctx ++ "_sidebar"
@@ -381,7 +382,10 @@ module Paths = struct
   ;;
 
   (* JSON sidebar file for web consumption - goes in HTML output *)
-  let sidebar_json ctx pkg = html_root ctx ++ Package.Name.to_string pkg ++ "sidebar.json"
+  let sidebar_json ctx mode pkg = html_root ctx mode ++ Package.Name.to_string pkg ++ "sidebar.json"
+
+  (* Single remap file for all external dependencies *)
+  let remap_file ctx = root ctx ++ "_remap" ++ "remap.txt"
 end
 
 module Output_format = struct
@@ -464,13 +468,9 @@ module Paths_for_mode = struct
 end
 
 module Dep : sig
-  (** [format_alias output ctx target] returns the alias that depends on all
-      targets produced by odoc for [target] in output format [output].
-      Uses Local_only mode (default @doc alias). *)
-  val format_alias : Output_format.t -> Context.t -> target -> Alias.t
-
-  (** [format_alias_for_mode output mode ctx target] returns the mode-aware alias. *)
-  val format_alias_for_mode
+  (** [format_alias output mode ctx target] returns the alias that depends on all
+      targets produced by odoc for [target] in output format [output] and doc mode. *)
+  val format_alias
     :  Output_format.t
     -> Doc_mode.t
     -> Context.t
@@ -490,9 +490,7 @@ module Dep : sig
     These dependencies may be used using the [deps] function *)
   val setup_deps : Context.t -> target -> Path.Set.t -> unit Memo.t
 end = struct
-  let format_alias f ctx m = Output_format.alias f ~dir:(Paths.html ctx m)
-
-  let format_alias_for_mode f mode ctx m =
+  let format_alias f mode ctx m =
     Output_format.alias f ~dir:(Paths_for_mode.html ctx mode m)
   ;;
 
@@ -2515,7 +2513,7 @@ let generate_html_for_package
         List.map visible_artifacts ~f:(fun artifact ->
           Path.build (Output_format.target ctx output_subdir output artifact))
       in
-      let pkg_alias = Dep.format_alias_for_mode output mode ctx (Pkg pkg_name) in
+      let pkg_alias = Dep.format_alias output mode ctx (Pkg pkg_name) in
       Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_paths))
   in
   (* Also create library-level aliases for each library *)
@@ -2541,7 +2539,7 @@ let generate_html_for_package
       match lib_opt with
       | Some lib ->
         Output_format.iter ~f:(fun output ->
-          let lib_alias = Dep.format_alias_for_mode output mode ctx (Lib (pkg_name, lib)) in
+          let lib_alias = Dep.format_alias output mode ctx (Lib (pkg_name, lib)) in
           Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths []))
       | None -> Memo.return ())
     else
@@ -2554,7 +2552,7 @@ let generate_html_for_package
         (* For now, use the artifact's target which should be Lib lib *)
         match Artifact.target (List.hd visible_lib_artifacts) with
         | Lib (pkg, lib) ->
-          let lib_alias = Dep.format_alias_for_mode output mode ctx (Lib (pkg, lib)) in
+          let lib_alias = Dep.format_alias output mode ctx (Lib (pkg, lib)) in
           Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths lib_paths)
         | Pkg _ -> Memo.return () (* Package artifacts don't have library aliases *)))
 ;;
@@ -2902,113 +2900,7 @@ let expand_libs_with_odoc_config ctx initial_libs =
   Lib.Set.to_list expanded
 ;;
 
-let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.t) =
-  let ctx = Super_context.context sctx in
-  let name = Package.name pkg in
-  let alias =
-    let pkg_dir = Package.dir pkg in
-    let dir = Path.Build.append_source (Context.build_dir ctx) pkg_dir in
-    Output_format.alias output ~dir
-  in
-  (* Wrap the entire transitive closure computation in Action_builder.
-     This ensures Lib.closure only executes when @doc is actually built. *)
-  let deps_action =
-    let open Action_builder.O in
-    let* dep_set =
-      Action_builder.of_memo
-        (let open Memo.O in
-         let* local_libs = Context.name ctx |> libs_of_pkg ~pkg:name in
-         (* Add libraries from documentation dependencies to seed the closure *)
-         let* doc_dep_libs =
-           let doc = Package.info pkg |> Package_info.documentation in
-           let doc_pkg_names =
-             List.map doc.packages ~f:(fun (dep : Package_dependency.t) -> dep.name)
-           in
-           let* pkg_discovery = Package_discovery.create ~context:ctx in
-           Memo.List.map doc_pkg_names ~f:(fun pkg_name ->
-             Memo.return (Package_discovery.libraries_of_package pkg_discovery pkg_name))
-           >>| List.concat
-         in
-         let seed_libs = List.map local_libs ~f:Lib.Local.to_lib @ doc_dep_libs in
-         (* Collect the transitive closure of all dependencies including stdlib *)
-         let* stdlib_opt = stdlib_lib (Context.name ctx) in
-         let* all_dep_libs =
-           let+ closures =
-             Memo.List.map seed_libs ~f:(fun lib ->
-               let* closure =
-                 Lib.closure (lib :: Option.to_list stdlib_opt) ~linking:false
-               in
-               Resolve.read_memo closure)
-           in
-           let libs_from_closure =
-             closures |> List.concat |> Lib.Set.of_list |> Lib.Set.to_list
-           in
-           (* Explicitly add stdlib if it exists, since Lib.closure may not include it *)
-           match stdlib_opt with
-           | Some stdlib -> stdlib :: libs_from_closure
-           | None -> libs_from_closure
-         in
-         (* Expand with odoc-config dependencies transitively *)
-         let* all_expanded_libs = expand_libs_with_odoc_config ctx all_dep_libs in
-         (* Convert to targets: now we can use Lib for all libraries since target uses Lib.t *)
-         let* pkg_discovery = Package_discovery.create ~context:ctx in
-         let* all_targets =
-           Memo.List.map all_expanded_libs ~f:(fun lib ->
-             let* pkg =
-               match Lib.Local.of_lib lib with
-               | Some local_lib ->
-                 (* Local library - use pkg_or_lnu which handles both v3 and v2 *)
-                 Memo.return (Package.Name.of_string (pkg_or_lnu local_lib))
-               | None ->
-                 (* Installed library - use Package_discovery to get correct package *)
-                 (match Package_discovery.package_of_library pkg_discovery lib with
-                  | Some p -> Memo.return p
-                  | None ->
-                    (* Fallback if Package_discovery doesn't know about it *)
-                    (match Lib_info.package (Lib.info lib) with
-                     | Some p -> Memo.return p
-                     | None ->
-                       Memo.return
-                         (Package.Name.of_string (Lib_name.to_string (Lib.name lib)))))
-             in
-             Memo.return (Lib (pkg, lib)))
-         in
-         (* Add the package itself, plus package docs for all library dependencies *)
-         let pkg_targets_from_libs =
-           List.filter_map all_targets ~f:(fun target ->
-             match target with
-             | Lib (pkg, _) -> Some (Pkg pkg)
-             | Pkg _ -> None)
-         in
-         let all_targets_with_pkg = (Pkg name :: all_targets) @ pkg_targets_from_libs in
-         let unique_targets =
-           List.sort_uniq all_targets_with_pkg ~compare:(fun t1 t2 ->
-             match t1, t2 with
-             | Pkg p1, Pkg p2 -> Package.Name.compare p1 p2
-             | Lib (_, l1), Lib (_, l2) ->
-               (* Compare libraries by their names *)
-               let name1 = Lib.name l1 in
-               let name2 = Lib.name l2 in
-               Lib_name.compare name1 name2
-             | Pkg _, Lib _ -> Ordering.Lt
-             | Lib _, Pkg _ -> Ordering.Gt)
-         in
-         Memo.return
-           (unique_targets
-            |> List.map ~f:(Dep.format_alias output ctx)
-            |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)))
-    in
-    Action_builder.deps dep_set
-  in
-  Rules.Produce.Alias.add_deps alias deps_action
-;;
-
-let setup_package_aliases_format_for_mode
-      sctx
-      (pkg : Package.t)
-      (output : Output_format.t)
-      (mode : Doc_mode.t)
-  =
+let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.t) (mode : Doc_mode.t) =
   let ctx = Super_context.context sctx in
   let name = Package.name pkg in
   let alias =
@@ -3022,7 +2914,6 @@ let setup_package_aliases_format_for_mode
     let* dep_set =
       Action_builder.of_memo
         (let open Memo.O in
-         (* Reuse the same dependency computation logic from setup_package_aliases_format *)
          let* local_libs = Context.name ctx |> libs_of_pkg ~pkg:name in
          let* doc_dep_libs =
            let doc = Package.info pkg |> Package_info.documentation in
@@ -3105,7 +2996,7 @@ let setup_package_aliases_format_for_mode
          in
          Memo.return
            (unique_targets
-            |> List.map ~f:(Dep.format_alias_for_mode output mode ctx)
+            |> List.map ~f:(Dep.format_alias output mode ctx)
             |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)))
     in
     let* dep_set_with_remap =
@@ -3126,7 +3017,7 @@ let setup_package_aliases sctx (pkg : Package.t) =
   (* Set up aliases for both modes *)
   Memo.List.iter Doc_mode.all ~f:(fun mode ->
     Output_format.iter ~f:(fun output ->
-      setup_package_aliases_format_for_mode sctx pkg output mode))
+      setup_package_aliases_format sctx pkg output mode))
 ;;
 
 let default_index ~pkg entry_modules =
@@ -3315,7 +3206,7 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
            (* Return the dep set *)
            Memo.return
              (unique_targets
-              |> List.map ~f:(Dep.format_alias Html ctx)
+              |> List.map ~f:(Dep.format_alias Html Doc_mode.Local_only ctx)
               |> Dune_engine.Dep.Set.of_list_map ~f:(fun f -> Dune_engine.Dep.alias f)))
       in
       Action_builder.deps dep_set

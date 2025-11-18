@@ -5,10 +5,10 @@
 
 open Import
 
-type deps = {
-  packages : Package.Name.t list;  (** Additional packages to link against *)
-  libraries : Lib_name.t list;     (** Additional libraries to link against *)
-}
+type deps =
+  { packages : Package.Name.t list (** Additional packages to link against *)
+  ; libraries : Lib_name.t list (** Additional libraries to link against *)
+  }
 
 type t = { deps : deps }
 
