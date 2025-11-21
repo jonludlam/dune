@@ -756,31 +756,40 @@ let odoc_dir_of_lib_name =
   end
   in
   let f (ctx, lib_name) =
-    (* First check if it's a local library *)
     let* lib_db = Scope.DB.public_libs (Context.name ctx) in
     let* lib_opt = Lib.DB.find lib_db lib_name in
     match lib_opt with
     | Some lib ->
-      (* Found as local library - check if it has a package *)
-      let info = Lib.info lib in
-      let pkg_opt = Lib_info.package info in
-      (match pkg_opt with
-       | Some pkg ->
-         (* v3 library with package: _odoc/pkg_name/lib_name *)
-         let pkg_str = Package.Name.to_string pkg in
-         let lib_str = Lib_name.to_string lib_name in
-         Memo.return (Paths.root ctx ++ "_odoc" ++ pkg_str ++ lib_str)
+      (* Found library - could be local or installed *)
+      (match Lib.Local.of_lib lib with
+       | Some local_lib ->
+         (* Local library - check if it has a package using Lib_info *)
+         let info = Lib.info lib in
+         (match Lib_info.package info with
+          | Some pkg ->
+            (* v3 library with package: _odoc/pkg_name/lib_name *)
+            let pkg_str = Package.Name.to_string pkg in
+            let lib_str = Lib_name.to_string lib_name in
+            Memo.return (Paths.root ctx ++ "_odoc" ++ pkg_str ++ lib_str)
+          | None ->
+            (* v2 library without package: _odoc/lib_unique_name *)
+            let lib_unique_name = lib_unique_name local_lib in
+            Memo.return (Paths.root ctx ++ "_odoc" ++ lib_unique_name))
        | None ->
-         (* v2 library without package: _odoc/lib_unique_name *)
-         let status = Lib_info.status info in
-         let lib_unique_name =
-           match status with
-           | Lib_info.Status.Private (project, _) -> Scope_key.to_string lib_name project
-           | _ -> Lib_name.to_string lib_name
-         in
-         Memo.return (Paths.root ctx ++ "_odoc" ++ lib_unique_name))
+         (* Installed library - use Package_discovery to get correct package *)
+         let* pkg_discovery = Package_discovery.create ~context:ctx in
+         (match Package_discovery.package_of_library pkg_discovery lib with
+          | Some pkg ->
+            (* Installed library: _odoc/pkg_name/lib_name *)
+            let pkg_str = Package.Name.to_string pkg in
+            let lib_str = Lib_name.to_string lib_name in
+            Memo.return (Paths.root ctx ++ "_odoc" ++ pkg_str ++ lib_str)
+          | None ->
+            (* Installed library without package - use lib name as fallback *)
+            let lib_str = Lib_name.to_string lib_name in
+            Memo.return (Paths.root ctx ++ "_odoc" ++ lib_str)))
     | None ->
-      (* Not a local library - check if it's installed *)
+      (* Library not found in DB - might still be in Package_discovery *)
       let* pkg_discovery = Package_discovery.create ~context:ctx in
       let pkg_opt = Package_discovery.package_of_lib_name pkg_discovery lib_name in
       (match pkg_opt with
@@ -2821,12 +2830,11 @@ let expand_libs_with_odoc_config ctx initial_libs =
           | Some local_lib ->
             Memo.return (Some (Package.Name.of_string (pkg_or_lnu local_lib)))
           | None ->
+            (* For installed libraries, use Package_discovery.
+               Don't trust Lib_info.package as it can be wrong (e.g., compiler-libs). *)
             (match Package_discovery.package_of_library pkg_discovery lib with
              | Some p -> Memo.return (Some p)
-             | None ->
-               (match Lib_info.package (Lib.info lib) with
-                | Some p -> Memo.return (Some p)
-                | None -> Memo.return None))
+             | None -> Memo.return None)
         in
         match pkg_opt with
         | None -> expand seen_libs rest
@@ -2926,30 +2934,24 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
          let* pkg_discovery = Package_discovery.create ~context:ctx in
          let* all_targets =
            Memo.List.map all_expanded_libs ~f:(fun lib ->
-             let lib_info = Lib.info lib in
-             let has_real_package = Option.is_some (Lib_info.package lib_info) in
-             if not has_real_package
-             then (
-               (* Library without a real package - use Private_lib *)
-               let lib_unique_name = lib_unique_name_of_lib lib in
-               Memo.return (Private_lib (lib_unique_name, lib)))
-             else (
-               (* Library with a real package - use Lib *)
-               let* pkg =
-                 match Lib.Local.of_lib lib with
-                 | Some local_lib ->
-                   Memo.return (Package.Name.of_string (pkg_or_lnu local_lib))
-                 | None ->
-                   (match Package_discovery.package_of_library pkg_discovery lib with
-                    | Some p -> Memo.return p
-                    | None ->
-                      (match Lib_info.package lib_info with
-                       | Some p -> Memo.return p
-                       | None ->
-                         Memo.return
-                           (Package.Name.of_string (Lib_name.to_string (Lib.name lib)))))
-               in
-               Memo.return (Lib (pkg, lib))))
+             match Lib.Local.of_lib lib with
+             | Some local_lib ->
+               (* Local library - check if it has a package using Lib_info *)
+               let lib_info = Lib.info lib in
+               (match Lib_info.package lib_info with
+                | Some pkg -> Memo.return (Lib (pkg, lib))
+                | None ->
+                  (* Private library without a package *)
+                  let lib_unique_name = lib_unique_name local_lib in
+                  Memo.return (Private_lib (lib_unique_name, lib)))
+             | None ->
+               (* Installed library - use Package_discovery to get correct package *)
+               (match Package_discovery.package_of_library pkg_discovery lib with
+                | Some pkg -> Memo.return (Lib (pkg, lib))
+                | None ->
+                  (* Installed library without a package - treat as private lib *)
+                  let lib_unique_name = Lib_name.to_string (Lib.name lib) in
+                  Memo.return (Private_lib (lib_unique_name, lib))))
          in
          let pkg_targets_from_libs =
            List.filter_map all_targets ~f:(fun target ->
@@ -3157,33 +3159,24 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
            let* pkg_discovery = Package_discovery.create ~context:ctx in
            let* all_targets =
              Memo.List.map all_dep_libs ~f:(fun lib ->
-               let lib_info = Lib.info lib in
-               let has_real_package = Option.is_some (Lib_info.package lib_info) in
-               if not has_real_package
-               then (
-                 (* Library without a real package - use Private_lib *)
-                 let lib_unique_name = lib_unique_name_of_lib lib in
-                 Memo.return (Private_lib (lib_unique_name, lib)))
-               else (
-                 (* Library with a real package - use Lib *)
-                 let* pkg =
-                   match Lib.Local.of_lib lib with
-                   | Some local_lib ->
-                     (* Local library - use pkg_or_lnu which handles both v3 and v2 *)
-                     Memo.return (Package.Name.of_string (pkg_or_lnu local_lib))
-                   | None ->
-                     (* Installed library - use Package_discovery to get correct package *)
-                     (match Package_discovery.package_of_library pkg_discovery lib with
-                      | Some p -> Memo.return p
-                      | None ->
-                        (* Fallback if Package_discovery doesn't know about it *)
-                        (match Lib_info.package lib_info with
-                         | Some p -> Memo.return p
-                         | None ->
-                           Memo.return
-                             (Package.Name.of_string (Lib_name.to_string (Lib.name lib)))))
-                 in
-                 Memo.return (Lib (pkg, lib))))
+               match Lib.Local.of_lib lib with
+               | Some local_lib ->
+                 (* Local library - check if it has a package using Lib_info *)
+                 let lib_info = Lib.info lib in
+                 (match Lib_info.package lib_info with
+                  | Some pkg -> Memo.return (Lib (pkg, lib))
+                  | None ->
+                    (* Private library without a package *)
+                    let lib_unique_name = lib_unique_name local_lib in
+                    Memo.return (Private_lib (lib_unique_name, lib)))
+               | None ->
+                 (* Installed library - use Package_discovery to get correct package *)
+                 (match Package_discovery.package_of_library pkg_discovery lib with
+                  | Some pkg -> Memo.return (Lib (pkg, lib))
+                  | None ->
+                    (* Installed library without a package - treat as private lib *)
+                    let lib_unique_name = Lib_name.to_string (Lib.name lib) in
+                    Memo.return (Private_lib (lib_unique_name, lib))))
            in
            (* Filter to only local libraries (exclude installed/external dependencies) *)
            let filtered_targets =
