@@ -381,8 +381,10 @@ module Output_format = struct
 end
 
 module Dep : sig
-  (** [format_alias output mode ctx target] returns the alias that depends on all
-      targets produced by odoc for [target] in output format [output] and doc mode. *)
+  (** Create a .odoc-all alias at any directory *)
+  val odoc_all_alias : dir:Path.Build.t -> Alias.t
+
+  (** Create a format alias (.doc or .doc-json) for a target *)
   val format_alias
     :  Output_format.t
     -> Doc_mode.t
@@ -390,25 +392,47 @@ module Dep : sig
     -> target
     -> Alias.t
 
-  (** [deps ctx pkg libraries] returns all odoc dependencies of [libraries]. If
-      [libraries] are all part of a package [pkg], then the odoc dependencies of
-      the package are also returned*)
+  (** Add file dependencies to an alias *)
+  val add_file_deps : Alias.t -> Path.t list -> unit Memo.t
+
+  (** Make an alias depend on .odoc-all aliases in the given directories *)
+  val add_odoc_all_deps : Alias.t -> dirs:Path.Build.t list -> unit Memo.t
+
+  (** High-level: Get dependencies for libraries during compilation/linking *)
   val deps
     :  Context.t
     -> Package.Name.t option
     -> Lib.t list Resolve.t
     -> unit Action_builder.t
 
-  (*** [setup_deps ctx target odocs] Adds [odocs] as dependencies for [target].
-    These dependencies may be used using the [deps] function *)
+  (** High-level: Set up .odoc-all dependencies for a target *)
   val setup_deps : Context.t -> target -> Path.Set.t -> unit Memo.t
 end = struct
-  let format_alias f mode ctx m =
-    Output_format.alias f ~dir:(Paths.html ctx mode m)
+  (* Primitive: create .odoc-all alias at any directory *)
+  let odoc_all_alias ~dir = Alias.make (Alias.Name.of_string ".odoc-all") ~dir
+
+  (* Create .odoc-all alias for a target using Paths.odocs *)
+  let odoc_all_alias_for_target ctx target = odoc_all_alias ~dir:(Paths.odocs ctx target)
+
+  (* Create format alias (.doc or .doc-json) *)
+  let format_alias f mode ctx m = Output_format.alias f ~dir:(Paths.html ctx mode m)
+
+  (* Add file dependencies to an alias *)
+  let add_file_deps alias files =
+    Rules.Produce.Alias.add_deps alias (Action_builder.paths files)
   ;;
 
-  let alias = Alias.make (Alias.Name.of_string ".odoc-all")
+  (* Make an alias depend on .odoc-all aliases in the given directories *)
+  let add_odoc_all_deps alias ~dirs =
+    let dep_set =
+      List.map dirs ~f:(fun dir ->
+        Dune_engine.Dep.alias (odoc_all_alias ~dir))
+      |> Dune_engine.Dep.Set.of_list
+    in
+    Rules.Produce.Alias.add_deps alias (Action_builder.deps dep_set)
+  ;;
 
+  (* High-level: Get dependencies for libraries during compilation/linking *)
   let deps ctx pkg requires =
     let open Action_builder.O in
     let* libs = Resolve.read requires in
@@ -416,7 +440,9 @@ end = struct
     Action_builder.deps
       (let init =
          match pkg with
-         | Some p -> Dep.Set.singleton (Dep.alias (alias ~dir:(Paths.odocs ctx (Pkg p))))
+         | Some p ->
+           Dep.Set.singleton
+             (Dep.alias (odoc_all_alias ~dir:(Paths.odocs ctx (Pkg p))))
          | None -> Dep.Set.empty
        in
        List.fold_left libs ~init ~f:(fun acc (lib : Lib.t) ->
@@ -432,7 +458,7 @@ end = struct
                 ++ Package.Name.to_string lib_pkg
                 ++ Lib_name.to_string (Lib.name lib)
               in
-              Dep.Set.add acc (Dep.alias (alias ~dir))
+              Dep.Set.add acc (Dep.alias (odoc_all_alias ~dir))
             | None -> acc)
          | Some local_lib ->
            (* Local library - add dependency on its .odoc-all alias *)
@@ -447,11 +473,10 @@ end = struct
                Private_lib (lib_unique_name, lib_t)
            in
            let dir = Paths.odocs ctx target in
-           Dep.Set.add acc (Dep.alias (alias ~dir))))
+           Dep.Set.add acc (Dep.alias (odoc_all_alias ~dir))))
   ;;
 
-  let alias ctx m = alias ~dir:(Paths.odocs ctx m)
-
+  (* High-level: Set up .odoc-all dependencies for a target *)
   let setup_deps ctx m files =
     let target_name =
       match m with
@@ -467,7 +492,7 @@ end = struct
           (Path.Set.cardinal files)
           target_name
       ];
-    Rules.Produce.Alias.add_deps (alias ctx m) (Action_builder.path_set files)
+    add_file_deps (odoc_all_alias_for_target ctx m) (Path.Set.to_list files)
   ;;
 end
 
@@ -1938,14 +1963,8 @@ let create_pkg_alias_if_v3 ctx ~path_prefix ~pkg_or_lib_name ~lib_alias_dirs =
   if not (String.contains pkg_or_lib_name '@')
   then (
     let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
-    let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_dir in
-    let lib_alias_deps =
-      List.map lib_alias_dirs ~f:(fun lib_dir ->
-        Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
-        |> Dune_engine.Dep.alias)
-      |> Dune_engine.Dep.Set.of_list
-    in
-    Rules.Produce.Alias.add_deps pkg_alias (Action_builder.deps lib_alias_deps))
+    let pkg_alias = Dep.odoc_all_alias ~dir:pkg_dir in
+    Dep.add_odoc_all_deps pkg_alias ~dirs:lib_alias_dirs)
   else Memo.return ()
 ;;
 
@@ -1965,7 +1984,7 @@ let generate_index sctx ~pkg ~odocl_files =
   let action =
     let open Action_builder.With_targets.O in
     (* Depend on the package's .odoc-all alias *)
-    let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:odocl_dir in
+    let pkg_alias = Dep.odoc_all_alias ~dir:odocl_dir in
     Action_builder.with_no_targets (Action_builder.dep (Dune_engine.Dep.alias pkg_alias))
     >>> run_odoc
           sctx
@@ -2219,7 +2238,7 @@ let generate_html_for_package
           Path.build (Output_format.target mode output artifact))
       in
       let pkg_alias = Dep.format_alias output mode ctx (Pkg pkg_name) in
-      Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_paths))
+      Dep.add_file_deps pkg_alias all_paths)
   in
   (* Also create library-level aliases for each library *)
   Lib_name.Map.to_list artifacts_by_lib_complete
@@ -2245,7 +2264,7 @@ let generate_html_for_package
       | Some lib ->
         Memo.parallel_iter Output_format.all ~f:(fun output ->
           let lib_alias = Dep.format_alias output mode ctx (Lib (pkg_name, lib)) in
-          Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths []))
+          Dep.add_file_deps lib_alias [])
       | None -> Memo.return ())
     else
       Memo.parallel_iter Output_format.all ~f:(fun output ->
@@ -2258,10 +2277,10 @@ let generate_html_for_package
         match Artifact.target (List.hd visible_lib_artifacts) with
         | Lib (pkg, lib) ->
           let lib_alias = Dep.format_alias output mode ctx (Lib (pkg, lib)) in
-          Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths lib_paths)
+          Dep.add_file_deps lib_alias lib_paths
         | Private_lib (lib_unique_name, lib) ->
           let lib_alias = Dep.format_alias output mode ctx (Private_lib (lib_unique_name, lib)) in
-          Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths lib_paths)
+          Dep.add_file_deps lib_alias lib_paths
         | Pkg _ -> Memo.return () (* Package artifacts don't have library aliases *)))
 ;;
 
@@ -2332,8 +2351,8 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                 ];
               (* For libraries with no modules, still create an empty alias *)
               let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
-              let alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir in
-              let+ () = Rules.Produce.Alias.add_deps alias (Action_builder.paths []) in
+              let alias = Dep.odoc_all_alias ~dir:lib_dir in
+              let+ () = Dep.add_file_deps alias [] in
               lib_dir)
             else (
               Log.info
@@ -2415,10 +2434,8 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                 ];
               (* Create empty .odoc-all alias for libraries with no modules *)
               let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
-              let lib_alias =
-                Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
-              in
-              Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths []))
+              let lib_alias = Dep.odoc_all_alias ~dir:lib_dir in
+              Dep.add_file_deps lib_alias [])
             else (
               (* Filter to only visible artifacts for linking *)
               let visible_artifacts =
@@ -2441,10 +2458,8 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                   Path.build (Artifact.odocl_file a))
               in
               let lib_dir = lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name in
-              let lib_alias =
-                Alias.make (Alias.Name.of_string ".odoc-all") ~dir:lib_dir
-              in
-              Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths odocl_files)))
+              let lib_alias = Dep.odoc_all_alias ~dir:lib_dir in
+              Dep.add_file_deps lib_alias odocl_files))
         in
         (* Link package-level pages *)
         let* () =
@@ -2456,7 +2471,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
         then Memo.return () (* Synthetic package - no package-level alias *)
         else (
           let pkg_dir = Paths.odocl_root ctx ++ pkg_or_lib_name in
-          let pkg_alias = Alias.make (Alias.Name.of_string ".odoc-all") ~dir:pkg_dir in
+          let pkg_alias = Dep.odoc_all_alias ~dir:pkg_dir in
           (* Collect all odocl files from libraries and pages *)
           let all_odocl_paths =
             let lib_odocls =
@@ -2473,7 +2488,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
             in
             lib_odocls @ page_odocls
           in
-          Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_odocl_paths)))
+          Dep.add_file_deps pkg_alias all_odocl_paths))
     | "_html" ->
       (* HTML generation for local packages only *)
       Rules.collect_unit (fun () ->
