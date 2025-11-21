@@ -205,9 +205,7 @@ end = struct
      since the parent path "foo" is already in parent_id. *)
   let get_basename t =
     match t.kind, t.source with
-    | Page { name; _ }, _ ->
-      let _, leaf = split_page_name name in
-      leaf
+    | Page { name; _ }, _ -> snd (split_page_name name)
     | Module _, Local_source src_path ->
       Path.Build.basename src_path |> Filename.remove_extension
     | Module _, Installed_source { module_name = mod_str; _ } ->
