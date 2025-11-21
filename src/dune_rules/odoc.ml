@@ -876,10 +876,10 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
   let all_pkg_names =
     Package.Name.Map.keys packages |> List.map ~f:Package.Name.to_string
   in
-  (* Build --warnings-tags arguments for all packages *)
+  (* Build --warnings-tags arguments for all packages, plus __private_lib__ for private libraries *)
   let warnings_tags_args =
     Command.Args.S
-      (List.concat_map all_pkg_names ~f:(fun pkg_name ->
+      (List.concat_map ("__private_lib__" :: all_pkg_names) ~f:(fun pkg_name ->
          [ Command.Args.A "--warnings-tags"; Command.Args.A pkg_name ]))
   in
   (* Suppress output for installed packages and vendored libraries *)
