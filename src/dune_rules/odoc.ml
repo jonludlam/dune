@@ -71,18 +71,6 @@ let pkg_or_lnu (local_lib : Lib.Local.t) =
   | None -> lib_unique_name local_lib
 ;;
 
-(* Get the unique name for a library from Lib.t.
-   This should only be used for libraries without packages (Private_lib).
-   For libraries with packages, use the package name directly. *)
-let lib_unique_name_of_lib (lib : Lib.t) =
-  match Lib.Local.of_lib lib with
-  | Some local_lib -> lib_unique_name local_lib
-  | None ->
-    (* This should only be called for local libraries. Installed libraries
-       without packages should not become Private_lib targets. *)
-    assert false
-;;
-
 type target =
   | Lib of Package.Name.t * Lib.t
     (* Library with a real package - package overrides Lib_info.package for installed libs *)
@@ -586,6 +574,30 @@ let write_remap_file sctx ~remap_file ~mappings =
       (List.map mappings ~f:(fun (local, remote) -> Printf.sprintf "%s:%s" local remote))
   in
   add_rule sctx (Action_builder.write_file remap_file contents)
+;;
+
+(* Convert a Lib.t to a target using Package_discovery for installed libraries.
+   For local libraries, uses Lib_info.package (which is accurate for local libs).
+   For installed libraries, uses Package_discovery (which is accurate for installed libs). *)
+let target_of_lib pkg_discovery (lib : Lib.t) =
+  match Lib.Local.of_lib lib with
+  | Some local_lib ->
+    (* Local library - check if it has a package using Lib_info *)
+    let lib_info = Lib.info lib in
+    (match Lib_info.package lib_info with
+     | Some pkg -> Memo.return (Lib (pkg, lib))
+     | None ->
+       (* Private library without a package *)
+       let lib_unique_name = lib_unique_name local_lib in
+       Memo.return (Private_lib (lib_unique_name, lib)))
+  | None ->
+    (* Installed library - use Package_discovery to get correct package *)
+    (match Package_discovery.package_of_library pkg_discovery lib with
+     | Some pkg -> Memo.return (Lib (pkg, lib))
+     | None ->
+       (* Installed library without a package - treat as private lib *)
+       let lib_unique_name = Lib_name.to_string (Lib.name lib) in
+       Memo.return (Private_lib (lib_unique_name, lib)))
 ;;
 
 let odoc_ext = ".odoc"
@@ -2368,15 +2380,8 @@ let handle_remap_artifacts sctx =
             |> Lib.Set.to_list
             |> List.filter ~f:(fun lib -> not (Lib.Set.mem workspace_lib_set lib))
           in
-          (* Convert to targets using Package_discovery *)
-          Memo.List.map all_deps ~f:(fun dep_lib ->
-            (* Use Package_discovery to find which package this library belongs to *)
-            match Package_discovery.package_of_library pkg_discovery dep_lib with
-            | Some pkg -> Memo.return (Lib (pkg, dep_lib))
-            | None ->
-              (* No package found: this is a private library *)
-              let lib_unique_name = lib_unique_name_of_lib dep_lib in
-              Memo.return (Private_lib (lib_unique_name, dep_lib)))
+          (* Convert to targets using target_of_lib helper *)
+          Memo.List.map all_deps ~f:(target_of_lib pkg_discovery)
       in
       (* Generate remap mappings for external dependencies *)
       let* mappings =
@@ -2933,25 +2938,7 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
          let* all_expanded_libs = expand_libs_with_odoc_config ctx all_dep_libs in
          let* pkg_discovery = Package_discovery.create ~context:ctx in
          let* all_targets =
-           Memo.List.map all_expanded_libs ~f:(fun lib ->
-             match Lib.Local.of_lib lib with
-             | Some local_lib ->
-               (* Local library - check if it has a package using Lib_info *)
-               let lib_info = Lib.info lib in
-               (match Lib_info.package lib_info with
-                | Some pkg -> Memo.return (Lib (pkg, lib))
-                | None ->
-                  (* Private library without a package *)
-                  let lib_unique_name = lib_unique_name local_lib in
-                  Memo.return (Private_lib (lib_unique_name, lib)))
-             | None ->
-               (* Installed library - use Package_discovery to get correct package *)
-               (match Package_discovery.package_of_library pkg_discovery lib with
-                | Some pkg -> Memo.return (Lib (pkg, lib))
-                | None ->
-                  (* Installed library without a package - treat as private lib *)
-                  let lib_unique_name = Lib_name.to_string (Lib.name lib) in
-                  Memo.return (Private_lib (lib_unique_name, lib))))
+           Memo.List.map all_expanded_libs ~f:(target_of_lib pkg_discovery)
          in
          let pkg_targets_from_libs =
            List.filter_map all_targets ~f:(fun target ->
@@ -3158,25 +3145,7 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
            (* Convert to targets, using Private_lib for libraries without real packages *)
            let* pkg_discovery = Package_discovery.create ~context:ctx in
            let* all_targets =
-             Memo.List.map all_dep_libs ~f:(fun lib ->
-               match Lib.Local.of_lib lib with
-               | Some local_lib ->
-                 (* Local library - check if it has a package using Lib_info *)
-                 let lib_info = Lib.info lib in
-                 (match Lib_info.package lib_info with
-                  | Some pkg -> Memo.return (Lib (pkg, lib))
-                  | None ->
-                    (* Private library without a package *)
-                    let lib_unique_name = lib_unique_name local_lib in
-                    Memo.return (Private_lib (lib_unique_name, lib)))
-               | None ->
-                 (* Installed library - use Package_discovery to get correct package *)
-                 (match Package_discovery.package_of_library pkg_discovery lib with
-                  | Some pkg -> Memo.return (Lib (pkg, lib))
-                  | None ->
-                    (* Installed library without a package - treat as private lib *)
-                    let lib_unique_name = Lib_name.to_string (Lib.name lib) in
-                    Memo.return (Private_lib (lib_unique_name, lib))))
+             Memo.List.map all_dep_libs ~f:(target_of_lib pkg_discovery)
            in
            (* Filter to only local libraries (exclude installed/external dependencies) *)
            let filtered_targets =
