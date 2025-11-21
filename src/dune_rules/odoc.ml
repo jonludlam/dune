@@ -1957,17 +1957,6 @@ let lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name =
     Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name
 ;;
 
-(* Helper to create a library-level .odoc-all alias *)
-(* Helper to create package-level .odoc-all alias (only for v3 packages) *)
-let create_pkg_alias_if_v3 ctx ~path_prefix ~pkg_or_lib_name ~lib_alias_dirs =
-  if not (String.contains pkg_or_lib_name '@')
-  then (
-    let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
-    let pkg_alias = Dep.odoc_all_alias ~dir:pkg_dir in
-    Dep.add_odoc_all_deps pkg_alias ~dirs:lib_alias_dirs)
-  else Memo.return ()
-;;
-
 (* Generate index file for a package from its linked .odocl files *)
 let generate_index sctx ~pkg ~odocl_files =
   let ctx = Super_context.context sctx in
@@ -2416,7 +2405,13 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           Memo.parallel_iter package_pages ~f:(fun artifact ->
             compile_artifact sctx ~artifact ~lib_artifacts:package_pages)
         in
-        create_pkg_alias_if_v3 ctx ~path_prefix ~pkg_or_lib_name ~lib_alias_dirs)
+        (* Create package-level .odoc-all alias (skip private libraries with @ suffix) *)
+        if String.contains pkg_or_lib_name '@'
+        then Memo.return ()
+        else (
+          let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
+          let pkg_alias = Dep.odoc_all_alias ~dir:pkg_dir in
+          Dep.add_odoc_all_deps pkg_alias ~dirs:lib_alias_dirs))
     | "_odocls" ->
       (* Linking *)
       Rules.collect_unit (fun () ->
