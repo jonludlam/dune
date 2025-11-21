@@ -498,7 +498,7 @@ end = struct
              | Some pkg -> Lib (pkg, lib_t)
              | None ->
                (* Private library without a package - use Private_lib *)
-               let lib_unique_name = pkg_or_lnu local_lib in
+               let lib_unique_name = lib_unique_name local_lib in
                Private_lib (lib_unique_name, lib_t)
            in
            let dir = Paths.odocs ctx target in
