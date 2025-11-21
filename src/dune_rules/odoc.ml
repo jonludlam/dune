@@ -2823,15 +2823,15 @@ let expand_libs_with_odoc_config ctx initial_libs =
       else (
         let seen_libs = Lib.Set.add seen_libs lib in
         (* Find the package this library belongs to *)
-        let* pkg_opt =
+        let pkg_opt =
           match Lib.Local.of_lib lib with
           | Some _local_lib ->
             (* Local library - only expand if it has a real package *)
-            Memo.return (Lib_info.package (Lib.info lib))
+            Lib_info.package (Lib.info lib)
           | None ->
             (* For installed libraries, use Package_discovery.
                Don't trust Lib_info.package as it can be wrong (e.g., compiler-libs). *)
-            Memo.return (Package_discovery.package_of_library pkg_discovery lib)
+            Package_discovery.package_of_library pkg_discovery lib
         in
         match pkg_opt with
         | None -> expand seen_libs rest
