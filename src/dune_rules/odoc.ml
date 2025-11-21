@@ -714,10 +714,10 @@ let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
               paths)
          | Some local_lib ->
            let lib_t = Lib.Local.to_lib local_lib in
+           let lib_info = Lib.info lib_t in
            let target =
-             (* Use Package_discovery to get the correct package, which handles
-                installed libraries correctly (e.g., compiler-libs) *)
-             match Package_discovery.package_of_library pkg_discovery lib_t with
+             (* For local libraries, Lib_info.package is accurate *)
+             match Lib_info.package lib_info with
              | Some pkg -> Lib (pkg, lib_t)
              | None ->
                (* Private library without a package *)
