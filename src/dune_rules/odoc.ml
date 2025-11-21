@@ -306,15 +306,6 @@ module Paths = struct
   let html_root ctx mode = root ctx ++ Doc_mode.output_subdir mode
   let odocl_root ctx = root ctx ++ "_odocls"
 
-  let add_pkg_lnu base m =
-    base
-    ++
-    match m with
-    | Pkg pkg -> Package.Name.to_string pkg
-    | Lib (pkg, _lib) -> Package.Name.to_string pkg
-    | Private_lib (lib_unique_name, _) -> lib_unique_name
-  ;;
-
   let html ctx mode target =
     match target with
     | Lib (pkg, lib) ->
