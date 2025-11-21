@@ -97,8 +97,11 @@ let is_lib_vendored lib =
   let lib_info = Lib.info lib in
   match Lib_info.status lib_info with
   | Installed_private | Installed -> Memo.return false
-  | Public (proj, _) | Private (proj, _) ->
-    Source_tree.is_vendored (Dune_project.root proj)
+  | Public _ | Private _ ->
+    let src_path = Path.drop_optional_build_context (Lib_info.src_dir lib_info) in
+    (match Path.as_in_source_tree src_path with
+     | Some src_dir -> Source_tree.is_vendored src_dir
+     | None -> Memo.return false)
 ;;
 
 (* Doc_mode type and helpers - defined early to avoid circular dependencies *)
@@ -1099,6 +1102,16 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
   in
   let requires = requires_from_deps in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
+  (* For installed packages or vendored libraries, suppress output (both stdout and stderr) *)
+  let* should_suppress =
+    match Artifact.source artifact with
+    | Installed_source _ -> Memo.return true
+    | Local_source _ ->
+      (* Check if this is a vendored library *)
+      (match Artifact.target artifact with
+       | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
+       | Pkg _ -> Memo.return false)
+  in
   (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases)
      IMPORTANT: Pass None for pkg during compilation to avoid creating a dependency cycle
      on our own package's .odoc-all alias. The package alias is only needed during linking. *)
@@ -1140,27 +1153,21 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
              ; Command.Args.A "--parent-id"
              ; Command.Args.A (Artifact.parent_id artifact)
              ; Command.Args.A "--enable-missing-root-warning"
-             ; (* Add --warnings-tag flag for library artifacts to identify which package warnings come from *)
-               (match Artifact.target artifact with
-                | Lib (pkg, _) ->
-                  Command.Args.As [ "--warnings-tag"; Package.Name.to_string pkg ]
-                | Private_lib _ ->
-                  Command.Args.As [ "--warnings-tag"; "__private_lib__" ]
-                | Pkg _ ->
-                  (* Package-level artifacts don't have a warnings tag *)
-                  Command.Args.S [])
+             ; (* Add --warnings-tag flag for library artifacts to identify which package warnings come from.
+                  Skip for vendored libraries since their warnings are suppressed anyway. *)
+               (if should_suppress
+                then Command.Args.S []
+                else
+                  match Artifact.target artifact with
+                  | Lib (pkg, _) ->
+                    Command.Args.As [ "--warnings-tag"; Package.Name.to_string pkg ]
+                  | Private_lib _ ->
+                    Command.Args.As [ "--warnings-tag"; "__private_lib__" ]
+                  | Pkg _ ->
+                    (* Package-level artifacts don't have a warnings tag *)
+                    Command.Args.S [])
              ; Command.Args.Dep source_file
              ])
-  in
-  (* For installed packages or vendored libraries, suppress output (both stdout and stderr) *)
-  let* should_suppress =
-    match Artifact.source artifact with
-    | Installed_source _ -> Memo.return true
-    | Local_source _ ->
-      (* Check if this is a vendored library *)
-      (match Artifact.target artifact with
-       | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
-       | Pkg _ -> Memo.return false)
   in
   let run_odoc =
     if should_suppress
