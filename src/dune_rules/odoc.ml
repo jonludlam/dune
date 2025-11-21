@@ -283,11 +283,6 @@ end = struct
   ;;
 end
 
-type artifact = Artifact.t
-
-(* Legacy type alias for backwards compatibility during refactoring *)
-type odoc_artefact = artifact
-
 let add_rule sctx =
   let dir = Super_context.context sctx |> Context.build_dir in
   Super_context.add_rule sctx ~dir
@@ -1032,7 +1027,7 @@ let odoc_pkg_flags _ctx requires pkg_discovery ~current_pkg =
      Command.Args.S pkg_args)
 ;;
 
-let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
+let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
   let ctx = Super_context.context sctx in
   let deps = Dep.deps ctx pkg requires in
   let* stdlib_opt = stdlib_lib (Context.name ctx) in
@@ -1691,7 +1686,7 @@ let create_artifact_installed_mld ctx ~pkg ~mld_path ~page_name ~odoc_config ~pk
 ;;
 
 (* Discover mld files for an installed package and create artifacts *)
-let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : artifact list Memo.t =
+let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : Artifact.t list Memo.t =
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
   Memo.List.filter_map mld_files ~f:(fun mld_path ->
@@ -1736,7 +1731,7 @@ let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : artifact list Memo
 ;;
 
 (* Discover modules for an installed library and create artifacts *)
-let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : artifact list Memo.t =
+let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : Artifact.t list Memo.t =
   let pkg_name_str = Package.Name.to_string pkg in
   let lib_name_str = Lib_name.to_string lib_name in
   (* Get Lib_info to access module information *)
@@ -1891,7 +1886,7 @@ let create_artifact_v2_module
 
 (* Discover modules for a local library and create artifacts.
    Handles both v3 libraries (with packages) and v2 libraries (without packages). *)
-let discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib : artifact list Memo.t
+let discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib : Artifact.t list Memo.t
   =
   let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
   let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
@@ -1939,7 +1934,7 @@ let discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib : artifact l
 ;;
 
 (* Unified artifact discovery for both local and installed libraries *)
-let discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib : artifact list Memo.t =
+let discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib : Artifact.t list Memo.t =
   match Lib.Local.of_lib lib with
   | Some local_lib ->
     (* Local library *)
@@ -2031,7 +2026,7 @@ let compile_library_artifacts sctx _ctx ~pkg_name:_ ~lib_name ~lib_artifacts
 
    This is the unified entry point that all handlers (odoc, odocls, html) should use. *)
 let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
-  : (artifact list * string list) Memo.t
+  : (Artifact.t list * string list) Memo.t
   =
   (* Check if this is a v2 library (contains '@') or a v3 package *)
   if String.contains pkg_or_lib_unique_name '@'
