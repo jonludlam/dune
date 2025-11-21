@@ -73,14 +73,14 @@ let pkg_or_lnu (local_lib : Lib.Local.t) =
 
 (* Get the unique ID for a library - this is the package name if available,
    otherwise the library's unique name (which includes project scope for private libs).
-   This is used for odoc's --unique-id flag. *)
+   This is used for odoc's --warnings-tag flag to identify which package warnings come from. *)
 let lib_unique_id_string (lib : Lib.t) =
   match Lib.Local.of_lib lib with
   | Some local_lib -> pkg_or_lnu local_lib
   | None ->
     (* For installed libraries, use the package name from Lib_info.
        This may not be correct (e.g., compiler-libs), but this function is only used
-       for the --unique-id flag which might not matter for installed libs. *)
+       for the --warnings-tag flag. *)
     (match Lib_info.package (Lib.info lib) with
      | Some p -> Package.Name.to_string p
      | None -> Lib_name.to_string (Lib.name lib))
@@ -1306,12 +1306,11 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
              ; Command.Args.A "--parent-id"
              ; Command.Args.A (Artifact.parent_id artifact)
              ; Command.Args.A "--enable-missing-root-warning"
-             ; (* Add --unique-id and --warnings-tag flags for library artifacts.
-             Both use the package name to identify which package the module belongs to. *)
+             ; (* Add --warnings-tag flag for library artifacts to identify which package warnings come from *)
                (match Artifact.target artifact with
                 | Lib (_, lib) | Private_lib (_, lib) ->
                   let pkg_name = lib_unique_id_string lib in
-                  Command.Args.As [ "--unique-id"; pkg_name; "--warnings-tag"; pkg_name ]
+                  Command.Args.As [ "--warnings-tag"; pkg_name ]
                 | Pkg _ ->
                   (* Package-level artifacts don't have a library unique ID *)
                   Command.Args.S [])
