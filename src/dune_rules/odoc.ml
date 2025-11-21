@@ -351,7 +351,6 @@ module Output_format = struct
     | Json
 
   let all = [ Html; Json ]
-  let iter ~f = Memo.parallel_iter all ~f
 
   let args = function
     | Html -> Command.Args.empty
@@ -1372,7 +1371,8 @@ let setup_toplevel_index_rule sctx output mode =
 ;;
 
 let setup_toplevel_index_rules sctx mode =
-  Output_format.iter ~f:(fun output -> setup_toplevel_index_rule sctx output mode)
+  Memo.parallel_iter Output_format.all ~f:(fun output ->
+    setup_toplevel_index_rule sctx output mode)
 ;;
 
 let libs_of_pkg ctx ~pkg =
@@ -2197,7 +2197,7 @@ let generate_html_for_package
   (* Create format aliases for all output formats *)
   let pkg_name = Package.Name.of_string pkg_or_lib_name in
   let* () =
-    Output_format.iter ~f:(fun output ->
+    Memo.parallel_iter Output_format.all ~f:(fun output ->
       (* Create package-level alias with all HTML files *)
       let all_paths =
         List.map visible_artifacts ~f:(fun artifact ->
@@ -2228,12 +2228,12 @@ let generate_html_for_package
       in
       match lib_opt with
       | Some lib ->
-        Output_format.iter ~f:(fun output ->
+        Memo.parallel_iter Output_format.all ~f:(fun output ->
           let lib_alias = Dep.format_alias output mode ctx (Lib (pkg_name, lib)) in
           Rules.Produce.Alias.add_deps lib_alias (Action_builder.paths []))
       | None -> Memo.return ())
     else
-      Output_format.iter ~f:(fun output ->
+      Memo.parallel_iter Output_format.all ~f:(fun output ->
         let lib_paths =
           List.map visible_lib_artifacts ~f:(fun artifact ->
             Path.build (Output_format.target mode output artifact))
@@ -2702,7 +2702,7 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
 let setup_package_aliases sctx (pkg : Package.t) =
   (* Set up aliases for both modes *)
   Memo.List.iter Doc_mode.all ~f:(fun mode ->
-    Output_format.iter ~f:(fun output ->
+    Memo.parallel_iter Output_format.all ~f:(fun output ->
       setup_package_aliases_format sctx pkg output mode))
 ;;
 
