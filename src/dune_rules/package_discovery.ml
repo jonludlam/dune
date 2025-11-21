@@ -371,6 +371,12 @@ let create =
 ;;
 
 let package_of_library t lib =
+  (match Lib.Local.of_lib lib with
+   | Some _ ->
+     Code_error.raise
+       "Package_discovery.package_of_library called on local library"
+       [ "lib", Lib_name.to_dyn (Lib.name lib) ]
+   | None -> ());
   let lib_name = Lib.name lib in
   Lib_name.Map.find t.package_of_lib lib_name
 ;;

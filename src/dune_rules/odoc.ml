@@ -829,7 +829,15 @@ let odoc_pkg_flags _ctx requires pkg_discovery ~current_pkg =
      (* Collect unique packages from library dependencies *)
      let lib_pkg_paths =
        List.fold_left libs ~init:Package.Name.Map.empty ~f:(fun acc lib ->
-         let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
+         let lib_pkg_opt =
+           match Lib.Local.of_lib lib with
+           | Some local_lib ->
+             (* For local libraries, use Lib_info.package *)
+             Lib.info (Lib.Local.to_lib local_lib) |> Lib_info.package
+           | None ->
+             (* For installed libraries, use Package_discovery *)
+             Package_discovery.package_of_library pkg_discovery lib
+         in
          match lib_pkg_opt with
          | Some pkg ->
            let pkg_name_str = Package.Name.to_string pkg in
