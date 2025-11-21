@@ -64,13 +64,6 @@ let lib_unique_name (local_lib : Lib.Local.t) =
   | Private (project, _) -> Scope_key.to_string name project
 ;;
 
-let pkg_or_lnu (local_lib : Lib.Local.t) =
-  let lib = Lib.Local.to_lib local_lib in
-  match Lib_info.package (Lib.info lib) with
-  | Some p -> Package.Name.to_string p
-  | None -> lib_unique_name local_lib
-;;
-
 type target =
   | Lib of Package.Name.t * Lib.t
     (* Library with a real package - package overrides Lib_info.package for installed libs *)
@@ -2832,14 +2825,13 @@ let expand_libs_with_odoc_config ctx initial_libs =
         (* Find the package this library belongs to *)
         let* pkg_opt =
           match Lib.Local.of_lib lib with
-          | Some local_lib ->
-            Memo.return (Some (Package.Name.of_string (pkg_or_lnu local_lib)))
+          | Some _local_lib ->
+            (* Local library - only expand if it has a real package *)
+            Memo.return (Lib_info.package (Lib.info lib))
           | None ->
             (* For installed libraries, use Package_discovery.
                Don't trust Lib_info.package as it can be wrong (e.g., compiler-libs). *)
-            (match Package_discovery.package_of_library pkg_discovery lib with
-             | Some p -> Memo.return (Some p)
-             | None -> Memo.return None)
+            Memo.return (Package_discovery.package_of_library pkg_discovery lib)
         in
         match pkg_opt with
         | None -> expand seen_libs rest
