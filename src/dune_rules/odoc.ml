@@ -496,14 +496,15 @@ end = struct
            (* Local library - add dependency on its .odoc-all alias *)
            let lib_t = Lib.Local.to_lib local_lib in
            let info = Lib.info lib_t in
-           let pkg =
+           let target =
              match Lib_info.package info with
-             | Some p -> p
+             | Some pkg -> Lib (pkg, lib_t)
              | None ->
-               (* v2 library - create synthetic package from lib_unique_name *)
-               Package.Name.of_string (pkg_or_lnu local_lib)
+               (* Private library without a package - use Private_lib *)
+               let lib_unique_name = pkg_or_lnu local_lib in
+               Private_lib (lib_unique_name, lib_t)
            in
-           let dir = Paths.odocs ctx (Lib (pkg, lib_t)) in
+           let dir = Paths.odocs ctx target in
            Dep.Set.add acc (Dep.alias (alias ~dir))))
   ;;
 
@@ -1702,14 +1703,20 @@ let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : artifact list Memo
     (* Split on "/" and find "odoc-pages" to get the relative path after it *)
     let parts = String.split path_str ~on:'/' in
     let page_name_with_path =
-      match List.drop_while parts ~f:(fun s -> not (String.equal s "odoc-pages")) with
-      | "odoc-pages" :: rest ->
+      (* Find the "odoc-pages" segment and take everything after it *)
+      let rec find_odoc_pages = function
+        | [] -> None
+        | "odoc-pages" :: rest -> Some rest
+        | _ :: rest -> find_odoc_pages rest
+      in
+      match find_odoc_pages parts with
+      | Some rest ->
         (* Join the parts after odoc-pages and remove .mld extension *)
         let relative_path = String.concat ~sep:"/" rest in
         (match String.drop_suffix relative_path ~suffix:".mld" with
          | Some n -> n
          | None -> relative_path)
-      | _ ->
+      | None ->
         (* Fallback to basename if pattern not found *)
         let mld_basename = Path.basename mld_path in
         (match String.drop_suffix mld_basename ~suffix:".mld" with
@@ -2613,6 +2620,8 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                       | Lib (p1, l1), Lib (p2, l2) ->
                         Package.Name.equal p1 p2
                         && Lib_name.equal (Lib.name l1) (Lib.name l2)
+                      | Private_lib (n1, l1), Private_lib (n2, l2) ->
+                        String.equal n1 n2 && Lib_name.equal (Lib.name l1) (Lib.name l2)
                       | _ -> false)
                   with
                   | Some (target, _) ->
@@ -2623,6 +2632,8 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
                         | Lib (p1, l1), Lib (p2, l2) ->
                           Package.Name.equal p1 p2
                           && Lib_name.equal (Lib.name l1) (Lib.name l2)
+                        | Private_lib (n1, l1), Private_lib (n2, l2) ->
+                          String.equal n1 n2 && Lib_name.equal (Lib.name l1) (Lib.name l2)
                         | _ -> false
                       then t, artifact :: arts
                       else t, arts)
