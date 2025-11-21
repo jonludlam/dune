@@ -192,32 +192,28 @@ end = struct
     t.doc_root ++ "_odocls" ++ t.parent_id
   ;;
 
-  (* Extract the in_doc name from kind (for pages) or source (for modules) *)
-  let get_basename_info t =
+  (* Extract the basename from kind (for pages) or source (for modules).
+     For hierarchical pages like "foo/baz", returns just the leaf "baz"
+     since the parent path "foo" is already in parent_id. *)
+  let get_basename t =
     match t.kind, t.source with
-    | Page { name; _ }, _ -> name, "page-" ^ name
+    | Page { name; _ }, _ ->
+      (match String.rsplit2 name ~on:'/' with
+       | Some (_, leaf) -> leaf
+       | None -> name)
     | Module _, Local_source src_path ->
-      let basename = Path.Build.basename src_path |> Filename.remove_extension in
-      basename, basename
+      Path.Build.basename src_path |> Filename.remove_extension
     | Module _, Installed_source { module_name = mod_str; _ } ->
-      let basename = String.uncapitalize_ascii mod_str in
-      basename, basename
+      String.uncapitalize_ascii mod_str
   ;;
 
   (* Computed path accessors *)
 
   (* Generic function for odoc/odocl files - they follow the same structure *)
   let doc_file t ~base_dir ~extension =
-    let basename, prefixed_basename = get_basename_info t in
+    let basename = get_basename t in
     match t.kind with
-    | Page _ ->
-      (* For hierarchical pages, parent_id already includes the subdirectory,
-         so we only need the leaf filename here, not the full path *)
-      (match String.rsplit2 basename ~on:'/' with
-       | Some (_parent_path, page_name) ->
-         (* parent_id already has the subdirectory, just add the filename *)
-         base_dir ++ ("page-" ^ page_name ^ extension)
-       | None -> base_dir ++ (prefixed_basename ^ extension))
+    | Page _ -> base_dir ++ ("page-" ^ basename ^ extension)
     | Module _ -> base_dir ++ (basename ^ extension)
   ;;
 
@@ -226,22 +222,14 @@ end = struct
 
   (* Generic function for html/json files - they follow the same structure *)
   let html_output_file t ~html_base ~suffix =
-    let basename, _ = get_basename_info t in
+    let basename = get_basename t in
     match t.kind, t.target with
     | Module _, (Lib _ | Private_lib _) ->
       let html_dir = html_base ++ Stdune.String.capitalize basename in
       html_dir ++ ("index" ^ suffix)
     | Page _, Pkg _ ->
-      (* For hierarchical pages, parent_id already includes the subdirectory,
-         so we only need the leaf filename here *)
-      (match String.rsplit2 basename ~on:'/' with
-       | Some (_parent_path, page_name) ->
-         (* parent_id already has the subdirectory, just add the filename *)
-         let html_path = html_base ++ page_name in
-         Path.Build.extend_basename html_path ~suffix
-       | None ->
-         let html_path = html_base ++ basename in
-         Path.Build.extend_basename html_path ~suffix)
+      let html_path = html_base ++ basename in
+      Path.Build.extend_basename html_path ~suffix
     | Module _, Pkg _ -> assert false (* Modules should have Lib or Private_lib targets, not Pkg *)
     | Page _, (Lib _ | Private_lib _) -> assert false (* Pages should have Pkg targets, not Lib *)
   ;;
