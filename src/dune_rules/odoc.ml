@@ -192,15 +192,22 @@ end = struct
     t.doc_root ++ "_odocls" ++ t.parent_id
   ;;
 
+  (* Split hierarchical page name like "foo/baz" into (Some "foo", "baz").
+     For non-hierarchical pages like "index", returns (None, "index"). *)
+  let split_page_name name =
+    match String.rsplit2 name ~on:'/' with
+    | Some (parent, leaf) -> Some parent, leaf
+    | None -> None, name
+  ;;
+
   (* Extract the basename from kind (for pages) or source (for modules).
      For hierarchical pages like "foo/baz", returns just the leaf "baz"
      since the parent path "foo" is already in parent_id. *)
   let get_basename t =
     match t.kind, t.source with
     | Page { name; _ }, _ ->
-      (match String.rsplit2 name ~on:'/' with
-       | Some (_, leaf) -> leaf
-       | None -> name)
+      let _, leaf = split_page_name name in
+      leaf
     | Module _, Local_source src_path ->
       Path.Build.basename src_path |> Filename.remove_extension
     | Module _, Installed_source { module_name = mod_str; _ } ->
@@ -264,8 +271,9 @@ end = struct
     | Page { name = in_doc_name; _ }, Pkg pkg ->
       (* For hierarchical pages, parent_id includes the subdirectory.
          For example, "deprecated/index.mld" has parent_id "odoc/deprecated" *)
-      (match String.rsplit2 in_doc_name ~on:'/' with
-       | Some (parent_path, _) -> Package.Name.to_string pkg ^ "/" ^ parent_path
+      let parent_path_opt, _ = split_page_name in_doc_name in
+      (match parent_path_opt with
+       | Some parent_path -> Package.Name.to_string pkg ^ "/" ^ parent_path
        | None -> Package.Name.to_string pkg)
     | Module _, Pkg _ -> assert false (* Modules should have Lib or Private_lib targets, not Pkg *)
     | Page _, (Lib _ | Private_lib _) -> assert false (* Pages should have Pkg targets, not Lib *)
