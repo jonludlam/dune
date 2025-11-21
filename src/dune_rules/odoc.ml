@@ -103,6 +103,20 @@ let is_lib_vendored lib =
     Source_tree.is_vendored (Dune_project.root proj)
 ;;
 
+(* Doc_mode type and helpers - defined early to avoid circular dependencies *)
+module Doc_mode = struct
+  type t =
+    | Local_only (* @doc - only local packages, with remapping *)
+    | Full (* @doc-full - all packages, no remapping *)
+
+  let output_subdir = function
+    | Local_only -> "_html"
+    | Full -> "_html_full"
+  ;;
+
+  let all = [ Local_only; Full ]
+end
+
 module Artifact : sig
   type t
 
@@ -110,8 +124,8 @@ module Artifact : sig
   val source : t -> artifact_source
   val odoc_file : t -> Path.Build.t
   val odocl_file : t -> Path.Build.t
-  val html_file : Context.t -> string -> t -> Path.Build.t
-  val json_file : Context.t -> string -> t -> Path.Build.t
+  val html_file : Doc_mode.t -> t -> Path.Build.t
+  val json_file : Doc_mode.t -> t -> Path.Build.t
   val output_dir : t -> Path.Build.t
   val parent_id : t -> string
   val pkg : t -> Package.Name.t option
@@ -168,16 +182,9 @@ end = struct
     t.doc_root ++ "_odoc" ++ t.parent_id
   ;;
 
-  let html_dir t =
+  let html_dir mode t =
     (* parent_id is "pkg/lib" for modules in libs, or "pkg" for package artifacts *)
-    t.doc_root ++ "_html" ++ t.parent_id
-  ;;
-
-  let html_dir_for_mode ctx output_subdir t =
-    (* Use mode-specific html root instead of hardcoded _html *)
-    let doc_root = Context.build_dir ctx ++ "_doc" in
-    let mode_root = doc_root ++ output_subdir in
-    mode_root ++ t.parent_id
+    t.doc_root ++ Doc_mode.output_subdir mode ++ t.parent_id
   ;;
 
   let odocl_dir t =
@@ -239,12 +246,12 @@ end = struct
     | Page _, (Lib _ | Private_lib _) -> assert false (* Pages should have Pkg targets, not Lib *)
   ;;
 
-  let html_file ctx output_subdir t =
-    html_output_file t ~html_base:(html_dir_for_mode ctx output_subdir t) ~suffix:".html"
+  let html_file mode t =
+    html_output_file t ~html_base:(html_dir mode t) ~suffix:".html"
   ;;
 
-  let json_file ctx output_subdir t =
-    html_output_file t ~html_base:(html_dir_for_mode ctx output_subdir t) ~suffix:".html.json"
+  let json_file mode t =
+    html_output_file t ~html_base:(html_dir mode t) ~suffix:".html.json"
   ;;
 
   let output_dir t = odocs_dir t
@@ -291,20 +298,6 @@ let add_rule sctx =
   let dir = Super_context.context sctx |> Context.build_dir in
   Super_context.add_rule sctx ~dir
 ;;
-
-(* Doc_mode type and helpers - defined early to avoid circular dependencies *)
-module Doc_mode = struct
-  type t =
-    | Local_only (* @doc - only local packages, with remapping *)
-    | Full (* @doc-full - all packages, no remapping *)
-
-  let output_subdir = function
-    | Local_only -> "_html"
-    | Full -> "_html_full"
-  ;;
-
-  let all = [ Local_only; Full ]
-end
 
 module Paths = struct
   let odoc_support_dirname = "odoc.support"
@@ -396,10 +389,10 @@ module Output_format = struct
     | Json -> A "--as-json"
   ;;
 
-  let target ctx output_subdir t odoc_file =
+  let target mode t odoc_file =
     match t with
-    | Html -> Artifact.html_file ctx output_subdir odoc_file
-    | Json -> Artifact.json_file ctx output_subdir odoc_file
+    | Html -> Artifact.html_file mode odoc_file
+    | Json -> Artifact.json_file mode odoc_file
   ;;
 
   let alias t ~dir =
@@ -1367,11 +1360,10 @@ let generate_html_artifact
   let ctx = Super_context.context sctx in
   let html_root = Paths.html_root ctx mode in
   let odoc_support_path = Paths.odoc_support ctx mode in
-  let output_subdir = Doc_mode.output_subdir mode in
   let search_args = Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:html_root in
   (* Generate HTML for all output formats *)
   Memo.List.iter Output_format.all ~f:(fun out ->
-    let html_file = Output_format.target ctx output_subdir out artifact in
+    let html_file = Output_format.target mode out artifact in
     Log.info
       [ Pp.textf
           "odoc v3: generate_html_artifact for html_file=%s"
@@ -2479,13 +2471,12 @@ let generate_html_for_package
   in
   (* Create format aliases for all output formats *)
   let pkg_name = Package.Name.of_string pkg_or_lib_name in
-  let output_subdir = Doc_mode.output_subdir mode in
   let* () =
     Output_format.iter ~f:(fun output ->
       (* Create package-level alias with all HTML files *)
       let all_paths =
         List.map visible_artifacts ~f:(fun artifact ->
-          Path.build (Output_format.target ctx output_subdir output artifact))
+          Path.build (Output_format.target mode output artifact))
       in
       let pkg_alias = Dep.format_alias output mode ctx (Pkg pkg_name) in
       Rules.Produce.Alias.add_deps pkg_alias (Action_builder.paths all_paths))
@@ -2520,7 +2511,7 @@ let generate_html_for_package
       Output_format.iter ~f:(fun output ->
         let lib_paths =
           List.map visible_lib_artifacts ~f:(fun artifact ->
-            Path.build (Output_format.target ctx output_subdir output artifact))
+            Path.build (Output_format.target mode output artifact))
         in
         (* Create library-level alias - need to find the Lib.Local.t for this lib_name *)
         (* For now, use the artifact's target which should be Lib lib *)
