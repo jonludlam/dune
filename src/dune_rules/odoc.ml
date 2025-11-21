@@ -876,15 +876,17 @@ let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
               paths)
          | Some local_lib ->
            let lib_t = Lib.Local.to_lib local_lib in
-           let info = Lib.info lib_t in
-           let pkg =
-             match Lib_info.package info with
-             | Some p -> p
+           let target =
+             (* Use Package_discovery to get the correct package, which handles
+                installed libraries correctly (e.g., compiler-libs) *)
+             match Package_discovery.package_of_library pkg_discovery lib_t with
+             | Some pkg -> Lib (pkg, lib_t)
              | None ->
-               (* v2 library - create synthetic package from lib_unique_name *)
-               Package.Name.of_string (pkg_or_lnu local_lib)
+               (* Private library without a package *)
+               let lib_unique_name = lib_unique_name local_lib in
+               Private_lib (lib_unique_name, lib_t)
            in
-           Path.Set.add paths (Path.build (Paths.odocs ctx (Lib (pkg, lib_t)))))
+           Path.Set.add paths (Path.build (Paths.odocs ctx target)))
      in
      let paths =
        match pkg with
