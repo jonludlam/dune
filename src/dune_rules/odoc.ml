@@ -2134,7 +2134,7 @@ let handle_remap_artifacts sctx =
 let generate_html_for_package
       sctx
       ~ctx
-      ~pkg_or_lib_name
+      ~pkg_name
       ~library_artifacts
       ~package_pages
       ~artifacts_by_lib_complete
@@ -2148,28 +2148,20 @@ let generate_html_for_package
   let visible_artifacts =
     List.filter all_artifacts_for_html ~f:(fun a -> not (Artifact.hidden a))
   in
+  let pkg_name_str = Package.Name.to_string pkg_name in
   Log.info
     [ Pp.textf
         "odoc v3: generate_html_for_package for %s (mode=%s): %d visible artifacts"
-        pkg_or_lib_name
+        pkg_name_str
         (match mode with
          | Doc_mode.Local_only -> "Local_only"
          | Doc_mode.Full -> "Full")
         (List.length visible_artifacts)
     ];
-  (* Generate JSON sidebar and reference binary sidebar for non-synthetic packages *)
-  let* sidebar_file_opt =
-    if String.contains pkg_or_lib_name '@'
-    then
-      (* Synthetic package (private lib) - no sidebar *)
-      Memo.return None
-    else (
-      (* Real package - generate JSON sidebar and reference binary sidebar *)
-      let pkg = Package.Name.of_string pkg_or_lib_name in
-      let index_file = Paths.index_file ctx pkg in
-      let* () = generate_sidebar_json sctx ~mode ~pkg ~index_file in
-      Memo.return (Some (Paths.sidebar_file ctx pkg)))
-  in
+  (* Generate JSON sidebar and reference binary sidebar (only for real packages) *)
+  let index_file = Paths.index_file ctx pkg_name in
+  let* () = generate_sidebar_json sctx ~mode ~pkg:pkg_name ~index_file in
+  let sidebar_file_opt = Some (Paths.sidebar_file ctx pkg_name) in
   (* Create search_db for the entire package (all visible artifacts) *)
   let* search_db =
     let odocls =
@@ -2181,15 +2173,12 @@ let generate_html_for_package
     [ Pp.textf
         "odoc v3: created search_db with %d odocls for %s"
         (List.length visible_artifacts)
-        pkg_or_lib_name
+        pkg_name_str
     ];
-  (* Use shared remap file for Local_only mode (skip for synthetic packages) *)
+  (* Use shared remap file for Local_only mode *)
   let remap_file_opt =
     match mode with
-    | Doc_mode.Local_only ->
-      if String.contains pkg_or_lib_name '@'
-      then None (* Synthetic package - no remap *)
-      else Some (Paths.remap_file ctx)
+    | Doc_mode.Local_only -> Some (Paths.remap_file ctx)
     | Doc_mode.Full -> None
   in
   (* Generate HTML for all visible artifacts *)
@@ -2218,7 +2207,6 @@ let generate_html_for_package
       call)
   in
   (* Create format aliases for all output formats *)
-  let pkg_name = Package.Name.of_string pkg_or_lib_name in
   let* () =
     Memo.parallel_iter Output_format.all ~f:(fun output ->
       (* Create package-level alias with all HTML files *)
@@ -2240,7 +2228,6 @@ let generate_html_for_package
       (* Even for libraries with no artifacts, create empty aliases *)
       (* We need to construct a target for this library *)
       (* Since we have no artifacts, we need to look up the library *)
-      let pkg_name = Package.Name.of_string pkg_or_lib_name in
       let* lib_opt =
         let* pkg_discovery = Package_discovery.create ~context:ctx in
         let installed_libs =
@@ -2281,6 +2268,10 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
         pkg_or_lib_name
         path_prefix
     ];
+  (* Determine if this is a real package or a private library (has @ suffix).
+     Private libraries have names like "foo@abc123" where @abc123 is a unique hash. *)
+  let is_private_lib = String.contains pkg_or_lib_name '@' in
+  let pkg_opt = if is_private_lib then None else Some (Package.Name.of_string pkg_or_lib_name) in
   (* Use unified artifact discovery *)
   let* all_artifacts, lib_subdirs =
     discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
@@ -2405,8 +2396,8 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           Memo.parallel_iter package_pages ~f:(fun artifact ->
             compile_artifact sctx ~artifact ~lib_artifacts:package_pages)
         in
-        (* Create package-level .odoc-all alias (skip private libraries with @ suffix) *)
-        if String.contains pkg_or_lib_name '@'
+        (* Create package-level .odoc-all alias (skip private libraries) *)
+        if is_private_lib
         then Memo.return ()
         else (
           let pkg_dir = Paths.root ctx ++ path_prefix ++ pkg_or_lib_name in
@@ -2462,8 +2453,8 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
             link_artifact sctx ~artifact)
         in
         (* Create package-level .odoc-all alias that aggregates all library aliases *)
-        if String.contains pkg_or_lib_name '@'
-        then Memo.return () (* Synthetic package - no package-level alias *)
+        if is_private_lib
+        then Memo.return () (* Private library - no package-level alias *)
         else (
           let pkg_dir = Paths.odocl_root ctx ++ pkg_or_lib_name in
           let pkg_alias = Dep.odoc_all_alias ~dir:pkg_dir in
@@ -2485,31 +2476,37 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           in
           Dep.add_file_deps pkg_alias all_odocl_paths))
     | "_html" ->
-      (* HTML generation for local packages only *)
-      Rules.collect_unit (fun () ->
-        generate_html_for_package
-          sctx
-          ~ctx
-          ~pkg_or_lib_name
-          ~library_artifacts
-          ~package_pages
-          ~artifacts_by_lib_complete
-          ~dir
-          ~mode:Doc_mode.Local_only
-          ())
+      (* HTML generation for local packages only (skip private libraries) *)
+      (match pkg_opt with
+       | None -> Memo.return Rules.empty
+       | Some pkg_name ->
+         Rules.collect_unit (fun () ->
+           generate_html_for_package
+             sctx
+             ~ctx
+             ~pkg_name
+             ~library_artifacts
+             ~package_pages
+             ~artifacts_by_lib_complete
+             ~dir
+             ~mode:Doc_mode.Local_only
+             ()))
     | "_html_full" ->
-      (* HTML generation for all packages (full mode) *)
-      Rules.collect_unit (fun () ->
-        generate_html_for_package
-          sctx
-          ~ctx
-          ~pkg_or_lib_name
-          ~library_artifacts
-          ~package_pages
-          ~artifacts_by_lib_complete
-          ~dir
-          ~mode:Doc_mode.Full
-          ())
+      (* HTML generation for all packages (full mode, skip private libraries) *)
+      (match pkg_opt with
+       | None -> Memo.return Rules.empty
+       | Some pkg_name ->
+         Rules.collect_unit (fun () ->
+           generate_html_for_package
+             sctx
+             ~ctx
+             ~pkg_name
+             ~library_artifacts
+             ~package_pages
+             ~artifacts_by_lib_complete
+             ~dir
+             ~mode:Doc_mode.Full
+             ()))
     | _ -> failwith ("Unexpected path_prefix: " ^ path_prefix)
   in
   Memo.return
