@@ -2127,18 +2127,15 @@ let generate_html_for_package
       sctx
       ~ctx
       ~pkg_or_lib_name
-      ~library_artifacts
-      ~package_pages
+      ~all_artifacts
       ~all_lib_names
       ~dir
       ~mode
       ()
   =
-  (* Combine library artifacts and package pages for HTML generation *)
-  let all_artifacts_for_html = library_artifacts @ package_pages in
   (* Filter to only visible artifacts for HTML generation *)
   let visible_artifacts =
-    List.filter all_artifacts_for_html ~f:(fun a -> not (Artifact.hidden a))
+    List.filter all_artifacts ~f:(fun a -> not (Artifact.hidden a))
   in
   Log.info
     [ Pp.textf
@@ -2223,7 +2220,10 @@ let generate_html_for_package
   in
   (* Also create library-level aliases for each library *)
   let visible_lib_artifacts =
-    List.filter library_artifacts ~f:(fun a -> not (Artifact.hidden a))
+    List.filter visible_artifacts ~f:(fun a ->
+      match Artifact.target a with
+      | Lib _ | Private_lib _ -> true
+      | Pkg _ -> false)
   in
   (* Add each visible library artifact's HTML files to its library alias *)
   let* () =
@@ -2292,13 +2292,6 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
         (List.length all_artifacts)
         pkg_or_lib_name
     ];
-  (* Separate package-level pages from library artifacts *)
-  let library_artifacts, package_pages =
-    List.partition_map all_artifacts ~f:(fun artifact ->
-      match Artifact.target artifact with
-      | Lib _ | Private_lib _ -> Left artifact (* Library artifacts *)
-      | Pkg _ -> Right artifact (* Package-level pages *))
-  in
   (* Get set of all library names from subdirs (for creating empty aliases) *)
   let all_lib_names =
     List.map lib_subdirs ~f:Lib_name.of_string |> Lib_name.Set.of_list
@@ -2322,10 +2315,10 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
         in
         (* Create empty .odoc-all aliases for libraries with no modules *)
         let lib_names_with_artifacts =
-          List.map library_artifacts ~f:(fun a ->
+          List.filter_map all_artifacts ~f:(fun a ->
             match Artifact.target a with
-            | Lib (_, lib) | Private_lib (_, lib) -> Lib.name lib
-            | Pkg _ -> assert false)
+            | Lib (_, lib) | Private_lib (_, lib) -> Some (Lib.name lib)
+            | Pkg _ -> None)
           |> Lib_name.Set.of_list
         in
         let* lib_alias_dirs =
@@ -2360,7 +2353,10 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
         in
         (* Add each visible library artifact's odocl file to its library alias *)
         let visible_lib_artifacts =
-          List.filter library_artifacts ~f:(fun a -> not (Artifact.hidden a))
+          List.filter visible_artifacts ~f:(fun a ->
+            match Artifact.target a with
+            | Lib _ | Private_lib _ -> true
+            | Pkg _ -> false)
         in
         let* () =
           Memo.parallel_iter visible_lib_artifacts ~f:(fun artifact ->
@@ -2408,8 +2404,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           sctx
           ~ctx
           ~pkg_or_lib_name
-          ~library_artifacts
-          ~package_pages
+          ~all_artifacts
           ~all_lib_names
           ~dir
           ~mode:Doc_mode.Local_only
@@ -2421,8 +2416,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           sctx
           ~ctx
           ~pkg_or_lib_name
-          ~library_artifacts
-          ~package_pages
+          ~all_artifacts
           ~all_lib_names
           ~dir
           ~mode:Doc_mode.Full
