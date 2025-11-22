@@ -1801,14 +1801,6 @@ let check_mlds_no_dupes ~pkg ~mlds =
       ]
 ;;
 
-(* Helper to group artifacts by library name *)
-let group_artifacts_by_lib artifacts =
-  List.fold_left artifacts ~init:Lib_name.Map.empty ~f:(fun acc artifact ->
-    let lib_name = Artifact.lib_name artifact in
-    let existing = Lib_name.Map.find acc lib_name |> Option.value ~default:[] in
-    Lib_name.Map.set acc lib_name (artifact :: existing))
-;;
-
 (* Helper function to compile artifacts for a single library with proper dependencies *)
 (* Discover ALL artifacts for a package identifier (either a v3 package name or v2 lib_unique_name).
    For v3 packages: returns artifacts for all libraries in the package + package-level mld files
@@ -2137,7 +2129,7 @@ let generate_html_for_package
       ~pkg_or_lib_name
       ~library_artifacts
       ~package_pages
-      ~artifacts_by_lib_complete
+      ~all_lib_names
       ~dir
       ~mode
       ()
@@ -2230,16 +2222,39 @@ let generate_html_for_package
       Dep.add_file_deps pkg_alias all_paths)
   in
   (* Also create library-level aliases for each library *)
-  Lib_name.Map.to_list artifacts_by_lib_complete
-  |> Memo.parallel_iter ~f:(fun (lib_name, lib_artifacts) ->
-    let visible_lib_artifacts =
-      List.filter lib_artifacts ~f:(fun a -> not (Artifact.hidden a))
-    in
-    if List.is_empty visible_lib_artifacts
-    then (
-      (* Even for libraries with no artifacts, create empty aliases *)
-      (* We need to construct a target for this library *)
-      (* Since we have no artifacts, we need to look up the library *)
+  let visible_lib_artifacts =
+    List.filter library_artifacts ~f:(fun a -> not (Artifact.hidden a))
+  in
+  (* Add each visible library artifact's HTML files to its library alias *)
+  let* () =
+    Memo.parallel_iter visible_lib_artifacts ~f:(fun artifact ->
+      Memo.parallel_iter Output_format.all ~f:(fun output ->
+        match Artifact.target artifact with
+        | Lib (pkg, lib) ->
+          let lib_alias = Dep.format_alias output mode ctx (Lib (pkg, lib)) in
+          let html_file = Path.build (Output_format.target mode output artifact) in
+          Dep.add_file_deps lib_alias [html_file]
+        | Private_lib (lib_unique_name, lib) ->
+          let lib_alias = Dep.format_alias output mode ctx (Private_lib (lib_unique_name, lib)) in
+          let html_file = Path.build (Output_format.target mode output artifact) in
+          Dep.add_file_deps lib_alias [html_file]
+        | Pkg _ -> Memo.return () (* Package artifacts don't have library aliases *)))
+  in
+  (* Create empty aliases for libraries with no visible artifacts *)
+  let lib_names_with_artifacts =
+    List.filter_map visible_lib_artifacts ~f:(fun a ->
+      match Artifact.target a with
+      | Lib (_, lib) | Private_lib (_, lib) -> Some (Lib.name lib)
+      | Pkg _ -> None)
+    |> Lib_name.Set.of_list
+  in
+  Lib_name.Set.to_list all_lib_names
+  |> Memo.parallel_iter ~f:(fun lib_name ->
+    if Lib_name.Set.mem lib_names_with_artifacts lib_name
+    then Memo.return ()
+    else (
+      (* Library with no artifacts - create empty aliases *)
+      (* We need to look up the library to construct the target *)
       let* lib_opt =
         let* pkg_discovery = Package_discovery.create ~context:ctx in
         let installed_libs =
@@ -2253,23 +2268,7 @@ let generate_html_for_package
         Memo.parallel_iter Output_format.all ~f:(fun output ->
           let lib_alias = Dep.format_alias output mode ctx (Lib (pkg_name, lib)) in
           Dep.add_file_deps lib_alias [])
-      | None -> Memo.return ())
-    else
-      Memo.parallel_iter Output_format.all ~f:(fun output ->
-        let lib_paths =
-          List.map visible_lib_artifacts ~f:(fun artifact ->
-            Path.build (Output_format.target mode output artifact))
-        in
-        (* Create library-level alias - need to find the Lib.Local.t for this lib_name *)
-        (* For now, use the artifact's target which should be Lib lib *)
-        match Artifact.target (List.hd visible_lib_artifacts) with
-        | Lib (pkg, lib) ->
-          let lib_alias = Dep.format_alias output mode ctx (Lib (pkg, lib)) in
-          Dep.add_file_deps lib_alias lib_paths
-        | Private_lib (lib_unique_name, lib) ->
-          let lib_alias = Dep.format_alias output mode ctx (Private_lib (lib_unique_name, lib)) in
-          Dep.add_file_deps lib_alias lib_paths
-        | Pkg _ -> Memo.return () (* Package artifacts don't have library aliases *)))
+      | None -> Memo.return ()))
 ;;
 
 let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
@@ -2300,29 +2299,10 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
       | Lib _ | Private_lib _ -> Left artifact (* Library artifacts *)
       | Pkg _ -> Right artifact (* Package-level pages *))
   in
-  (* Group library artifacts by library *)
-  let artifacts_by_lib = group_artifacts_by_lib library_artifacts in
-  Log.info
-    [ Pp.textf
-        "odoc v3: grouped into %d lib groups for %s"
-        (Lib_name.Map.cardinal artifacts_by_lib)
-        pkg_or_lib_name
-    ];
-  (* Ensure all lib_subdirs are represented in artifacts_by_lib, even if they have no artifacts. *)
+  (* Get set of all library names from subdirs (for creating empty aliases) *)
   let all_lib_names =
-    let from_subdirs = List.map lib_subdirs ~f:Lib_name.of_string in
-    Lib_name.Set.of_list from_subdirs
+    List.map lib_subdirs ~f:Lib_name.of_string |> Lib_name.Set.of_list
   in
-  let artifacts_by_lib_complete =
-    Lib_name.Set.fold all_lib_names ~init:artifacts_by_lib ~f:(fun lib_name acc ->
-      if Lib_name.Map.mem acc lib_name then acc else Lib_name.Map.set acc lib_name [])
-  in
-  Log.info
-    [ Pp.textf
-        "odoc v3: complete lib map has %d entries (including empty) for %s"
-        (Lib_name.Map.cardinal artifacts_by_lib_complete)
-        pkg_or_lib_name
-    ];
   (* Determine which operation to perform based on path_prefix *)
   let rules =
     match path_prefix with
@@ -2430,7 +2410,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           ~pkg_or_lib_name
           ~library_artifacts
           ~package_pages
-          ~artifacts_by_lib_complete
+          ~all_lib_names
           ~dir
           ~mode:Doc_mode.Local_only
           ())
@@ -2443,7 +2423,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           ~pkg_or_lib_name
           ~library_artifacts
           ~package_pages
-          ~artifacts_by_lib_complete
+          ~all_lib_names
           ~dir
           ~mode:Doc_mode.Full
           ())
