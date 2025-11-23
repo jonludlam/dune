@@ -330,10 +330,35 @@ let create_impl context =
               in
               (* Extract all library names from this META file *)
               let all_lib_names = extract_lib_names_from_meta ~base_name:lib_name meta in
+              Log.info
+                [ Pp.textf
+                    "Package_discovery: Extracted %d lib names from META for %s: %s"
+                    (List.length all_lib_names)
+                    (Lib_name.to_string lib_name)
+                    (String.concat ~sep:", "
+                       (List.map all_lib_names ~f:Lib_name.to_string))
+                ];
               (* Look up each library name and return (lib_name, lib, pkg_name) tuples *)
               Memo.parallel_map all_lib_names ~f:(fun ln ->
                 let+ lib_opt = Lib.DB.find installed_libs ln in
-                Option.map lib_opt ~f:(fun lib -> ln, lib, pkg_name)))
+                match lib_opt with
+                | None -> None
+                | Some lib ->
+                  let canonical_name = Lib.name lib in
+                  Log.info
+                    [ Pp.textf
+                        "Package_discovery: META name '%s' -> lib canonical name '%s' for \
+                         package %s"
+                        (Lib_name.to_string ln)
+                        (Lib_name.to_string canonical_name)
+                        (Package.Name.to_string pkg_name)
+                    ];
+                  (* Use canonical name, not META alias name.
+                     META files can export libraries from other packages
+                     (e.g., ctypes.foreign exports ctypes-foreign).
+                     Using the canonical name ensures the "already present" check below
+                     prevents adding libraries to the wrong package. *)
+                  Some (canonical_name, lib, pkg_name)))
       in
       (* Flatten and merge into lib_mappings *)
       let all_additional = List.concat additional_mappings |> List.filter_map ~f:Fun.id in
