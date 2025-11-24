@@ -70,6 +70,7 @@ type target =
   | Private_lib of string * Lib.t
     (* Library without a real package - uses lib_unique_name as identifier *)
   | Pkg of Package.Name.t
+  | Toplevel (* The toplevel index above all packages *)
 
 (* Artifact types - tracking documentation units through the pipeline *)
 
@@ -129,6 +130,7 @@ module Paths = struct
     | Private_lib (lib_unique_name, _) ->
       root ctx ++ "_odoc" ++ lib_unique_name
     | Pkg pkg -> root ctx ++ "_odoc" ++ Package.Name.to_string pkg
+    | Toplevel -> root ctx ++ "_odoc"
   ;;
 
   let html_root ctx mode = root ctx ++ Doc_mode.output_subdir mode
@@ -142,6 +144,7 @@ module Paths = struct
     | Private_lib (lib_unique_name, _) ->
       html_root ctx mode ++ lib_unique_name
     | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
+    | Toplevel -> html_root ctx mode
   ;;
 
   let odocl ctx = function
@@ -151,11 +154,12 @@ module Paths = struct
     | Private_lib (lib_unique_name, _) ->
       odocl_root ctx ++ lib_unique_name
     | Pkg pkg -> odocl_root ctx ++ Package.Name.to_string pkg
+    | Toplevel -> odocl_root ctx
   ;;
 
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
   let odoc_support ctx mode = html_root ctx mode ++ odoc_support_dirname
-  let toplevel_index ctx mode = html_root ctx mode ++ "index.html"
+  let toplevel_index_mld ctx = root ctx ++ "_mlds" ++ "index.mld"
 
   let sidebar_root ctx = root ctx ++ "_sidebar"
 
@@ -212,12 +216,14 @@ end = struct
     | Lib (pkg, _) -> Some pkg
     | Private_lib _ -> None
     | Pkg pkg -> Some pkg
+    | Toplevel -> None
   ;;
 
   let lib_name t =
     match t.target with
     | Lib (_, lib) | Private_lib (_, lib) -> Lib.name lib
     | Pkg pkg -> Lib_name.of_string (Package.Name.to_string pkg)
+    | Toplevel -> Lib_name.of_string "index"
   ;;
 
   (* Split hierarchical page name like "foo/baz" into (Some "foo", "baz").
@@ -244,7 +250,11 @@ end = struct
     let basename = get_basename t in
     let base_dir = dir_fn ctx t.target in
     match t.kind with
-    | Page _ -> base_dir ++ ("page-" ^ basename ^ extension)
+    | Page { name; _ } ->
+      (* For hierarchical pages like "deprecated/index", include parent path in directory *)
+      (match fst (split_page_name name) with
+       | Some parent_path -> base_dir ++ parent_path ++ ("page-" ^ basename ^ extension)
+       | None -> base_dir ++ ("page-" ^ basename ^ extension))
     | Module _ -> base_dir ++ (basename ^ extension)
   ;;
 
@@ -258,11 +268,17 @@ end = struct
     | Module _, (Lib _ | Private_lib _) ->
       let html_dir = html_base ++ Stdune.String.capitalize basename in
       html_dir ++ ("index" ^ suffix)
-    | Page _, Pkg _ ->
-      let html_path = html_base ++ basename in
+    | Page { name; _ }, (Pkg _ | Toplevel) ->
+      (* For hierarchical pages like "deprecated/index", include parent path in directory *)
+      let html_path =
+        match fst (split_page_name name) with
+        | Some parent_path -> html_base ++ parent_path ++ basename
+        | None -> html_base ++ basename
+      in
       Path.Build.extend_basename html_path ~suffix
     | Module _, Pkg _ -> assert false
     | Page _, (Lib _ | Private_lib _) -> assert false
+    | Module _, Toplevel -> assert false
   ;;
 
   let html_file ctx mode t = html_output_file ctx mode t ~suffix:".html"
@@ -283,12 +299,14 @@ end = struct
         sprintf "%s/%s" (Package.Name.to_string pkg) (Lib_name.to_string (Lib.name lib))
       | Private_lib (lib_unique_name, _) -> lib_unique_name
       | Pkg pkg -> Package.Name.to_string pkg
+      | Toplevel -> ""
     in
     match t.kind with
     | Module _ -> base_id
     | Page { name; _ } ->
+      (* For hierarchical pages like "deprecated/index", include parent path without "page-" prefix *)
       (match fst (split_page_name name) with
-       | Some parent_name -> sprintf "%s/page-%s" base_id parent_name
+       | Some parent_path -> sprintf "%s/%s" base_id parent_path
        | None -> base_id)
   ;;
 
@@ -322,13 +340,6 @@ module Output_format = struct
     match t with
     | Html -> Alias.make Alias0.doc ~dir
     | Json -> Alias.make Alias0.doc_json ~dir
-  ;;
-
-  let toplevel_index_path format ctx mode =
-    let base = Paths.toplevel_index ctx mode in
-    match format with
-    | Html -> base
-    | Json -> Path.Build.extend_basename base ~suffix:".json"
   ;;
 end
 
@@ -425,6 +436,7 @@ end = struct
       | Private_lib (lib_unique_name, lib) ->
         "private_lib:" ^ lib_unique_name ^ "/" ^ Lib_name.to_string (Lib.name lib)
       | Pkg pkg -> "pkg:" ^ Package.Name.to_string pkg
+      | Toplevel -> "toplevel"
     in
     Log.info
       [ Pp.textf
@@ -458,14 +470,15 @@ let generate_remap_mappings pkg_discovery ~local_packages ~all_deps =
       match target with
       | Pkg pkg_name -> not (Package.Name.Set.mem local_pkg_set pkg_name)
       | Lib (pkg_name, _lib) -> not (Package.Name.Set.mem local_pkg_set pkg_name)
-      | Private_lib _ -> false (* Private libs have no package - they are LOCAL *))
+      | Private_lib _ -> false (* Private libs have no package - they are LOCAL *)
+      | Toplevel -> false (* Toplevel is always local *))
   in
   (* Generate mappings: local_path:remote_url *)
   let* mappings =
     Memo.List.map external_deps ~f:(fun target ->
       match target with
-      | Private_lib _ ->
-        (* Private libs are local, should never appear in external_deps *)
+      | Private_lib _ | Toplevel ->
+        (* Private libs and toplevel are local, should never appear in external_deps *)
         Memo.return []
       | Pkg pkg_name | Lib (pkg_name, _) ->
         (* Get package version and construct package URL *)
@@ -483,7 +496,10 @@ let generate_remap_mappings pkg_discovery ~local_packages ~all_deps =
            let lib_path = pkg_path ^ "/" ^ Lib_name.to_string (Lib.name lib) in
            (* Library also maps to package URL, matching odoc_driver behavior *)
            Memo.return [ pkg_mapping; lib_path, pkg_url ]
-         | _ -> Memo.return [ pkg_mapping ]))
+         | Pkg _ -> Memo.return [ pkg_mapping ]
+         | Private_lib _ | Toplevel ->
+           (* Should never happen - filtered out in external_deps *)
+           Memo.return []))
   in
   Memo.return (List.concat mappings)
 ;;
@@ -694,7 +710,7 @@ let get_config_package_deps pkg_discovery pkg_opt =
 
 (* Generate -P package:path flags for odoc link
    These tell odoc where to find .odoc files for package dependencies *)
-let odoc_pkg_flags _ctx requires pkg_discovery ~current_pkg =
+let odoc_pkg_flags _ctx requires pkg_discovery ~current_pkg ~artifact_config =
   Resolve.args
     (let open Resolve.O in
      let+ libs = requires in
@@ -718,10 +734,13 @@ let odoc_pkg_flags _ctx requires pkg_discovery ~current_pkg =
            Package.Name.Map.set acc pkg odoc_path
          | None -> acc)
      in
-     (* Also add package dependencies from odoc-config.sexp *)
+     (* Add package dependencies from artifact's odoc_config *)
+     let artifact_pkg_deps = artifact_config.Odoc_config.deps.packages in
+     (* Also add package dependencies from odoc-config.sexp (from Package_discovery) *)
      let config_pkg_deps = get_config_package_deps pkg_discovery current_pkg in
+     let all_config_pkg_deps = artifact_pkg_deps @ config_pkg_deps in
      let all_pkg_paths =
-       List.fold_left config_pkg_deps ~init:lib_pkg_paths ~f:(fun acc pkg ->
+       List.fold_left all_config_pkg_deps ~init:lib_pkg_paths ~f:(fun acc pkg ->
          let pkg_name_str = Package.Name.to_string pkg in
          (* Path relative to html_root (_doc/_html): ../_odoc/pkg *)
          let odoc_path = "../_odoc/" ^ pkg_name_str in
@@ -773,7 +792,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
       (* Check if this is a vendored library *)
       (match Artifact.target odoc_file with
        | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
-       | Pkg _ -> Memo.return false)
+       | Pkg _ | Toplevel -> Memo.return false)
   in
   (* Add -L flag for the library itself so modules can reference each other,
      but only if the library isn't already in the requires list or stdlib.
@@ -807,7 +826,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
         in
         let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
         Memo.return (Command.Args.S [ Command.Args.A "-L"; A lib_path_arg ]))
-    | Pkg _ -> Memo.return (Command.Args.S [])
+    | Pkg _ | Toplevel -> Memo.return (Command.Args.S [])
   in
   let run_odoc =
     run_odoc
@@ -819,7 +838,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
       [ odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery
       ; odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery
       ; self_lib_flag (* Add -L for the library being linked *)
-      ; odoc_pkg_flags ctx requires pkg_discovery ~current_pkg:(Artifact.pkg odoc_file)
+      ; odoc_pkg_flags ctx requires pkg_discovery ~current_pkg:(Artifact.pkg odoc_file) ~artifact_config:(Artifact.odoc_config odoc_file)
       ; (* Add --current-package flag when we have a package *)
         (match Artifact.pkg odoc_file with
          | Some pkg_name ->
@@ -840,7 +859,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
       (* Check if this is a vendored library *)
       (match Artifact.target odoc_file with
        | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
-       | Pkg _ -> Memo.return false)
+       | Pkg _ | Toplevel -> Memo.return false)
   in
   let run_odoc =
     if should_suppress
@@ -849,10 +868,22 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
         Action.Full.map action ~f:Action.ignore_outputs)
     else run_odoc
   in
+  (* Create dependencies on .odoc-all aliases for all packages in odoc_config *)
+  let pkg_deps =
+    let pkg_names = (Artifact.odoc_config odoc_file).Odoc_config.deps.packages in
+    let dep_set =
+      List.fold_left pkg_names ~init:Dune_engine.Dep.Set.empty ~f:(fun acc pkg_name ->
+        let dir = Paths.odocs ctx (Pkg pkg_name) in
+        Dune_engine.Dep.Set.add acc (Dune_engine.Dep.alias (Dep.odoc_all_alias ~dir)))
+    in
+    Action_builder.deps dep_set
+  in
   add_rule
     sctx
     (let open Action_builder.With_targets.O in
-     Action_builder.with_no_targets deps >>> run_odoc)
+     Action_builder.with_no_targets deps
+     >>> Action_builder.with_no_targets pkg_deps
+     >>> run_odoc)
 ;;
 
 (* Unified compilation function that computes all dependencies from the artifact.
@@ -969,8 +1000,8 @@ let compile_artifact sctx ~artifact ~lib_artifacts ~package_lib_names =
         if is_stdlib_artifact then [ lib ] else lib :: Option.to_list stdlib_opt
       in
       Lib.closure libs_to_close ~linking:false
-    | Pkg _ -> Memo.return (Resolve.return [])
-    (* Package-level artifacts have no library dependencies *)
+    | Pkg _ | Toplevel -> Memo.return (Resolve.return [])
+    (* Package-level and toplevel artifacts have no library dependencies *)
   in
   (* Filter out the library itself from the closure *)
   let requires_from_deps =
@@ -979,7 +1010,7 @@ let compile_artifact sctx ~artifact ~lib_artifacts ~package_lib_names =
       Resolve.map requires_closure ~f:(fun all_libs ->
         List.filter all_libs ~f:(fun dep_lib ->
           not (Lib_name.equal (Lib.name dep_lib) (Lib.name lib))))
-    | Pkg _ -> requires_closure
+    | Pkg _ | Toplevel -> requires_closure
   in
   (* For libraries in a package, filter out dependencies on other libraries in the same package.
      Module-level dependencies from odoc compile-deps will handle the actual file dependencies.
@@ -1000,7 +1031,7 @@ let compile_artifact sctx ~artifact ~lib_artifacts ~package_lib_names =
       (* Check if this is a vendored library *)
       (match Artifact.target artifact with
        | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
-       | Pkg _ -> Memo.return false)
+       | Pkg _ | Toplevel -> Memo.return false)
   in
   (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases)
      IMPORTANT: Pass None for pkg during compilation to avoid creating a dependency cycle
@@ -1038,11 +1069,23 @@ let compile_artifact sctx ~artifact ~lib_artifacts ~package_lib_names =
                   let lib_dir = Paths.odocs ctx (Private_lib (lib_unique_name, lib)) in
                   Command.Args.S
                     [ Command.Args.A "-I"; Command.Args.Path (Path.build lib_dir) ]
-                | Pkg _ -> Command.Args.S [])
-             ; Command.Args.A "--output-dir"
-             ; Command.Args.A "_doc/_odoc"
-             ; Command.Args.A "--parent-id"
-             ; Command.Args.A (Artifact.parent_id artifact)
+                | Pkg _ | Toplevel -> Command.Args.S [])
+             ; (* Use --output-dir + --parent-id for artifacts with parents,
+                  or -o for toplevel without parent *)
+               (let parent = Artifact.parent_id artifact in
+                if String.is_empty parent
+                then
+                  Command.Args.S
+                    [ Command.Args.A "-o"
+                    ; Command.Args.Target (Artifact.odoc_file ctx artifact)
+                    ]
+                else
+                  Command.Args.S
+                    [ Command.Args.A "--output-dir"
+                    ; Command.Args.A "_doc/_odoc"
+                    ; Command.Args.A "--parent-id"
+                    ; Command.Args.A parent
+                    ])
              ; Command.Args.A "--enable-missing-root-warning"
              ; (* Add --warnings-tag flag for library artifacts to identify which package warnings come from.
                   Skip for vendored libraries since their warnings are suppressed anyway. *)
@@ -1054,8 +1097,8 @@ let compile_artifact sctx ~artifact ~lib_artifacts ~package_lib_names =
                     Command.Args.As [ "--warnings-tag"; Package.Name.to_string pkg ]
                   | Private_lib _ ->
                     Command.Args.As [ "--warnings-tag"; "__private_lib__" ]
-                  | Pkg _ ->
-                    (* Package-level artifacts don't have a warnings tag *)
+                  | Pkg _ | Toplevel ->
+                    (* Package-level and toplevel artifacts don't have a warnings tag *)
                     Command.Args.S [])
              ; Command.Args.Dep source_file
              ])
@@ -1141,7 +1184,7 @@ let generate_html_artifact
         (* Check if this is a vendored library *)
         (match Artifact.target artifact with
          | Lib (_, lib) | Private_lib (_, lib) -> is_lib_vendored lib
-         | Pkg _ -> Memo.return false)
+         | Pkg _ | Toplevel -> Memo.return false)
     in
     let run_odoc =
       if should_suppress
@@ -1183,95 +1226,27 @@ module Toplevel_index = struct
   type item =
     { name : string
     ; version : Package_version.t option
-    ; link : string
     }
 
   let of_packages packages =
     Package.Name.Map.to_list_map packages ~f:(fun name package ->
       let name = Package.Name.to_string name in
-      { name; version = Package.version package; link = sp "%s/index.html" name })
+      { name; version = Package.version package })
   ;;
 
-  let html_list_items t =
-    List.map t ~f:(fun { name; version; link } ->
-      let link = sp {|<a href="%s">%s</a>|} link name in
+  let mld_content t =
+    let b = Buffer.create 1024 in
+    Printf.bprintf b "{0 OCaml package documentation}\n\n";
+    List.iter t ~f:(fun { name; version } ->
       let version_suffix =
         match version with
         | None -> ""
-        | Some v -> sp {| <span class="version">%s</span>|} (Package_version.to_string v)
+        | Some v -> sp " (%s)" (Package_version.to_string v)
       in
-      sp "<li>%s%s</li>" link version_suffix)
-    |> String.concat ~sep:"\n      "
-  ;;
-
-  let html t =
-    sp
-      {|<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
-  <head>
-    <title>index</title>
-    <link rel="stylesheet" href="./%s/odoc.css"/>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  </head>
-  <body>
-    <main class="content">
-      <div class="by-name">
-      <h2>OCaml package documentation</h2>
-      <ol>
-      %s
-      </ol>
-      </div>
-    </main>
-  </body>
-</html>|}
-      Paths.odoc_support_dirname
-      (html_list_items t)
-  ;;
-
-  let string_to_json s = `String s
-  let list_to_json ~f l = `List (List.map ~f l)
-
-  let option_to_json ~f = function
-    | None -> `Null
-    | Some x -> f x
-  ;;
-
-  let item_to_json { name; version; link } =
-    `Assoc
-      [ "name", string_to_json name
-      ; ( "version"
-        , Option.map ~f:Package_version.to_string version
-          |> option_to_json ~f:string_to_json )
-      ; "link", string_to_json link
-      ]
-  ;;
-
-  (** This format is public API. *)
-  let to_json items = `Assoc [ "packages", list_to_json items ~f:item_to_json ]
-
-  let json t = Dune_stats.Json.to_string (to_json t)
-
-  let content (output : Output_format.t) t =
-    match output with
-    | Html -> html t
-    | Json -> json t
+      Printf.bprintf b "- {{!/%s/page-index}%s}%s\n" name name version_suffix);
+    Buffer.contents b
   ;;
 end
-
-let setup_toplevel_index_rule sctx output mode =
-  let* packages = Dune_load.packages () in
-  let index = Toplevel_index.of_packages packages in
-  let content = Toplevel_index.content output index in
-  let ctx = Super_context.context sctx in
-  let path = Output_format.toplevel_index_path output ctx mode in
-  add_rule sctx (Action_builder.write_file path content)
-;;
-
-let setup_toplevel_index_rules sctx mode =
-  Memo.parallel_iter Output_format.all ~f:(fun output ->
-    setup_toplevel_index_rule sctx output mode)
-;;
 
 let libs_of_pkg ctx ~pkg =
   let+ { Scope.DB.Lib_entry.Set.libraries; _ } =
@@ -1304,8 +1279,14 @@ let compute_link_requires sctx ~artifact =
     | Page { pkg_libs; _ }, Pkg _ ->
       (* Page in a package: use the libraries that were recorded when the artifact was created *)
       Memo.return (Resolve.return pkg_libs)
+    | Page { pkg_libs; _ }, Toplevel ->
+      (* Toplevel index: use pkg_libs which should be all package libraries *)
+      Memo.return (Resolve.return pkg_libs)
     | Module _, Pkg _ ->
       (* This shouldn't happen - modules should have Lib targets *)
+      Memo.return (Resolve.return [])
+    | Module _, Toplevel ->
+      (* This shouldn't happen - toplevel should only have pages *)
       Memo.return (Resolve.return [])
     | Page { pkg_libs = _; _ }, Lib (_, lib) | Page { pkg_libs = _; _ }, Private_lib (_, lib) ->
       (* Page in a library target - just use that library *)
@@ -1326,13 +1307,18 @@ let compute_link_requires sctx ~artifact =
     in
     (* Get all libraries from extra packages using Package_discovery *)
     let* extra_libs_from_pkgs =
-      match Artifact.pkg artifact with
-      | None -> Memo.return []
-      | Some _pkg ->
-        let* pkg_discovery = Package_discovery.create ~context:ctx in
-        Memo.parallel_map extra_pkg_names ~f:(fun pkg_name ->
-          Memo.return (Package_discovery.libraries_of_package pkg_discovery pkg_name))
-        >>| List.concat
+      match Artifact.target artifact with
+      | Toplevel ->
+        (* For Toplevel, don't try to load libraries - just use packages for -P flags *)
+        Memo.return []
+      | Lib _ | Private_lib _ | Pkg _ ->
+        if List.is_empty extra_pkg_names
+        then Memo.return []
+        else (
+          let* pkg_discovery = Package_discovery.create ~context:ctx in
+          Memo.parallel_map extra_pkg_names ~f:(fun pkg_name ->
+            Memo.return (Package_discovery.libraries_of_package pkg_discovery pkg_name))
+          >>| List.concat)
     in
     let all_extra_libs = extra_libs_from_names @ extra_libs_from_pkgs in
     (* Combine base requires with extra libraries *)
@@ -1348,6 +1334,59 @@ let link_artifact sctx ~artifact =
   let* requires = compute_link_requires sctx ~artifact in
   (* Call the existing link_odoc_rules with computed requires *)
   link_odoc_rules sctx artifact ~pkg:(Artifact.pkg artifact) ~requires
+;;
+
+(* Helper to create the toplevel index artifact with package dependencies *)
+let toplevel_index_artifact ctx packages =
+  let mld_path = Paths.toplevel_index_mld ctx in
+  let kind = Page { name = "index"; pkg_libs = [] } in
+  let source = Local_source mld_path in
+  let target = Toplevel in
+  (* Add all packages as dependencies so -P flags are generated during linking *)
+  let package_names = Package.Name.Map.keys packages in
+  let odoc_config = { Odoc_config.deps = { packages = package_names; libraries = [] } } in
+  Artifact.create ~kind ~source ~target ~odoc_config
+;;
+
+(* Generate the .mld file for the toplevel index *)
+let setup_toplevel_index_mld sctx =
+  let ctx = Super_context.context sctx in
+  let* packages = Dune_load.packages () in
+  let index = Toplevel_index.of_packages packages in
+  let mld_content = Toplevel_index.mld_content index in
+  let mld_path = Paths.toplevel_index_mld ctx in
+  add_rule sctx (Action_builder.write_file mld_path mld_content)
+;;
+
+(* Compile the toplevel index .mld to .odoc *)
+let setup_toplevel_index_compile sctx =
+  let ctx = Super_context.context sctx in
+  let* packages = Dune_load.packages () in
+  let artifact = toplevel_index_artifact ctx packages in
+  compile_artifact sctx ~artifact ~lib_artifacts:[] ~package_lib_names:Lib_name.Set.empty
+;;
+
+(* Link the toplevel index .odoc to .odocl *)
+let setup_toplevel_index_link sctx =
+  let ctx = Super_context.context sctx in
+  let* packages = Dune_load.packages () in
+  let artifact = toplevel_index_artifact ctx packages in
+  link_artifact sctx ~artifact
+;;
+
+(* Generate HTML for the toplevel index *)
+let setup_toplevel_index_html sctx mode =
+  let ctx = Super_context.context sctx in
+  let* packages = Dune_load.packages () in
+  let artifact = toplevel_index_artifact ctx packages in
+  (* Create search_db for just the toplevel index *)
+  let* search_db =
+    let dir = Paths.html_root ctx mode in
+    let odocls = [ Artifact.odocl_file ctx artifact ] in
+    Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
+  in
+  (* Generate HTML for the artifact *)
+  generate_html_artifact sctx ~artifact ~search_db ~sidebar_file:None ~mode ()
 ;;
 
 let entry_modules_by_lib sctx lib =
@@ -1875,7 +1914,7 @@ let handle_remap_artifacts sctx =
               (List.filter_map all_artifacts ~f:(fun artifact ->
                  match Artifact.target artifact with
                  | Lib (_, lib) | Private_lib (_, lib) -> Some lib
-                 | Pkg _ -> None)))
+                 | Pkg _ | Toplevel -> None)))
       in
       (* Create package discovery for package identification and version lookup *)
       let* pkg_discovery = Package_discovery.create ~context:ctx in
@@ -2016,7 +2055,7 @@ let generate_html_for_package
     List.filter visible_artifacts ~f:(fun a ->
       match Artifact.target a with
       | Lib _ | Private_lib _ -> true
-      | Pkg _ -> false)
+      | Pkg _ | Toplevel -> false)
   in
   (* Add each visible library artifact's HTML files to its library alias *)
   let* () =
@@ -2031,14 +2070,14 @@ let generate_html_for_package
           let lib_alias = Dep.format_alias output mode ctx (Private_lib (lib_unique_name, lib)) in
           let html_file = Path.build (Output_format.target ctx mode output artifact) in
           Dep.add_file_deps lib_alias [html_file]
-        | Pkg _ -> Memo.return () (* Package artifacts don't have library aliases *)))
+        | Pkg _ | Toplevel -> Memo.return () (* Package artifacts don't have library aliases *)))
   in
   (* Create empty aliases for libraries with no visible artifacts *)
   let lib_names_with_artifacts =
     List.filter_map visible_lib_artifacts ~f:(fun a ->
       match Artifact.target a with
       | Lib (_, lib) | Private_lib (_, lib) -> Some (Lib.name lib)
-      | Pkg _ -> None)
+      | Pkg _ | Toplevel -> None)
     |> Lib_name.Set.of_list
   in
   Lib_name.Set.to_list all_lib_names
@@ -2105,7 +2144,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           List.filter_map all_artifacts ~f:(fun a ->
             match Artifact.target a with
             | Lib (_, lib) | Private_lib (_, lib) -> Some (Lib.name lib)
-            | Pkg _ -> None)
+            | Pkg _ | Toplevel -> None)
           |> Lib_name.Set.of_list
         in
         let* lib_alias_dirs =
@@ -2138,7 +2177,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
           List.filter visible_artifacts ~f:(fun a ->
             match Artifact.target a with
             | Lib _ | Private_lib _ -> true
-            | Pkg _ -> false)
+            | Pkg _ | Toplevel -> false)
         in
         let* () =
           Memo.parallel_iter visible_lib_artifacts ~f:(fun artifact ->
@@ -2149,13 +2188,13 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
               let lib_alias = Dep.odoc_all_alias ~dir:lib_dir in
               let odocl_file = Path.build (Artifact.odocl_file ctx artifact) in
               Dep.add_file_deps lib_alias [odocl_file]
-            | Pkg _ -> Memo.return ())
+            | Pkg _ | Toplevel -> Memo.return ())
         in
         let lib_names_with_artifacts =
           List.filter_map visible_lib_artifacts ~f:(fun a ->
             match Artifact.target a with
             | Lib (_, lib) | Private_lib (_, lib) -> Some (Lib.name lib)
-            | Pkg _ -> None)
+            | Pkg _ | Toplevel -> None)
           |> Lib_name.Set.of_list
         in
         let* () =
@@ -2364,20 +2403,21 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
              match target with
              | Lib (pkg, _) -> Some (Pkg pkg)
              | Private_lib _ -> None (* Private libs have no package *)
-             | Pkg _ -> None)
+             | Pkg _ | Toplevel -> None)
          in
-         let all_targets_with_pkg = (Pkg name :: all_targets) @ pkg_targets_from_libs in
+         let all_targets_with_pkg = (Pkg name :: all_targets) @ pkg_targets_from_libs @ [ Toplevel ] in
          (* Filter based on mode: Local_only includes only workspace packages *)
          let* filtered_targets =
            match mode with
            | Doc_mode.Local_only ->
-             let+ workspace_pkgs = get_workspace_packages () in
+             let* workspace_pkgs = get_workspace_packages () in
              let workspace_pkg_set = Package.Name.Set.of_list workspace_pkgs in
-             List.filter all_targets_with_pkg ~f:(fun target ->
-               match target with
-               | Pkg p -> Package.Name.Set.mem workspace_pkg_set p
-               | Lib (p, _) -> Package.Name.Set.mem workspace_pkg_set p
-               | Private_lib _ -> true (* Private libs are always local *))
+             Memo.return
+               (List.filter all_targets_with_pkg ~f:(fun target ->
+                  match target with
+                  | Pkg p -> Package.Name.Set.mem workspace_pkg_set p
+                  | Lib (p, _) -> Package.Name.Set.mem workspace_pkg_set p
+                  | Private_lib _ | Toplevel -> true (* Private libs and toplevel are always local *)))
            | Doc_mode.Full ->
              (* Include all dependencies *)
              Memo.return all_targets_with_pkg
@@ -2392,10 +2432,13 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
                Lib_name.compare name1 name2
              | Private_lib (_, l1), Private_lib (_, l2) ->
                Lib_name.compare (Lib.name l1) (Lib.name l2)
-             | Pkg _, (Lib _ | Private_lib _) -> Ordering.Lt
-             | (Lib _ | Private_lib _), Pkg _ -> Ordering.Gt
-             | Lib _, Private_lib _ -> Ordering.Lt
-             | Private_lib _, Lib _ -> Ordering.Gt)
+             | Toplevel, Toplevel -> Ordering.Eq
+             | Pkg _, _ -> Ordering.Lt
+             | _, Pkg _ -> Ordering.Gt
+             | Lib _, _ -> Ordering.Lt
+             | _, Lib _ -> Ordering.Gt
+             | Private_lib _, Toplevel -> Ordering.Lt
+             | Toplevel, Private_lib _ -> Ordering.Gt)
          in
          Memo.return
            (unique_targets
@@ -2506,6 +2549,7 @@ let gen_project_rules sctx project =
     let+ mask = Dune_load.mask () in
     Option.map ~f:Package.Name.Map.keys mask
   in
+  (* Set up package aliases *)
   Dune_project.packages project
   |> Dune_lang.Package_name.Map.to_seq
   |> Memo.parallel_iter_seq ~f:(fun (_, (pkg : Package.t)) ->
@@ -2570,7 +2614,7 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
            let filtered_targets =
              List.filter all_targets ~f:(fun target ->
                match target with
-               | Pkg _ -> false (* We don't add Pkg targets for private libs *)
+               | Pkg _ | Toplevel -> false (* We don't add Pkg/Toplevel targets for private libs *)
                | Lib (_, lib) | Private_lib (_, lib) ->
                  (* Keep only local libraries, filter out installed ones *)
                  Option.is_some (Lib.Local.of_lib lib))
@@ -2587,10 +2631,13 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
                  Lib_name.compare name1 name2
                | Private_lib (_, l1), Private_lib (_, l2) ->
                  Lib_name.compare (Lib.name l1) (Lib.name l2)
-               | Pkg _, (Lib _ | Private_lib _) -> Ordering.Lt
-               | (Lib _ | Private_lib _), Pkg _ -> Ordering.Gt
-               | Lib _, Private_lib _ -> Ordering.Lt
-               | Private_lib _, Lib _ -> Ordering.Gt)
+               | Toplevel, Toplevel -> Ordering.Eq
+               | Pkg _, _ -> Ordering.Lt
+               | _, Pkg _ -> Ordering.Gt
+               | Lib _, _ -> Ordering.Lt
+               | _, Lib _ -> Ordering.Gt
+               | Private_lib _, Toplevel -> Ordering.Lt
+               | Toplevel, Private_lib _ -> Ordering.Gt)
            in
            (* Return the dep set *)
            Memo.return
@@ -2831,7 +2878,12 @@ let gen_rules sctx ~dir rest =
         Rules.collect_unit (fun () ->
           Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx Doc_mode.Local_only)
           >>> setup_css_rule sctx ~mode:Doc_mode.Local_only
-          >>> setup_toplevel_index_rules sctx Doc_mode.Local_only)
+          >>> setup_toplevel_index_html sctx Doc_mode.Local_only
+          >>> Memo.parallel_iter Output_format.all ~f:(fun output ->
+            let artifact = toplevel_index_artifact ctx packages in
+            let html_file = Output_format.target ctx Doc_mode.Local_only output artifact in
+            let alias = Dep.format_alias output Doc_mode.Local_only ctx Toplevel in
+            Dep.add_file_deps alias [ Path.build html_file ]))
       in
       Memo.return
         (Build_config.Gen_rules.make
@@ -2861,14 +2913,35 @@ let gen_rules sctx ~dir rest =
             module_name
         ];
       Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-    | [ "_mlds"; pkg_name ] -> has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
-    | [ "_odoc" ] ->
-      (* Root odoc directory - allow subdirs *)
+    | [ "_mlds" ] ->
+      (* Root _mlds directory - generate toplevel index.mld and allow package subdirs *)
+      let* packages = Dune_load.packages () in
+      let pkg_subdirs =
+        Package.Name.Map.keys packages |> List.map ~f:Package.Name.to_string
+      in
+      let rules = Rules.collect_unit (fun () -> setup_toplevel_index_mld sctx) in
       Memo.return
         (Build_config.Gen_rules.make
            ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-           (Memo.return Rules.empty))
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton
+                ~dir
+                (Subdir_set.of_list pkg_subdirs))
+           rules)
+    | [ "_mlds"; pkg_name ] -> has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
+    | [ "_odoc" ] ->
+      (* Root odoc directory - compile toplevel index and allow package subdirs *)
+      let* packages = Dune_load.packages () in
+      let pkg_subdirs =
+        Package.Name.Map.keys packages |> List.map ~f:Package.Name.to_string
+      in
+      let rules = Rules.collect_unit (fun () -> setup_toplevel_index_compile sctx) in
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton
+                ~dir
+                (Subdir_set.of_list pkg_subdirs))
+           rules)
     | [ "_odoc"; pkg_or_lib_name ] ->
       (* Compilation: use unified handler *)
       handle_package_artifacts sctx ~dir ~path_prefix:"_odoc" pkg_or_lib_name
@@ -2883,12 +2956,19 @@ let gen_rules sctx ~dir rest =
         ];
       Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
     | [ "_odocls" ] ->
-      (* Root odocls directory - allow subdirs *)
+      (* Root odocls directory - link toplevel index and allow package subdirs *)
+      let* packages = Dune_load.packages () in
+      let pkg_subdirs =
+        Package.Name.Map.keys packages |> List.map ~f:Package.Name.to_string
+      in
+      let rules = Rules.collect_unit (fun () -> setup_toplevel_index_link sctx) in
       Memo.return
         (Build_config.Gen_rules.make
            ~build_dir_only_sub_dirs:
-             (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
-           (Memo.return Rules.empty))
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton
+                ~dir
+                (Subdir_set.of_list pkg_subdirs))
+           rules)
     | [ "_odocls"; pkg_or_lib_name ] ->
       (* Linking: use unified handler *)
       handle_package_artifacts sctx ~dir ~path_prefix:"_odocls" pkg_or_lib_name
@@ -2921,7 +3001,12 @@ let gen_rules sctx ~dir rest =
           let html_root = Paths.html_root ctx Doc_mode.Full in
           Sherlodoc.sherlodoc_dot_js sctx ~dir:html_root
           >>> setup_css_rule sctx ~mode:Doc_mode.Full
-          >>> Memo.return ())
+          >>> setup_toplevel_index_html sctx Doc_mode.Full
+          >>> Memo.parallel_iter Output_format.all ~f:(fun output ->
+            let artifact = toplevel_index_artifact ctx packages in
+            let html_file = Output_format.target ctx Doc_mode.Full output artifact in
+            let alias = Dep.format_alias output Doc_mode.Full ctx Toplevel in
+            Dep.add_file_deps alias [ Path.build html_file ]))
       in
       Memo.return
         (Build_config.Gen_rules.make
