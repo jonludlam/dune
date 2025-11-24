@@ -598,80 +598,48 @@ let stdlib_lib ctx =
   Lib.DB.find public_libs (Lib_name.of_string "stdlib")
 ;;
 
-let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
-  (* Debug: inspect what's in requires at the start *)
-  let () =
-    match Resolve.peek requires with
-    | Ok libs_list ->
-      let lib_names =
-        List.map libs_list ~f:(fun lib -> Lib_name.to_string (Lib.name lib))
-      in
-      Log.info
-        [ Pp.textf
-            "odoc_include_flags: Called with %d libs: %s"
-            (List.length libs_list)
-            (String.concat ~sep:", " lib_names)
-        ]
-    | Error _ -> Log.info [ Pp.textf "odoc_include_flags: Called with Error requires" ]
+(* Common helper to get library paths with optional stdlib *)
+let get_lib_paths ctx ~stdlib_opt requires pkg_discovery =
+  let open Resolve.O in
+  let+ libs = requires in
+  (* Add stdlib to the list of libraries if provided and not already present *)
+  let libs =
+    match stdlib_opt with
+    | Some stdlib ->
+      if
+        List.exists libs ~f:(fun lib ->
+          Lib_name.equal (Lib.name lib) (Lib.name stdlib))
+      then libs
+      else stdlib :: libs
+    | None -> libs
   in
+  List.filter_map libs ~f:(fun lib ->
+    match Lib.Local.of_lib lib with
+    | None ->
+      (* Installed library *)
+      let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
+      Option.map lib_pkg_opt ~f:(fun lib_pkg -> lib, Paths.odocs ctx (Lib (lib_pkg, lib)))
+    | Some local_lib ->
+      (* Local library *)
+      let lib_t = Lib.Local.to_lib local_lib in
+      let lib_info = Lib.info lib_t in
+      let target =
+        match Lib_info.package lib_info with
+        | Some pkg -> Lib (pkg, lib_t)
+        | None ->
+          let lib_unique_name = lib_unique_name local_lib in
+          Private_lib (lib_unique_name, lib_t)
+      in
+      Some (lib, Paths.odocs ctx target))
+;;
+
+let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
   Resolve.args
     (let open Resolve.O in
-     let+ libs = requires in
-     (* Add stdlib to the list of libraries if provided and not already present *)
-     let libs =
-       match stdlib_opt with
-       | Some stdlib ->
-         if
-           List.exists libs ~f:(fun lib ->
-             Lib_name.equal (Lib.name lib) (Lib.name stdlib))
-         then libs (* stdlib already in list, don't add it again *)
-         else stdlib :: libs
-       | None -> libs
-     in
+     let+ lib_paths = get_lib_paths ctx ~stdlib_opt requires pkg_discovery in
      let paths =
-       List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
-         match Lib.Local.of_lib lib with
-         | None ->
-           (* Installed library - add v3 path: _odoc/{package}/{library} *)
-           (* Use Package_discovery to get the correct opam package name *)
-           let lib_name = Lib.name lib in
-           let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
-           Log.info
-             [ Pp.textf
-                 "odoc_include_flags: Processing installed library %s"
-                 (Lib_name.to_string lib_name)
-             ];
-           (match lib_pkg_opt with
-            | Some lib_pkg ->
-              let installed_odoc_path = Paths.odocs ctx (Lib (lib_pkg, lib)) in
-              Log.info
-                [ Pp.textf
-                    "odoc_include_flags: Adding include path for %s (opam pkg=%s): %s"
-                    (Lib_name.to_string lib_name)
-                    (Package.Name.to_string lib_pkg)
-                    (Path.Build.to_string installed_odoc_path)
-                ];
-              Path.Set.add paths (Path.build installed_odoc_path)
-            | None ->
-              Log.info
-                [ Pp.textf
-                    "odoc_include_flags: Library %s has no opam package, skipping"
-                    (Lib_name.to_string lib_name)
-                ];
-              paths)
-         | Some local_lib ->
-           let lib_t = Lib.Local.to_lib local_lib in
-           let lib_info = Lib.info lib_t in
-           let target =
-             (* For local libraries, Lib_info.package is accurate *)
-             match Lib_info.package lib_info with
-             | Some pkg -> Lib (pkg, lib_t)
-             | None ->
-               (* Private library without a package *)
-               let lib_unique_name = lib_unique_name local_lib in
-               Private_lib (lib_unique_name, lib_t)
-           in
-           Path.Set.add paths (Path.build (Paths.odocs ctx target)))
+       List.fold_left lib_paths ~init:Path.Set.empty ~f:(fun paths (_lib, path) ->
+         Path.Set.add paths (Path.build path))
      in
      let paths =
        match pkg with
@@ -685,70 +653,27 @@ let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
 
 (* Generate -L library:path flags for odoc link
    These tell odoc where to find .odocl files for library dependencies *)
-let odoc_lib_flags _ctx ~stdlib_opt requires pkg_discovery =
+let odoc_lib_flags ctx ~stdlib_opt requires pkg_discovery =
   Resolve.args
     (let open Resolve.O in
-     let+ libs = requires in
-     (* Add stdlib to the list of libraries if provided and not already present *)
-     let libs =
-       match stdlib_opt with
-       | Some stdlib ->
-         if
-           List.exists libs ~f:(fun lib ->
-             Lib_name.equal (Lib.name lib) (Lib.name stdlib))
-         then libs (* stdlib already in list, don't add it again *)
-         else stdlib :: libs
-       | None -> libs
-     in
-     (* Build a map to deduplicate by library name *)
+     let+ lib_paths = get_lib_paths ctx ~stdlib_opt requires pkg_discovery in
+     (* Deduplicate by library name and make paths relative *)
      let lib_paths_map =
-       List.fold_left libs ~init:Lib_name.Map.empty ~f:(fun acc lib ->
+       List.fold_left lib_paths ~init:Lib_name.Map.empty ~f:(fun acc (lib, odoc_dir) ->
          let lib_name = Lib.name lib in
-         let lib_name_str = Lib_name.to_string lib_name in
-         (* Skip if already in map *)
          if Lib_name.Map.mem acc lib_name
          then acc
          else (
-           match Lib.Local.of_lib lib with
-           | None ->
-             (* Installed library - use _odoc/{package}/{library} path *)
-             let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
-             (match lib_pkg_opt with
-              | Some lib_pkg ->
-                (* Get the library's odoc directory path using Paths.odocs *)
-                let target = Lib (lib_pkg, lib) in
-                let odoc_dir = Paths.odocs _ctx target in
-                (* Make path relative to html_root (_doc/_html)
-                   Paths.odocs returns _build/default/_doc/_odoc/pkg/lib
-                   We need ../_odoc/pkg/lib relative to _build/default/_doc/_html *)
-                let odoc_path = Path.Build.to_string odoc_dir in
-                let odoc_path_rel =
-                  match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
-                  | Some suffix -> "../" ^ suffix
-                  | None -> odoc_path (* Fallback to absolute if prefix doesn't match *)
-                in
-                let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
-                Lib_name.Map.set acc lib_name lib_path_arg
-              | None -> acc)
-           | Some local_lib ->
-             (* Local library - use library's odoc path *)
-             let lib_pkg = Lib_info.package (Lib.Local.info local_lib) in
-             (match lib_pkg with
-              | Some pkg ->
-                (* Get the library's odoc directory path using Paths.odocs *)
-                let target = Lib (pkg, lib) in
-                let odoc_dir = Paths.odocs _ctx target in
-                (* Make path relative to html_root (_doc/_html)
-                   Paths.odocs returns _build/default/_doc/_odoc/... *)
-                let odoc_path = Path.Build.to_string odoc_dir in
-                let odoc_path_rel =
-                  match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
-                  | Some suffix -> "../" ^ suffix
-                  | None -> odoc_path (* Fallback to absolute if prefix doesn't match *)
-                in
-                let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
-                Lib_name.Map.set acc lib_name lib_path_arg
-              | None -> acc)))
+           let lib_name_str = Lib_name.to_string lib_name in
+           (* Make path relative to html_root (_doc/_html) *)
+           let odoc_path = Path.Build.to_string odoc_dir in
+           let odoc_path_rel =
+             match String.drop_prefix odoc_path ~prefix:"_build/default/_doc/" with
+             | Some suffix -> "../" ^ suffix
+             | None -> odoc_path
+           in
+           let lib_path_arg = lib_name_str ^ ":" ^ odoc_path_rel in
+           Lib_name.Map.set acc lib_name lib_path_arg))
      in
      (* Convert map to args *)
      let lib_args =
