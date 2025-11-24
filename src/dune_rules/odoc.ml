@@ -643,12 +643,7 @@ let odoc_include_flags ctx pkg ~stdlib_opt requires pkg_discovery =
              ];
            (match lib_pkg_opt with
             | Some lib_pkg ->
-              let installed_odoc_path =
-                Paths.root ctx
-                ++ "_odoc"
-                ++ Package.Name.to_string lib_pkg
-                ++ Lib_name.to_string lib_name
-              in
+              let installed_odoc_path = Paths.odocs ctx (Lib (lib_pkg, lib)) in
               Log.info
                 [ Pp.textf
                     "odoc_include_flags: Adding include path for %s (opam pkg=%s): %s"
