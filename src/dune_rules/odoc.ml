@@ -1014,7 +1014,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
 
    For Module artifacts, we use `odoc compile-deps` to determine intra-library module dependencies.
    For Page artifacts (mld files), we compile directly without module dependencies. *)
-let compile_artifact sctx ~artifact ~lib_artifacts =
+let compile_artifact sctx ~artifact ~lib_artifacts ~package_lib_names =
   let ctx = Super_context.context sctx in
   let compile_dir = Context.build_dir ctx in
   let source_file =
@@ -1133,6 +1133,15 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
           not (Lib_name.equal (Lib.name dep_lib) (Lib.name lib))))
     | Pkg _ -> requires_closure
   in
+  (* For libraries in a package, filter out dependencies on other libraries in the same package.
+     Module-level dependencies from odoc compile-deps will handle the actual file dependencies.
+     This prevents circular dependencies when libraries in the same package have circular module deps
+     (e.g., OCaml's compiler-libs where compiler-libs.common's Meta depends on compiler-libs.bytecomp's Instruct). *)
+  let requires_for_lib_deps =
+    Resolve.map requires_from_deps ~f:(fun all_libs ->
+      List.filter all_libs ~f:(fun dep_lib ->
+        not (Lib_name.Set.mem package_lib_names (Lib.name dep_lib))))
+  in
   let requires = requires_from_deps in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   (* For installed packages or vendored libraries, suppress output (both stdout and stderr) *)
@@ -1147,8 +1156,9 @@ let compile_artifact sctx ~artifact ~lib_artifacts =
   in
   (* Create dependencies on all required libraries' .odoc files (via .odoc-all aliases)
      IMPORTANT: Pass None for pkg during compilation to avoid creating a dependency cycle
-     on our own package's .odoc-all alias. The package alias is only needed during linking. *)
-  let lib_deps = Dep.deps ctx None requires in
+     on our own package's .odoc-all alias. The package alias is only needed during linking.
+     Use requires_for_lib_deps which excludes libraries in the same package. *)
+  let lib_deps = Dep.deps ctx None requires_for_lib_deps in
   let run_odoc =
     let open Action_builder.With_targets.O in
     (* Suppress output for installed packages *)
@@ -2305,7 +2315,7 @@ let handle_package_artifacts sctx ~dir ~path_prefix pkg_or_lib_name =
         (* Compile all artifacts (libraries and package pages) *)
         let* () =
           Memo.parallel_iter all_artifacts ~f:(fun artifact ->
-            compile_artifact sctx ~artifact ~lib_artifacts:all_artifacts)
+            compile_artifact sctx ~artifact ~lib_artifacts:all_artifacts ~package_lib_names:all_lib_names)
         in
         (* Add compiled .odoc files to .odoc-all aliases for each target *)
         let* () =
