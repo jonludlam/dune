@@ -78,6 +78,7 @@ type artifact_kind =
   | Module of
       { visible : bool
       ; module_name : Module_name.t
+      ; archive : string (* Which archive the module belongs to *)
       }
   | Page of
       { name : string
@@ -87,11 +88,7 @@ type artifact_kind =
 
 type artifact_source =
   | Local_source of Path.Build.t (* cmti, cmt, mld from local build *)
-  | Installed_source of
-      { src_path : Path.t (* From Lib_info.src_dir *)
-      ; module_name : string
-      ; archive : string (* Which archive it belongs to *)
-      }
+  | Installed_source of { src_path : Path.t (* From Lib_info.src_dir *) }
 
 (* Check if a library is vendored using dune's vendored_dirs mechanism *)
 let is_lib_vendored lib =
@@ -260,8 +257,8 @@ end = struct
     | Page { name; _ }, _ -> snd (split_page_name name)
     | Module _, Local_source src_path ->
       Path.Build.basename src_path |> Filename.remove_extension
-    | Module _, Installed_source { module_name = mod_str; _ } ->
-      String.uncapitalize_ascii mod_str
+    | Module { module_name; _ }, Installed_source _ ->
+      Module_name.to_string module_name |> String.uncapitalize_ascii
   ;;
 
   let doc_file ctx t ~dir_fn ~extension =
@@ -1286,7 +1283,7 @@ let library_index_content_from_artifacts ~lib_name ~artifacts =
       if Artifact.hidden artifact then None
       else
         match Artifact.kind artifact with
-        | Module { visible = true; module_name } -> Some module_name
+        | Module { visible = true; module_name; _ } -> Some module_name
         | Module { visible = false; _ } | Page _ -> None)
     |> List.sort ~compare:Module_name.compare
   in
@@ -1526,16 +1523,13 @@ let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : Artifact.t list Me
       in
       (* Include all mld files, including index.mld if hand-written *)
       let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-      let pkg_name_str = Package.Name.to_string pkg in
       let kind = Page { name = page_name_with_path; pkg_libs } in
       let target = Pkg pkg in
       Memo.return
         (Some
            (Artifact.create
               ~kind
-              ~source:
-                (Installed_source
-                   { src_path = mld_path; module_name = page_name_with_path; archive = pkg_name_str })
+              ~source:(Installed_source { src_path = mld_path })
               ~target
               ~odoc_config)))
   in
@@ -1617,13 +1611,19 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : Artifact.t 
           | Some src_path ->
             (* Determine visibility: entry modules are visible, others are hidden *)
             let visible = List.mem entry_module_names module_name ~equal:String.equal in
-            let kind = Module { visible; module_name = Module_name.of_string module_name } in
+            let kind =
+              Module
+                { visible
+                ; module_name = Module_name.of_string module_name
+                ; archive = default_archive
+                }
+            in
             let target = Lib (pkg, lib) in
             Memo.return
               (Some
                  (Artifact.create
                     ~kind
-                    ~source:(Installed_source { src_path; module_name; archive = default_archive })
+                    ~source:(Installed_source { src_path })
                     ~target
                     ~odoc_config))
           | None ->
@@ -1641,10 +1641,15 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : Artifact.t 
 
 (* Create an artifact for a local library module *)
 let create_artifact_module ~target ~local_lib ~module_ ~odoc_config =
+  (* Get archive name from library *)
+  let lib = Lib.Local.to_lib local_lib in
+  let lib_name = Lib.name lib in
+  let archive = Lib_name.to_string lib_name in
   let kind =
     Module
       { visible = Module.visibility module_ = Visibility.Public
       ; module_name = Module.name module_
+      ; archive
       }
   in
   let obj_dir = Lib.Local.obj_dir local_lib in
