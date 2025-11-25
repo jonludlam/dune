@@ -1441,32 +1441,36 @@ let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : Artifact.t list Me
   let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
   let* pkg_mld_artifacts =
     Memo.List.filter_map mld_files ~f:(fun mld_path ->
-      (* Extract hierarchical path from full path by looking for "odoc-pages/" prefix
-         Example: /path/to/doc/odoc/odoc-pages/deprecated/index.mld
+      (* Extract hierarchical path from full path by looking for "odoc-pages" component.
+         Example: /path/to/doc/pkg/odoc-pages/deprecated/index.mld
          We want to extract "deprecated/index" *)
-      let path_str = Path.to_string mld_path in
-      (* Split on "/" and find "odoc-pages" to get the relative path after it *)
-      let parts = String.split path_str ~on:'/' in
       let page_name_with_path =
-        (* Find the "odoc-pages" segment and take everything after it *)
-        let rec find_odoc_pages = function
-          | [] -> None
-          | "odoc-pages" :: rest -> Some rest
-          | _ :: rest -> find_odoc_pages rest
+        (* Walk up the path to find the odoc-pages ancestor directory *)
+        let rec find_odoc_pages_ancestor p =
+          match Path.parent p with
+          | None -> None
+          | Some parent ->
+            if Path.basename parent = "odoc-pages"
+            then Some parent
+            else find_odoc_pages_ancestor parent
         in
-        match find_odoc_pages parts with
-        | Some rest ->
-          (* Join the parts after odoc-pages and remove .mld extension *)
-          let relative_path = String.concat ~sep:"/" rest in
-          (match String.drop_suffix relative_path ~suffix:".mld" with
-           | Some n -> n
-           | None -> relative_path)
+        match find_odoc_pages_ancestor mld_path with
+        | Some odoc_pages_dir ->
+          (* Get the relative path from odoc-pages directory *)
+          (match Path.descendant mld_path ~of_:odoc_pages_dir with
+           | Some rel_path ->
+             (* Path.to_string always uses forward slashes internally, which is what odoc expects.
+                Remove .mld extension. *)
+             let rel_str = Path.to_string rel_path in
+             (match Filename.remove_extension rel_str with
+              | "" -> rel_str
+              | s -> s)
+           | None ->
+             (* Shouldn't happen, but fallback to basename *)
+             Path.basename mld_path |> Filename.remove_extension)
         | None ->
-          (* Fallback to basename if pattern not found *)
-          let mld_basename = Path.basename mld_path in
-          (match String.drop_suffix mld_basename ~suffix:".mld" with
-           | Some n -> n
-           | None -> mld_basename)
+          (* odoc-pages not found in path, use basename *)
+          Path.basename mld_path |> Filename.remove_extension
       in
       (* Include all mld files, including index.mld if hand-written *)
       let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
