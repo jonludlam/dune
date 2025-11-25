@@ -158,6 +158,12 @@ module Paths = struct
   ;;
 
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
+
+  let lib_mld_dir ctx pkg lib_name =
+    gen_mld_dir ctx pkg ++ Lib_name.to_string lib_name
+  ;;
+
+  let lib_index_mld ctx pkg lib_name = lib_mld_dir ctx pkg lib_name ++ "index.mld"
   let odoc_support ctx mode = html_root ctx mode ++ odoc_support_dirname
   let toplevel_index_mld ctx = root ctx ++ "_mlds" ++ "index.mld"
 
@@ -1248,6 +1254,26 @@ module Toplevel_index = struct
   ;;
 end
 
+let library_index_content ~lib_name ~modules =
+  let b = Buffer.create 256 in
+  Printf.bprintf b "@toc_status hidden\n";
+  Printf.bprintf b "@order_category libraries\n";
+  Printf.bprintf b "{0 Library [%s]}\n" (Lib_name.to_string lib_name);
+  (* Add module list - only public modules *)
+  let public_modules =
+    List.filter modules ~f:(fun m -> Module.visibility m = Visibility.Public)
+    |> List.sort ~compare:(fun x y ->
+      Module_name.compare (Module.name x) (Module.name y))
+  in
+  if not (List.is_empty public_modules) then (
+    Printf.bprintf b "{!modules:";
+    List.iter public_modules ~f:(fun m ->
+      Printf.bprintf b " %s" (Module_name.to_string (Module.name m)));
+    Printf.bprintf b "}\n"
+  );
+  Buffer.contents b
+;;
+
 let libs_of_pkg ctx ~pkg =
   let+ { Scope.DB.Lib_entry.Set.libraries; _ } =
     Scope.DB.lib_entries_of_package ctx pkg
@@ -1413,48 +1439,52 @@ let entry_modules sctx ~pkg =
 let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : Artifact.t list Memo.t =
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
-  Memo.List.filter_map mld_files ~f:(fun mld_path ->
-    (* Extract hierarchical path from full path by looking for "odoc-pages/" prefix
-       Example: /path/to/doc/odoc/odoc-pages/deprecated/index.mld
-       We want to extract "deprecated/index" *)
-    let path_str = Path.to_string mld_path in
-    (* Split on "/" and find "odoc-pages" to get the relative path after it *)
-    let parts = String.split path_str ~on:'/' in
-    let page_name_with_path =
-      (* Find the "odoc-pages" segment and take everything after it *)
-      let rec find_odoc_pages = function
-        | [] -> None
-        | "odoc-pages" :: rest -> Some rest
-        | _ :: rest -> find_odoc_pages rest
+  let* pkg_mld_artifacts =
+    Memo.List.filter_map mld_files ~f:(fun mld_path ->
+      (* Extract hierarchical path from full path by looking for "odoc-pages/" prefix
+         Example: /path/to/doc/odoc/odoc-pages/deprecated/index.mld
+         We want to extract "deprecated/index" *)
+      let path_str = Path.to_string mld_path in
+      (* Split on "/" and find "odoc-pages" to get the relative path after it *)
+      let parts = String.split path_str ~on:'/' in
+      let page_name_with_path =
+        (* Find the "odoc-pages" segment and take everything after it *)
+        let rec find_odoc_pages = function
+          | [] -> None
+          | "odoc-pages" :: rest -> Some rest
+          | _ :: rest -> find_odoc_pages rest
+        in
+        match find_odoc_pages parts with
+        | Some rest ->
+          (* Join the parts after odoc-pages and remove .mld extension *)
+          let relative_path = String.concat ~sep:"/" rest in
+          (match String.drop_suffix relative_path ~suffix:".mld" with
+           | Some n -> n
+           | None -> relative_path)
+        | None ->
+          (* Fallback to basename if pattern not found *)
+          let mld_basename = Path.basename mld_path in
+          (match String.drop_suffix mld_basename ~suffix:".mld" with
+           | Some n -> n
+           | None -> mld_basename)
       in
-      match find_odoc_pages parts with
-      | Some rest ->
-        (* Join the parts after odoc-pages and remove .mld extension *)
-        let relative_path = String.concat ~sep:"/" rest in
-        (match String.drop_suffix relative_path ~suffix:".mld" with
-         | Some n -> n
-         | None -> relative_path)
-      | None ->
-        (* Fallback to basename if pattern not found *)
-        let mld_basename = Path.basename mld_path in
-        (match String.drop_suffix mld_basename ~suffix:".mld" with
-         | Some n -> n
-         | None -> mld_basename)
-    in
-    (* Include all mld files, including index.mld if hand-written *)
-    let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-    let pkg_name_str = Package.Name.to_string pkg in
-    let kind = Page { name = page_name_with_path; pkg_libs } in
-    let target = Pkg pkg in
-    Memo.return
-      (Some
-         (Artifact.create
-            ~kind
-            ~source:
-              (Installed_source
-                 { src_path = mld_path; module_name = page_name_with_path; archive = pkg_name_str })
-            ~target
-            ~odoc_config)))
+      (* Include all mld files, including index.mld if hand-written *)
+      let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
+      let pkg_name_str = Package.Name.to_string pkg in
+      let kind = Page { name = page_name_with_path; pkg_libs } in
+      let target = Pkg pkg in
+      Memo.return
+        (Some
+           (Artifact.create
+              ~kind
+              ~source:
+                (Installed_source
+                   { src_path = mld_path; module_name = page_name_with_path; archive = pkg_name_str })
+              ~target
+              ~odoc_config)))
+  in
+  (* Library index.mld artifacts for installed packages - not yet implemented *)
+  Memo.return pkg_mld_artifacts
 ;;
 
 (* Discover modules for an installed library and create artifacts *)
@@ -1633,6 +1663,88 @@ let check_mlds_no_dupes ~pkg ~mlds =
       ]
 ;;
 
+let default_index ~pkg entry_modules =
+  let b = Buffer.create 512 in
+  Printf.bprintf b "{0 %s index}\n" (Package.Name.to_string pkg);
+  Lib.Local.Map.to_list entry_modules
+  |> List.sort ~compare:(fun (x, _) (y, _) ->
+    let name lib = Lib.name (Lib.Local.to_lib lib) in
+    Lib_name.compare (name x) (name y))
+  |> List.iter ~f:(fun (lib, modules) ->
+    let lib = Lib.Local.to_lib lib in
+    Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string (Lib.name lib));
+    Buffer.add_string
+      b
+      (match modules with
+       | [ x ] ->
+         sprintf
+           "The entry point of this library is the module:\n{!module-%s}.\n"
+           (Module_name.to_string (Module.name x))
+       | _ ->
+         sprintf
+           "This library exposes the following toplevel modules:\n{!modules:%s}\n"
+           (modules
+            |> List.filter ~f:(fun m -> Module.visibility m = Visibility.Public)
+            |> List.sort ~compare:(fun x y ->
+              Module_name.compare (Module.name x) (Module.name y))
+            |> List.map ~f:(fun m -> Module_name.to_string (Module.name m))
+            |> String.concat ~sep:" ")));
+  Buffer.contents b
+;;
+
+let package_mlds =
+  let memo =
+    Memo.create
+      "package-mlds"
+      ~input:(module Super_context.As_memo_key.And_package_name)
+      (fun (sctx, pkg) ->
+         Rules.collect (fun () ->
+           let* mlds_list = Packages.mlds sctx pkg in
+           (* Convert mld list to (path, name) pairs *)
+           let mlds_pairs =
+             List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
+               let in_doc_str = Path.Local.to_string mld.in_doc in
+               let name = Filename.remove_extension in_doc_str in
+               mld.path, name)
+           in
+           let mlds = check_mlds_no_dupes ~pkg ~mlds:mlds_pairs in
+           let ctx = Super_context.context sctx in
+           let* mlds =
+             if String.Map.mem mlds "index.mld"
+             then Memo.return mlds
+             else (
+               let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
+               let* entry_modules = entry_modules sctx ~pkg in
+               let+ () =
+                 add_rule
+                   sctx
+                   (Action_builder.write_file gen_mld (default_index ~pkg entry_modules))
+               in
+               String.Map.set mlds "index.mld" (gen_mld, "index.mld"))
+           in
+           (* Generate library index.mld files for all libraries in the package *)
+           let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
+           let+ mlds =
+             Memo.List.fold_left local_libs ~init:mlds ~f:(fun mlds local_lib ->
+               let lib = Lib.Local.to_lib local_lib in
+               let lib_name = Lib.name lib in
+               let lib_index_key = sp "%s/index.mld" (Lib_name.to_string lib_name) in
+               if String.Map.mem mlds lib_index_key
+               then Memo.return mlds
+               else (
+                 (* Generate library index.mld *)
+                 let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
+                 let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
+                 let index_mld_path = Paths.lib_index_mld ctx pkg lib_name in
+                 let content = library_index_content ~lib_name ~modules in
+                 let+ () = add_rule sctx (Action_builder.write_file index_mld_path content) in
+                 String.Map.set mlds lib_index_key (index_mld_path, lib_index_key)))
+           in
+           mlds))
+  in
+  fun sctx ~pkg -> Memo.exec memo (sctx, pkg)
+;;
+
 (* Helper function to compile artifacts for a single library with proper dependencies *)
 (* Discover ALL artifacts for a package identifier (either a v3 package name or v2 lib_unique_name).
    For v3 packages: returns artifacts for all libraries in the package + package-level mld files
@@ -1694,36 +1806,58 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
       in
       let pkg_libs = List.map local_libs ~f:Lib.Local.to_lib in
       let* pkg_artifacts =
-        let+ mlds_list = Packages.mlds sctx pkg in
-        (* Convert mld list to (path, in_doc, name) triples, preserving hierarchy *)
-        let mlds_triples =
-          List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
-            (* Use full in_doc path to preserve hierarchy, e.g. "deprecated/index.mld" *)
+        (* Get source mld files and compute what library indices will be generated.
+           Don't call package_mlds here as it would generate rules (rules are generated
+           in handle_mlds_dir). We just need to know what artifacts will exist. *)
+        let* source_mlds = Packages.mlds sctx pkg in
+        let target = Pkg pkg in
+        let ctx = Super_context.context sctx in
+
+        (* Create artifacts for source mlds *)
+        let source_artifacts =
+          List.map source_mlds ~f:(fun (mld : Doc_sources.mld) ->
             let in_doc_str = Path.Local.to_string mld.in_doc in
             let name = Filename.remove_extension in_doc_str in
-            mld.path, mld.in_doc, name)
+            let kind = Page { name; pkg_libs } in
+            Artifact.create ~kind ~source:(Local_source mld.path) ~target ~odoc_config)
         in
-        (* Check for duplicates using the hierarchical name *)
-        let mlds_map =
-          List.fold_left
-            mlds_triples
-            ~init:String.Map.empty
-            ~f:(fun acc (path, in_doc, name) -> String.Map.set acc name (path, in_doc))
+
+        (* Create artifacts for generated package index if it doesn't exist in sources *)
+        let has_index_mld =
+          List.exists source_mlds ~f:(fun (mld : Doc_sources.mld) ->
+            Path.Local.basename mld.in_doc = "index.mld"
+            && Path.Local.parent mld.in_doc = None)
         in
-        (* Add generated index.mld if not present *)
-        let mlds_map =
-          String.Map.update mlds_map "index" ~f:(function
-            | None ->
-              let gen_path = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-              let gen_in_doc = Path.Local.of_string "index.mld" in
-              Some (gen_path, gen_in_doc)
-            | Some _ as s -> s)
+        let package_index_artifact =
+          if has_index_mld then []
+          else
+            let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
+            let kind = Page { name = "index"; pkg_libs } in
+            [ Artifact.create ~kind ~source:(Local_source gen_mld) ~target ~odoc_config ]
         in
-        let target = Pkg pkg in
-        String.Map.to_list mlds_map
-        |> List.map ~f:(fun (mld_name, (mld_path, _in_doc)) ->
-          let kind = Page { name = mld_name; pkg_libs } in
-          Artifact.create ~kind ~source:(Local_source mld_path) ~target ~odoc_config)
+
+        (* Create artifacts for library index.mld files *)
+        let* library_index_artifacts =
+          Memo.List.map local_libs ~f:(fun local_lib ->
+            let lib = Lib.Local.to_lib local_lib in
+            let lib_name = Lib.name lib in
+            let lib_index_key = sp "%s/index.mld" (Lib_name.to_string lib_name) in
+            (* Check if there's a source mld for this library index *)
+            let has_source_lib_index =
+              List.exists source_mlds ~f:(fun (mld : Doc_sources.mld) ->
+                Path.Local.to_string mld.in_doc = lib_index_key)
+            in
+            if has_source_lib_index then
+              Memo.return None
+            else
+              let index_mld_path = Paths.lib_index_mld ctx pkg lib_name in
+              let name = sp "%s/index" (Lib_name.to_string lib_name) in
+              let kind = Page { name; pkg_libs } in
+              Memo.return (Some (Artifact.create ~kind ~source:(Local_source index_mld_path) ~target ~odoc_config)))
+        in
+        let library_index_artifacts = List.filter_map library_index_artifacts ~f:Fun.id in
+
+        Memo.return (source_artifacts @ package_index_artifact @ library_index_artifacts)
       in
       (* Get artifacts for all libraries in this package *)
       let* lib_artifacts_list =
@@ -2272,6 +2406,52 @@ let default_index_installed ~pkg lib_names =
   Buffer.contents b
 ;;
 
+(* Generate library index.mld for an installed library *)
+let generate_installed_lib_index sctx ctx ~pkg ~lib =
+  let lib_name = Lib.name lib in
+  let lib_name_str = Lib_name.to_string lib_name in
+  let pkg_name_str = Package.Name.to_string pkg in
+  (* Check if library has archives (modules) *)
+  let info = Lib.info lib in
+  let archives = Lib_info.archives info in
+  let archive_names =
+    let byte_archives = Mode.Dict.get archives Mode.Byte in
+    match byte_archives with
+    | [] -> if Lib_name.equal lib_name (Lib_name.of_string "stdlib") then [ "stdlib" ] else []
+    | archives -> List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
+  in
+  if List.is_empty archive_names
+  then Memo.return () (* Skip libraries with no modules *)
+  else (
+    (* Read classify file to get module names *)
+    let classify_path =
+      Paths.root ctx ++ "classify" ++ pkg_name_str ++ lib_name_str ++ "odoc.classify"
+    in
+    let* classify_content = Build_system.read_file (Path.build classify_path) in
+    let classify_lines = String.split_lines classify_content in
+    let all_module_names =
+      List.concat_map classify_lines ~f:(fun line ->
+        match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
+        | [] -> []
+        | archive :: mods ->
+          if List.mem archive_names archive ~equal:String.equal then mods else [])
+    in
+    if List.is_empty all_module_names
+    then Memo.return ()
+    else (
+      (* Generate library index content *)
+      let index_mld_path = Paths.lib_index_mld ctx pkg lib_name in
+      let b = Buffer.create 256 in
+      Printf.bprintf b "@toc_status hidden\n";
+      Printf.bprintf b "@order_category libraries\n";
+      Printf.bprintf b "{0 Library [%s]}\n" lib_name_str;
+      Printf.bprintf b "{!modules:";
+      List.iter all_module_names ~f:(fun m -> Printf.bprintf b " %s" m);
+      Printf.bprintf b "}\n";
+      let content = Buffer.contents b in
+      add_rule sctx (Action_builder.write_file index_mld_path content)))
+;;
+
 (* Expand a set of libraries with their odoc-config dependencies transitively.
    For each library, we look at its package's odoc-config.sexp and add:
    - Extra libraries listed in the config
@@ -2464,82 +2644,6 @@ let setup_package_aliases sctx (pkg : Package.t) =
   Memo.List.iter Doc_mode.all ~f:(fun mode ->
     Memo.parallel_iter Output_format.all ~f:(fun output ->
       setup_package_aliases_format sctx pkg output mode))
-;;
-
-let default_index ~pkg entry_modules =
-  let b = Buffer.create 512 in
-  Printf.bprintf b "{0 %s index}\n" (Package.Name.to_string pkg);
-  Lib.Local.Map.to_list entry_modules
-  |> List.sort ~compare:(fun (x, _) (y, _) ->
-    let name lib = Lib.name (Lib.Local.to_lib lib) in
-    Lib_name.compare (name x) (name y))
-  |> List.iter ~f:(fun (lib, modules) ->
-    let lib = Lib.Local.to_lib lib in
-    Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string (Lib.name lib));
-    Buffer.add_string
-      b
-      (match modules with
-       | [ x ] ->
-         sprintf
-           "The entry point of this library is the module:\n{!module-%s}.\n"
-           (Module_name.to_string (Module.name x))
-       | _ ->
-         sprintf
-           "This library exposes the following toplevel modules:\n{!modules:%s}\n"
-           (modules
-            |> List.filter ~f:(fun m -> Module.visibility m = Visibility.Public)
-            |> List.sort ~compare:(fun x y ->
-              Module_name.compare (Module.name x) (Module.name y))
-            |> List.map ~f:(fun m -> Module_name.to_string (Module.name m))
-            |> String.concat ~sep:" ")));
-  Buffer.contents b
-;;
-
-(* Stub function for reporting warnings - warnings are now handled by Packages.mlds *)
-let report_warnings (_ : Doc_sources.mld list) = ()
-
-(* Wrapper function to convert new Packages.mlds format to old format expected by interface *)
-let mlds sctx pkg =
-  let* mlds_list = Packages.mlds sctx pkg in
-  (* Convert mld list to (path, name) pairs, preserving hierarchical paths *)
-  let mlds_pairs =
-    List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
-      (* Use full in_doc path to preserve hierarchy (e.g., "deprecated/index.mld")
-         Remove .mld extension to get the page name *)
-      let in_doc_str = Path.Local.to_string mld.in_doc in
-      let name =
-        match String.drop_suffix in_doc_str ~suffix:".mld" with
-        | Some n -> n
-        | None -> Filename.remove_extension in_doc_str
-      in
-      mld.path, name)
-  in
-  Memo.return (mlds_pairs, mlds_list)
-;;
-
-let package_mlds =
-  let memo =
-    Memo.create
-      "package-mlds"
-      ~input:(module Super_context.As_memo_key.And_package_name)
-      (fun (sctx, pkg) ->
-         Rules.collect (fun () ->
-           let* mlds_pairs, _mlds_list = mlds sctx pkg in
-           let mlds = check_mlds_no_dupes ~pkg ~mlds:mlds_pairs in
-           let ctx = Super_context.context sctx in
-           if String.Map.mem mlds "index.mld"
-           then Memo.return mlds
-           else (
-             let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-             let* entry_modules = entry_modules sctx ~pkg in
-             let+ () =
-               add_rule
-                 sctx
-                 (Action_builder.write_file gen_mld (default_index ~pkg entry_modules))
-             in
-             String.Map.set mlds "index.mld" (gen_mld, "index.mld"))))
-  in
-  fun sctx ~pkg -> Memo.exec memo (sctx, pkg)
 ;;
 
 (* setup_package_odoc_rules removed - unused old function *)
@@ -2827,7 +2931,25 @@ let handle_mlds_dir sctx ~pkg_name =
       let lib_names = List.map truly_installed_libs ~f:Lib.name in
       let index_content = default_index_installed ~pkg lib_names in
       let index_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-      add_rule sctx (Action_builder.write_file index_mld index_content))
+      let* () = add_rule sctx (Action_builder.write_file index_mld index_content) in
+      (* Generate library index.mld files for installed libraries *)
+      let* existing_mld_files =
+        let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
+        Memo.return mld_files
+      in
+      Memo.List.iter truly_installed_libs ~f:(fun lib ->
+        let lib_name = Lib.name lib in
+        let lib_name_str = Lib_name.to_string lib_name in
+        let lib_index_pattern = lib_name_str ^ "/index.mld" in
+        (* Check if library already has an index.mld *)
+        let has_index =
+          List.exists existing_mld_files ~f:(fun mld_path ->
+            let path_str = Path.to_string mld_path in
+            String.is_suffix path_str ~suffix:lib_index_pattern)
+        in
+        if has_index
+        then Memo.return ()
+        else generate_installed_lib_index sctx ctx ~pkg ~lib))
 ;;
 
 (* NOTE: Old HTML generation functions (handle_html_dir, setup_pkg_html_rules,
@@ -2927,7 +3049,48 @@ let gen_rules sctx ~dir rest =
                 ~dir
                 (Subdir_set.of_list pkg_subdirs))
            rules)
-    | [ "_mlds"; pkg_name ] -> has_rules (fun () -> handle_mlds_dir sctx ~pkg_name)
+    | [ "_mlds"; pkg_name ] ->
+      (* Package mlds directory - generate mld files and allow library subdirs *)
+      let pkg = Package.Name.of_string pkg_name in
+      let* packages = Dune_load.packages () in
+      let* lib_subdirs =
+        match Package.Name.Map.find packages pkg with
+        | Some _ ->
+          (* Local package - get library names *)
+          let ctx = Super_context.context sctx in
+          let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
+          Memo.return
+            (List.map local_libs ~f:(fun lib ->
+               Lib.name (Lib.Local.to_lib lib) |> Lib_name.to_string))
+        | None ->
+          (* Installed package *)
+          let ctx = Super_context.context sctx in
+          let* pkg_discovery = Package_discovery.create ~context:ctx in
+          let installed_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+          Memo.return
+            (List.filter_map installed_libs ~f:(fun lib ->
+               match Lib.Local.of_lib lib with
+               | Some _ -> None
+               | None -> Some (Lib.name lib |> Lib_name.to_string)))
+      in
+      let rules = Rules.collect_unit (fun () -> handle_mlds_dir sctx ~pkg_name) in
+      Memo.return
+        (Build_config.Gen_rules.make
+           ~build_dir_only_sub_dirs:
+             (Build_config.Gen_rules.Build_only_sub_dirs.singleton
+                ~dir
+                (Subdir_set.of_list lib_subdirs))
+           rules)
+    | [ "_mlds"; pkg_name; lib_name ] ->
+      (* Library mld directory: _doc/_mlds/{package}/{library} *)
+      (* Redirect to parent - the package level handler generates rules for all libraries *)
+      Log.info
+        [ Pp.textf
+            "odoc v3: Library mlds directory for pkg=%s lib=%s - redirecting to parent"
+            pkg_name
+            lib_name
+        ];
+      Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
     | [ "_odoc" ] ->
       (* Root odoc directory - compile toplevel index and allow package subdirs *)
       let* packages = Dune_load.packages () in

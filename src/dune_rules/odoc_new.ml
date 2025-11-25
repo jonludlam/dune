@@ -1291,9 +1291,11 @@ let pkg_mlds sctx pkg =
   let* pkgs = Dune_load.packages () in
   if Package.Name.Map.mem pkgs pkg
   then
-    let+ res, warnings = Odoc.mlds sctx pkg in
-    let () = Odoc.report_warnings warnings in
-    List.map ~f:(fun (p, name) -> Path.build p, name) res
+    let+ mlds_list = Packages.mlds sctx pkg in
+    List.map mlds_list ~f:(fun (mld : Doc_sources.mld) ->
+      let in_doc_str = Path.Local.to_string mld.in_doc in
+      let name = Filename.remove_extension in_doc_str in
+      Path.build mld.path, name)
   else (
     let ctx = Super_context.context sctx in
     ext_package_mlds ctx pkg)
