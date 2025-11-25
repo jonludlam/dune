@@ -1254,21 +1254,23 @@ module Toplevel_index = struct
   ;;
 end
 
-let library_index_content ~lib_name ~modules =
+let library_index_content_from_artifacts ~lib_name ~artifacts =
   let b = Buffer.create 256 in
   Printf.bprintf b "@toc_status hidden\n";
   Printf.bprintf b "@order_category libraries\n";
   Printf.bprintf b "{0 Library [%s]}\n" (Lib_name.to_string lib_name);
-  (* Add module list - only public modules *)
-  let public_modules =
-    List.filter modules ~f:(fun m -> Module.visibility m = Visibility.Public)
-    |> List.sort ~compare:(fun x y ->
-      Module_name.compare (Module.name x) (Module.name y))
+  (* Extract visible modules from artifacts *)
+  let module_names =
+    List.filter_map artifacts ~f:(fun artifact ->
+      match Artifact.kind artifact with
+      | Module { visible = true; module_name } -> Some module_name
+      | Module { visible = false; _ } | Page _ -> None)
+    |> List.sort ~compare:Module_name.compare
   in
-  if not (List.is_empty public_modules) then (
+  if not (List.is_empty module_names) then (
     Printf.bprintf b "{!modules:";
-    List.iter public_modules ~f:(fun m ->
-      Printf.bprintf b " %s" (Module_name.to_string (Module.name m)));
+    List.iter module_names ~f:(fun m ->
+      Printf.bprintf b " %s" (Module_name.to_string m));
     Printf.bprintf b "}\n"
   );
   Buffer.contents b
@@ -1742,11 +1744,10 @@ let package_mlds =
                if String.Map.mem mlds lib_index_key
                then Memo.return mlds
                else (
-                 (* Generate library index.mld *)
-                 let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
-                 let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
+                 (* Generate library index.mld based on discovered artifacts *)
+                 let* artifacts = discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib in
                  let index_mld_path = Paths.lib_index_mld ctx pkg lib_name in
-                 let content = library_index_content ~lib_name ~modules in
+                 let content = library_index_content_from_artifacts ~lib_name ~artifacts in
                  let+ () = add_rule sctx (Action_builder.write_file index_mld_path content) in
                  String.Map.set mlds lib_index_key (index_mld_path, lib_index_key)))
            in
@@ -2418,47 +2419,16 @@ let default_index_installed ~pkg lib_names =
 (* Generate library index.mld for an installed library *)
 let generate_installed_lib_index sctx ctx ~pkg ~lib =
   let lib_name = Lib.name lib in
-  let lib_name_str = Lib_name.to_string lib_name in
-  let pkg_name_str = Package.Name.to_string pkg in
-  (* Check if library has archives (modules) *)
-  let info = Lib.info lib in
-  let archives = Lib_info.archives info in
-  let archive_names =
-    let byte_archives = Mode.Dict.get archives Mode.Byte in
-    match byte_archives with
-    | [] -> if Lib_name.equal lib_name (Lib_name.of_string "stdlib") then [ "stdlib" ] else []
-    | archives -> List.map archives ~f:(fun p -> Path.basename p |> Filename.remove_extension)
-  in
-  if List.is_empty archive_names
-  then Memo.return () (* Skip libraries with no modules *)
+  (* Discover artifacts for this installed library *)
+  let* artifacts = discover_installed_lib_artifacts sctx ctx ~pkg ~lib_name ~lib in
+  (* If no artifacts (no modules), skip generating index *)
+  if List.is_empty artifacts
+  then Memo.return ()
   else (
-    (* Read classify file to get module names *)
-    let classify_path =
-      Paths.root ctx ++ "classify" ++ pkg_name_str ++ lib_name_str ++ "odoc.classify"
-    in
-    let* classify_content = Build_system.read_file (Path.build classify_path) in
-    let classify_lines = String.split_lines classify_content in
-    let all_module_names =
-      List.concat_map classify_lines ~f:(fun line ->
-        match String.split line ~on:' ' |> List.filter ~f:(fun s -> not (String.is_empty s)) with
-        | [] -> []
-        | archive :: mods ->
-          if List.mem archive_names archive ~equal:String.equal then mods else [])
-    in
-    if List.is_empty all_module_names
-    then Memo.return ()
-    else (
-      (* Generate library index content *)
-      let index_mld_path = Paths.lib_index_mld ctx pkg lib_name in
-      let b = Buffer.create 256 in
-      Printf.bprintf b "@toc_status hidden\n";
-      Printf.bprintf b "@order_category libraries\n";
-      Printf.bprintf b "{0 Library [%s]}\n" lib_name_str;
-      Printf.bprintf b "{!modules:";
-      List.iter all_module_names ~f:(fun m -> Printf.bprintf b " %s" m);
-      Printf.bprintf b "}\n";
-      let content = Buffer.contents b in
-      add_rule sctx (Action_builder.write_file index_mld_path content)))
+    (* Generate library index from artifacts *)
+    let index_mld_path = Paths.lib_index_mld ctx pkg lib_name in
+    let content = library_index_content_from_artifacts ~lib_name ~artifacts in
+    add_rule sctx (Action_builder.write_file index_mld_path content))
 ;;
 
 (* Expand a set of libraries with their odoc-config dependencies transitively.
