@@ -1835,8 +1835,7 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
         (* Create artifacts for generated package index if it doesn't exist in sources *)
         let has_index_mld =
           List.exists source_mlds ~f:(fun (mld : Doc_sources.mld) ->
-            Path.Local.basename mld.in_doc = "index.mld"
-            && Path.Local.parent mld.in_doc = None)
+            Path.Local.to_string mld.in_doc = "index.mld")
         in
         let package_index_artifact =
           if has_index_mld then []
