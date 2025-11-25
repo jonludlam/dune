@@ -33,8 +33,10 @@ Build documentation with @doc (local-only mode):
 Check that local package HTML was built:
 
   $ find _build/default/_doc/_html -name "*.html" | grep -E "mylib|index" | sort
+  _build/default/_doc/_html/index.html
   _build/default/_doc/_html/mylib/index.html
   _build/default/_doc/_html/mylib/mylib/Mylib/index.html
+  _build/default/_doc/_html/mylib/mylib/index.html
 
 Build documentation with @doc-full (full mode):
 
@@ -43,8 +45,10 @@ Build documentation with @doc-full (full mode):
 Check that HTML was built in _html_full:
 
   $ find _build/default/_doc/_html_full -name "*.html" | grep -E "mylib|index" | sort
+  _build/default/_doc/_html_full/index.html
   _build/default/_doc/_html_full/mylib/index.html
   _build/default/_doc/_html_full/mylib/mylib/Mylib/index.html
+  _build/default/_doc/_html_full/mylib/mylib/index.html
   _build/default/_doc/_html_full/ocaml-compiler/compiler-libs.bytecomp/Bytegen/index.html
   _build/default/_doc/_html_full/ocaml-compiler/compiler-libs.bytecomp/Bytelibrarian/index.html
   _build/default/_doc/_html_full/ocaml-compiler/compiler-libs.bytecomp/Bytelink/Dep/index.html

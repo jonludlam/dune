@@ -9,7 +9,9 @@ Verify both libraries are documented:
 
   $ find _build/default/_doc/_odocls/mylib -name '*.odocl' | sort -n
   _build/default/_doc/_odocls/mylib/mylib.sub/mylib_sub.odocl
+  _build/default/_doc/_odocls/mylib/mylib.sub/page-index.odocl
   _build/default/_doc/_odocls/mylib/mylib/mylib.odocl
+  _build/default/_doc/_odocls/mylib/mylib/page-index.odocl
   _build/default/_doc/_odocls/mylib/page-index.odocl
 
 Check HTML structure for parent library:

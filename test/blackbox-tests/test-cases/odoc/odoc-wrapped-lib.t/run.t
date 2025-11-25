@@ -1,20 +1,25 @@
 This test generates documentation for non-hidden modules only for a library:
 
   $ dune build @doc
+  File "_doc/_mlds/foo/foo/index.mld", line 4, characters 0-25:
+  Warning: Failed to resolve reference unresolvedroot(Bar) Parent_module: Lookup failure (root module): Bar
 
  Hidden modules should be compiled
   $ find _build/default/_doc/_odoc/foo -name '*.odoc' | sort -n
   _build/default/_doc/_odoc/foo/foo/foo.odoc
   _build/default/_doc/_odoc/foo/foo/foo__.odoc
   _build/default/_doc/_odoc/foo/foo/foo__Bar.odoc
+  _build/default/_doc/_odoc/foo/foo/page-index.odoc
   _build/default/_doc/_odoc/foo/page-index.odoc
 
  Hidden modules should not be linked
   $ find _build/default/_doc/_odocls/foo -name '*.odocl' | sort -n
   _build/default/_doc/_odocls/foo/foo/foo.odocl
+  _build/default/_doc/_odocls/foo/foo/page-index.odocl
   _build/default/_doc/_odocls/foo/page-index.odocl
 
  We don't expect html for hidden modules
   $ find _build/default/_doc/_html/foo -name '*.html' | sort -n
   _build/default/_doc/_html/foo/foo/Foo/index.html
+  _build/default/_doc/_html/foo/foo/index.html
   _build/default/_doc/_html/foo/index.html

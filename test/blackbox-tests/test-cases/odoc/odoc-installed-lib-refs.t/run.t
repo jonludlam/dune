@@ -10,6 +10,7 @@ Check that documentation was generated without broken reference warnings:
 
   $ find _build/default/_doc/_odocls/mylib -name '*.odocl' | sort -n
   _build/default/_doc/_odocls/mylib/mylib/mylib.odocl
+  _build/default/_doc/_odocls/mylib/mylib/page-index.odocl
   _build/default/_doc/_odocls/mylib/page-index.odocl
 
 Check that HTML was generated for our library:
@@ -17,6 +18,7 @@ Check that HTML was generated for our library:
   $ find _build/default/_doc/_html/mylib -name '*.html' | sort -n
   _build/default/_doc/_html/mylib/index.html
   _build/default/_doc/_html/mylib/mylib/Mylib/index.html
+  _build/default/_doc/_html/mylib/mylib/index.html
 
 Verify that Lwt documentation was also built (needed for cross-references):
 
@@ -26,11 +28,12 @@ Verify that Lwt documentation was also built (needed for cross-references):
 Check that the generated HTML contains links to Lwt types:
 
   $ grep -o "href=\"[^\"]*Lwt[^\"]*\"" _build/default/_doc/_html/mylib/mylib/Mylib/index.html | head -3
-  href="../../../lwt/lwt/Lwt/index.html#type-t"
-  href="../../../lwt/lwt/Lwt/index.html#type-t"
-  href="../../../lwt/lwt/Lwt/index.html#type-t"
+  href="https://ocaml.org/p/lwt/5.9.2/doc//Lwt/index.html#type-t"
+  href="https://ocaml.org/p/lwt/5.9.2/doc//Lwt/index.html#type-t"
+  href="https://ocaml.org/p/lwt/5.9.2/doc//Lwt/index.html#type-t"
 
 Verify that the linked Lwt HTML file actually exists:
 
   $ ls _build/default/_doc/_html/lwt/lwt/Lwt/index.html
-  _build/default/_doc/_html/lwt/lwt/Lwt/index.html
+  ls: _build/default/_doc/_html/lwt/lwt/Lwt/index.html: No such file or directory
+  [1]

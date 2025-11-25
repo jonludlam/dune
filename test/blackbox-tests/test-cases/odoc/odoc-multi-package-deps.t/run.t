@@ -9,8 +9,10 @@ Verify documentation was generated for both packages:
 
   $ find _build/default/_doc/_odocls/{foo,bar} -name '*.odocl' | sort -n
   _build/default/_doc/_odocls/bar/bar.lib/barlib.odocl
+  _build/default/_doc/_odocls/bar/bar.lib/page-index.odocl
   _build/default/_doc/_odocls/bar/page-index.odocl
   _build/default/_doc/_odocls/foo/foo.lib/foolib.odocl
+  _build/default/_doc/_odocls/foo/foo.lib/page-index.odocl
   _build/default/_doc/_odocls/foo/page-index.odocl
 
 Check that HTML was generated for both libraries:
@@ -33,3 +35,4 @@ Check that the -P flags are passed correctly during linking (bar should be prese
   $ dune clean
   $ dune build @doc --verbose 2>&1 | grep "odoc link.*barlib.odocl" | grep -o "\-P [^ ]*" | sort | uniq
   -P bar:../_odoc/bar
+  -P foo:../_odoc/foo

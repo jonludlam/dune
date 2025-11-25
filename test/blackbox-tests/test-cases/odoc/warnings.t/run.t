@@ -33,6 +33,6 @@ In release mode, no error:
   (cd _build/default && odoc compile -I _doc/_odoc/ocaml-compiler/stdlib --output-dir _doc/_odoc --parent-id foo_doc --enable-missing-root-warning foo_doc/foo.mld)
   File "foo_doc/foo.mld", line 4, characters 0-0:
   Warning: End of text is not allowed in '[...]' (code).
-  (cd _build/default && odoc compile -I _doc/_odoc/ocaml-compiler/stdlib -I _doc/_odoc/foo_lib/foo_lib --output-dir _doc/_odoc --parent-id foo_lib/foo_lib --enable-missing-root-warning --unique-id foo_lib --warnings-tag foo_lib foo_lib/.foo.objs/byte/foo.cmti)
+  (cd _build/default && odoc compile -I _doc/_odoc/ocaml-compiler/stdlib -I _doc/_odoc/foo_lib/foo_lib --output-dir _doc/_odoc --parent-id foo_lib/foo_lib --enable-missing-root-warning --warnings-tag foo_lib foo_lib/.foo.objs/byte/foo.cmti)
   File "foo_lib/foo.mli", line 1, characters 7-7:
   Warning: End of text is not allowed in '[...]' (code).

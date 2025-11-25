@@ -1259,12 +1259,15 @@ let library_index_content_from_artifacts ~lib_name ~artifacts =
   Printf.bprintf b "@toc_status hidden\n";
   Printf.bprintf b "@order_category libraries\n";
   Printf.bprintf b "{0 Library [%s]}\n" (Lib_name.to_string lib_name);
-  (* Extract visible modules from artifacts *)
+  (* Extract non-hidden, visible modules from artifacts.
+     Artifact.hidden filters out implementation modules (Foo__Bar, Foo__). *)
   let module_names =
     List.filter_map artifacts ~f:(fun artifact ->
-      match Artifact.kind artifact with
-      | Module { visible = true; module_name } -> Some module_name
-      | Module { visible = false; _ } | Page _ -> None)
+      if Artifact.hidden artifact then None
+      else
+        match Artifact.kind artifact with
+        | Module { visible = true; module_name } -> Some module_name
+        | Module { visible = false; _ } | Page _ -> None)
     |> List.sort ~compare:Module_name.compare
   in
   if not (List.is_empty module_names) then (

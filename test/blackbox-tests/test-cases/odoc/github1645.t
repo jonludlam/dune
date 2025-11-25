@@ -33,3 +33,9 @@ built. See #1645.
   File "Module":
   Ambiguous lookup. Possible files: Module
   Module
+  File "Module":
+  Ambiguous lookup. Possible files: Module
+  Module
+  File "Module":
+  Ambiguous lookup. Possible files: Module
+  Module
