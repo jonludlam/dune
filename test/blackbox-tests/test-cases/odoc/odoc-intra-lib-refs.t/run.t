@@ -4,10 +4,6 @@ Module Foo references module Bar, both are submodules of the wraplib library.
 Build documentation:
 
   $ dune build @doc
-  File "_doc/_mlds/wraplib/wraplib/index.mld", line 4, characters 0-27:
-  Warning: Failed to resolve reference unresolvedroot(Foo) Parent_module: Lookup failure (root module): Foo
-  File "_doc/_mlds/wraplib/wraplib/index.mld", line 4, characters 0-27:
-  Warning: Failed to resolve reference unresolvedroot(Bar) Parent_module: Lookup failure (root module): Bar
 
 Verify documentation was generated (wrapped modules compile but don't link separately):
 
@@ -37,3 +33,8 @@ Verify that the main module exposes the submodules:
 
   $ ls _build/default/_doc/_html/wraplib/wraplib/Wraplib/Bar/index.html
   _build/default/_doc/_html/wraplib/wraplib/Wraplib/Bar/index.html
+
+Verify that all intra-library references resolved correctly (no unresolved xrefs):
+
+  $ grep -r "xref-unresolved" _build/default/_doc/_html/wraplib/wraplib/Wraplib/
+  [1]
