@@ -64,27 +64,29 @@ let lib_unique_name (local_lib : Lib.Local.t) =
   | Private (project, _) -> Scope_key.to_string name project
 ;;
 
-type target =
-  | Lib of Package.Name.t * Lib.t
+(* Artifact data types *)
+type page = { name : string; pkg_libs : Lib.t list }
+
+type mod_ =
+  { visible : bool
+  ; module_name : Module_name.t
+  ; archive : string (* Which archive the module belongs to *)
+  }
+
+(* GADT target - enforces that Module artifacts can only have Lib/Private_lib targets,
+   and Page artifacts can only have Pkg/Toplevel targets *)
+type _ target =
+  | Lib : Package.Name.t * Lib.t -> mod_ target
     (* Library with a real package - package overrides Lib_info.package for installed libs *)
-  | Private_lib of string * Lib.t
+  | Private_lib : string * Lib.t -> mod_ target
     (* Library without a real package - uses lib_unique_name as identifier *)
-  | Pkg of Package.Name.t
-  | Toplevel (* The toplevel index above all packages *)
+  | Pkg : Package.Name.t -> page target
+  | Toplevel : page target (* The toplevel index above all packages *)
 
-(* Artifact types - tracking documentation units through the pipeline *)
-
+(* Artifact kind - contains data and target together in an existential *)
 type artifact_kind =
-  | Module of
-      { visible : bool
-      ; module_name : Module_name.t
-      ; archive : string (* Which archive the module belongs to *)
-      }
-  | Page of
-      { name : string
-      ; pkg_libs : Lib.t list
-      }
-(* mld files - pkg_libs are the libraries to link with *)
+  | Module : mod_ * mod_ target -> artifact_kind
+  | Page : page * page target -> artifact_kind
 
 type artifact_source =
   | Local_source of Path.Build.t (* cmti, cmt, mld from local build *)
@@ -124,38 +126,41 @@ module Paths = struct
   let odoc_support_dirname = "odoc.support"
   let root (context : Context.t) = Path.Build.relative (Context.build_dir context) "_doc"
 
-  let odocs ctx = function
-    | Lib (pkg, lib) ->
-      let lib_name = Lib.name lib in
-      root ctx ++ "_odoc" ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-    | Private_lib (lib_unique_name, _) ->
-      root ctx ++ "_odoc" ++ lib_unique_name
-    | Pkg pkg -> root ctx ++ "_odoc" ++ Package.Name.to_string pkg
-    | Toplevel -> root ctx ++ "_odoc"
+  let odocs : type a. Context.t -> a target -> Path.Build.t =
+    fun ctx -> function
+      | Lib (pkg, lib) ->
+        let lib_name = Lib.name lib in
+        root ctx ++ "_odoc" ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+      | Private_lib (lib_unique_name, _) ->
+        root ctx ++ "_odoc" ++ lib_unique_name
+      | Pkg pkg -> root ctx ++ "_odoc" ++ Package.Name.to_string pkg
+      | Toplevel -> root ctx ++ "_odoc"
   ;;
 
   let html_root ctx mode = root ctx ++ Doc_mode.output_subdir mode
   let odocl_root ctx = root ctx ++ "_odocls"
 
-  let html ctx mode target =
-    match target with
-    | Lib (pkg, lib) ->
-      let lib_name = Lib.name lib in
-      html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-    | Private_lib (lib_unique_name, _) ->
-      html_root ctx mode ++ lib_unique_name
-    | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
-    | Toplevel -> html_root ctx mode
+  let html : type a. Context.t -> Doc_mode.t -> a target -> Path.Build.t =
+    fun ctx mode target ->
+      match target with
+      | Lib (pkg, lib) ->
+        let lib_name = Lib.name lib in
+        html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+      | Private_lib (lib_unique_name, _) ->
+        html_root ctx mode ++ lib_unique_name
+      | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
+      | Toplevel -> html_root ctx mode
   ;;
 
-  let odocl ctx = function
-    | Lib (pkg, lib) ->
-      let lib_name = Lib.name lib in
-      odocl_root ctx ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-    | Private_lib (lib_unique_name, _) ->
-      odocl_root ctx ++ lib_unique_name
-    | Pkg pkg -> odocl_root ctx ++ Package.Name.to_string pkg
-    | Toplevel -> odocl_root ctx
+  let odocl : type a. Context.t -> a target -> Path.Build.t =
+    fun ctx -> function
+      | Lib (pkg, lib) ->
+        let lib_name = Lib.name lib in
+        odocl_root ctx ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
+      | Private_lib (lib_unique_name, _) ->
+        odocl_root ctx ++ lib_unique_name
+      | Pkg pkg -> odocl_root ctx ++ Package.Name.to_string pkg
+      | Toplevel -> odocl_root ctx
   ;;
 
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
@@ -191,18 +196,21 @@ module Paths = struct
   let remap_file ctx = root ctx ++ "_remap" ++ "remap.txt"
 end
 
+(* Existential wrapper for heterogeneous target lists *)
+type any_target = Any_target : 'a target -> any_target
+
 module Artifact : sig
   type t
 
   val kind : t -> artifact_kind
   val source : t -> artifact_source
+  val target : t -> any_target
   val odoc_file : Context.t -> t -> Path.Build.t
   val odocl_file : Context.t -> t -> Path.Build.t
   val html_file : Context.t -> Doc_mode.t -> t -> Path.Build.t
   val json_file : Context.t -> Doc_mode.t -> t -> Path.Build.t
   val pkg : t -> Package.Name.t option
   val lib_name : t -> Lib_name.t
-  val target : t -> target
   val odoc_config : t -> Odoc_config.t
   val hidden : t -> bool
   val parent_id : t -> string
@@ -210,35 +218,38 @@ module Artifact : sig
   val create
     :  kind:artifact_kind
     -> source:artifact_source
-    -> target:target
     -> odoc_config:Odoc_config.t
     -> t
 end = struct
   type t =
     { kind : artifact_kind
     ; source : artifact_source
-    ; target : target
     ; odoc_config : Odoc_config.t
     }
 
   let kind t = t.kind
   let source t = t.source
-  let target t = t.target
   let odoc_config t = t.odoc_config
 
+  let target t =
+    match t.kind with
+    | Module (_, tgt) -> Any_target tgt
+    | Page (_, tgt) -> Any_target tgt
+  ;;
+
   let pkg t =
-    match t.target with
-    | Lib (pkg, _) -> Some pkg
-    | Private_lib _ -> None
-    | Pkg pkg -> Some pkg
-    | Toplevel -> None
+    match t.kind with
+    | Module (_, Lib (pkg, _)) -> Some pkg
+    | Module (_, Private_lib _) -> None
+    | Page (_, Pkg pkg) -> Some pkg
+    | Page (_, Toplevel) -> None
   ;;
 
   let lib_name t =
-    match t.target with
-    | Lib (_, lib) | Private_lib (_, lib) -> Lib.name lib
-    | Pkg pkg -> Lib_name.of_string (Package.Name.to_string pkg)
-    | Toplevel -> Lib_name.of_string "index"
+    match t.kind with
+    | Module (_, (Lib (_, lib) | Private_lib (_, lib))) -> Lib.name lib
+    | Page (_, Pkg pkg) -> Lib_name.of_string (Package.Name.to_string pkg)
+    | Page (_, Toplevel) -> Lib_name.of_string "index"
   ;;
 
   (* Split hierarchical page name like "foo/baz" into (Some "foo", "baz").
@@ -254,46 +265,57 @@ end = struct
      since the parent path "foo" is already in parent_id. *)
   let get_basename t =
     match t.kind, t.source with
-    | Page { name; _ }, _ -> snd (split_page_name name)
-    | Module _, Local_source src_path ->
+    | Page (page, _), _ -> snd (split_page_name page.name)
+    | Module (_, _), Local_source src_path ->
       Path.Build.basename src_path |> Filename.remove_extension
-    | Module { module_name; _ }, Installed_source _ ->
-      Module_name.to_string module_name |> String.uncapitalize_ascii
+    | Module (mod_, _), Installed_source _ ->
+      Module_name.to_string mod_.module_name |> String.uncapitalize_ascii
   ;;
 
-  let doc_file ctx t ~dir_fn ~extension =
+  let odoc_file ctx t =
     let basename = get_basename t in
-    let base_dir = dir_fn ctx t.target in
     match t.kind with
-    | Page { name; _ } ->
+    | Page (page, target) ->
+      let base_dir = Paths.odocs ctx target in
       (* For hierarchical pages like "deprecated/index", include parent path in directory *)
-      (match fst (split_page_name name) with
-       | Some parent_path -> base_dir ++ parent_path ++ ("page-" ^ basename ^ extension)
-       | None -> base_dir ++ ("page-" ^ basename ^ extension))
-    | Module _ -> base_dir ++ (basename ^ extension)
+      (match fst (split_page_name page.name) with
+       | Some parent_path -> base_dir ++ parent_path ++ ("page-" ^ basename ^ ".odoc")
+       | None -> base_dir ++ ("page-" ^ basename ^ ".odoc"))
+    | Module (_, target) ->
+      let base_dir = Paths.odocs ctx target in
+      base_dir ++ (basename ^ ".odoc")
   ;;
 
-  let odoc_file ctx t = doc_file ctx t ~dir_fn:Paths.odocs ~extension:".odoc"
-  let odocl_file ctx t = doc_file ctx t ~dir_fn:Paths.odocl ~extension:".odocl"
+  let odocl_file ctx t =
+    let basename = get_basename t in
+    match t.kind with
+    | Page (page, target) ->
+      let base_dir = Paths.odocl ctx target in
+      (* For hierarchical pages like "deprecated/index", include parent path in directory *)
+      (match fst (split_page_name page.name) with
+       | Some parent_path -> base_dir ++ parent_path ++ ("page-" ^ basename ^ ".odocl")
+       | None -> base_dir ++ ("page-" ^ basename ^ ".odocl"))
+    | Module (_, target) ->
+      let base_dir = Paths.odocl ctx target in
+      base_dir ++ (basename ^ ".odocl")
+  ;;
 
   let html_output_file ctx mode t ~suffix =
     let basename = get_basename t in
-    let html_base = Paths.html ctx mode t.target in
-    match t.kind, t.target with
-    | Module _, (Lib _ | Private_lib _) ->
+    match t.kind with
+    | Module (_, target) ->
+      let html_base = Paths.html ctx mode target in
       let html_dir = html_base ++ Stdune.String.capitalize basename in
       html_dir ++ ("index" ^ suffix)
-    | Page { name; _ }, (Pkg _ | Toplevel) ->
+    | Page (page, target) ->
+      let html_base = Paths.html ctx mode target in
       (* For hierarchical pages like "deprecated/index", include parent path in directory *)
       let html_path =
-        match fst (split_page_name name) with
+        match fst (split_page_name page.name) with
         | Some parent_path -> html_base ++ parent_path ++ basename
         | None -> html_base ++ basename
       in
       Path.Build.extend_basename html_path ~suffix
-    | Module _, Pkg _ -> assert false
-    | Page _, (Lib _ | Private_lib _) -> assert false
-    | Module _, Toplevel -> assert false
   ;;
 
   let html_file ctx mode t = html_output_file ctx mode t ~suffix:".html"
@@ -302,30 +324,30 @@ end = struct
   let hidden t =
     match t.kind with
     | Page _ -> false
-    | Module _ ->
+    | Module (mod_, _) ->
       let basename = get_basename t in
       String.contains_double_underscore basename
   ;;
 
   let parent_id t =
     let base_id =
-      match t.target with
-      | Lib (pkg, lib) ->
+      match t.kind with
+      | Module (_, Lib (pkg, lib)) ->
         sprintf "%s/%s" (Package.Name.to_string pkg) (Lib_name.to_string (Lib.name lib))
-      | Private_lib (lib_unique_name, _) -> lib_unique_name
-      | Pkg pkg -> Package.Name.to_string pkg
-      | Toplevel -> ""
+      | Module (_, Private_lib (lib_unique_name, _)) -> lib_unique_name
+      | Page (_, Pkg pkg) -> Package.Name.to_string pkg
+      | Page (_, Toplevel) -> ""
     in
     match t.kind with
     | Module _ -> base_id
-    | Page { name; _ } ->
+    | Page (page, _) ->
       (* For hierarchical pages like "deprecated/index", include parent path without "page-" prefix *)
-      (match fst (split_page_name name) with
+      (match fst (split_page_name page.name) with
        | Some parent_path -> sprintf "%s/%s" base_id parent_path
        | None -> base_id)
   ;;
 
-  let create ~kind ~source ~target ~odoc_config = { kind; source; target; odoc_config }
+  let create ~kind ~source ~odoc_config = { kind; source; odoc_config }
 end
 
 let add_rule sctx =
@@ -363,12 +385,7 @@ module Dep : sig
   val odoc_all_alias : dir:Path.Build.t -> Alias.t
 
   (** Create a format alias (.doc or .doc-json) for a target *)
-  val format_alias
-    :  Output_format.t
-    -> Doc_mode.t
-    -> Context.t
-    -> target
-    -> Alias.t
+  val format_alias : Output_format.t -> Doc_mode.t -> Context.t -> 'a target -> Alias.t
 
   (** Add file dependencies to an alias *)
   val add_file_deps : Alias.t -> Path.t list -> unit Memo.t
@@ -384,11 +401,18 @@ module Dep : sig
     -> unit Action_builder.t
 
   (** High-level: Set up .odoc-all dependencies for a target *)
-  val setup_deps : Context.t -> target -> Path.Set.t -> unit Memo.t
+  val setup_deps : Context.t -> 'a target -> Path.Set.t -> unit Memo.t
 end = struct
   let odoc_all_alias ~dir = Alias.make (Alias.Name.of_string ".odoc-all") ~dir
-  let odoc_all_alias_for_target ctx target = odoc_all_alias ~dir:(Paths.odocs ctx target)
-  let format_alias f mode ctx m = Output_format.alias f ~dir:(Paths.html ctx mode m)
+
+  let odoc_all_alias_for_target : type a. Context.t -> a target -> Alias.t =
+    fun ctx target -> odoc_all_alias ~dir:(Paths.odocs ctx target)
+  ;;
+
+  let format_alias : type a. Output_format.t -> Doc_mode.t -> Context.t -> a target -> Alias.t
+    =
+    fun f mode ctx m -> Output_format.alias f ~dir:(Paths.html ctx mode m)
+  ;;
 
   let add_file_deps alias files =
     Rules.Produce.Alias.add_deps alias (Action_builder.paths files)
@@ -443,23 +467,24 @@ end = struct
            Dep.Set.add acc (Dep.alias (odoc_all_alias ~dir))))
   ;;
 
-  let setup_deps ctx m files =
-    let target_name =
-      match m with
-      | Lib (pkg, lib) ->
-        "lib:" ^ Package.Name.to_string pkg ^ "/" ^ Lib_name.to_string (Lib.name lib)
-      | Private_lib (lib_unique_name, lib) ->
-        "private_lib:" ^ lib_unique_name ^ "/" ^ Lib_name.to_string (Lib.name lib)
-      | Pkg pkg -> "pkg:" ^ Package.Name.to_string pkg
-      | Toplevel -> "toplevel"
-    in
-    Log.info
-      [ Pp.textf
-          "Dep.setup_deps: Adding %d files to .odoc-all for %s"
-          (Path.Set.cardinal files)
-          target_name
-      ];
-    add_file_deps (odoc_all_alias_for_target ctx m) (Path.Set.to_list files)
+  let setup_deps : type a. Context.t -> a target -> Path.Set.t -> unit Memo.t =
+    fun ctx m files ->
+      let target_name =
+        match m with
+        | Lib (pkg, lib) ->
+          "lib:" ^ Package.Name.to_string pkg ^ "/" ^ Lib_name.to_string (Lib.name lib)
+        | Private_lib (lib_unique_name, lib) ->
+          "private_lib:" ^ lib_unique_name ^ "/" ^ Lib_name.to_string (Lib.name lib)
+        | Pkg pkg -> "pkg:" ^ Package.Name.to_string pkg
+        | Toplevel -> "toplevel"
+      in
+      Log.info
+        [ Pp.textf
+            "Dep.setup_deps: Adding %d files to .odoc-all for %s"
+            (Path.Set.cardinal files)
+            target_name
+        ];
+      add_file_deps (odoc_all_alias_for_target ctx m) (Path.Set.to_list files)
   ;;
 end
 
@@ -483,19 +508,17 @@ let generate_remap_mappings pkg_discovery ~local_packages ~all_deps =
   let external_deps =
     List.filter all_deps ~f:(fun target ->
       match target with
-      | Pkg pkg_name -> not (Package.Name.Set.mem local_pkg_set pkg_name)
       | Lib (pkg_name, _lib) -> not (Package.Name.Set.mem local_pkg_set pkg_name)
-      | Private_lib _ -> false (* Private libs have no package - they are LOCAL *)
-      | Toplevel -> false (* Toplevel is always local *))
+      | Private_lib _ -> false (* Private libs have no package - they are LOCAL *))
   in
   (* Generate mappings: local_path:remote_url *)
   let* mappings =
     Memo.List.map external_deps ~f:(fun target ->
       match target with
-      | Private_lib _ | Toplevel ->
-        (* Private libs and toplevel are local, should never appear in external_deps *)
+      | Private_lib _ ->
+        (* Private libs are local, should never appear in external_deps *)
         Memo.return []
-      | Pkg pkg_name | Lib (pkg_name, _) ->
+      | Lib (pkg_name, lib) ->
         (* Get package version and construct package URL *)
         let* version_opt = get_package_version pkg_discovery pkg_name in
         let version = Option.value version_opt ~default:"latest" in
@@ -506,15 +529,9 @@ let generate_remap_mappings pkg_discovery ~local_packages ~all_deps =
         (* Both package and library entries point to the same package URL.
            Odoc appends library paths automatically when resolving links. *)
         let pkg_mapping = pkg_path, pkg_url in
-        (match target with
-         | Lib (_, lib) ->
-           let lib_path = pkg_path ^ "/" ^ Lib_name.to_string (Lib.name lib) in
-           (* Library also maps to package URL, matching odoc_driver behavior *)
-           Memo.return [ pkg_mapping; lib_path, pkg_url ]
-         | Pkg _ -> Memo.return [ pkg_mapping ]
-         | Private_lib _ | Toplevel ->
-           (* Should never happen - filtered out in external_deps *)
-           Memo.return []))
+        let lib_path = pkg_path ^ "/" ^ Lib_name.to_string (Lib.name lib) in
+        (* Library also maps to package URL, matching odoc_driver behavior *)
+        Memo.return [ pkg_mapping; lib_path, pkg_url ])
   in
   Memo.return (List.concat mappings)
 ;;
@@ -1396,13 +1413,13 @@ let link_artifact sctx ~artifact =
 (* Helper to create the toplevel index artifact with package dependencies *)
 let toplevel_index_artifact ctx packages =
   let mld_path = Paths.toplevel_index_mld ctx in
-  let kind = Page { name = "index"; pkg_libs = [] } in
+  let page = { name = "index"; pkg_libs = [] } in
   let source = Local_source mld_path in
-  let target = Toplevel in
+  let kind = Page (page, Toplevel) in
   (* Add all packages as dependencies so -P flags are generated during linking *)
   let package_names = Package.Name.Map.keys packages in
   let odoc_config = { Odoc_config.deps = { packages = package_names; libraries = [] } } in
-  Artifact.create ~kind ~source ~target ~odoc_config
+  Artifact.create ~kind ~source ~odoc_config
 ;;
 
 (* Generate the .mld file for the toplevel index *)
@@ -1523,14 +1540,13 @@ let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : Artifact.t list Me
       in
       (* Include all mld files, including index.mld if hand-written *)
       let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-      let kind = Page { name = page_name_with_path; pkg_libs } in
-      let target = Pkg pkg in
+      let page = { name = page_name_with_path; pkg_libs } in
+      let kind = Page (page, Pkg pkg) in
       Memo.return
         (Some
            (Artifact.create
               ~kind
               ~source:(Installed_source { src_path = mld_path })
-              ~target
               ~odoc_config)))
   in
   (* Library index.mld artifacts for installed packages - not yet implemented *)
@@ -1611,20 +1627,18 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib : Artifact.t 
           | Some src_path ->
             (* Determine visibility: entry modules are visible, others are hidden *)
             let visible = List.mem entry_module_names module_name ~equal:String.equal in
-            let kind =
-              Module
-                { visible
-                ; module_name = Module_name.of_string module_name
-                ; archive = default_archive
-                }
+            let mod_ =
+              { visible
+              ; module_name = Module_name.of_string module_name
+              ; archive = default_archive
+              }
             in
-            let target = Lib (pkg, lib) in
+            let kind = Module (mod_, Lib (pkg, lib)) in
             Memo.return
               (Some
                  (Artifact.create
                     ~kind
                     ~source:(Installed_source { src_path })
-                    ~target
                     ~odoc_config))
           | None ->
             Log.info
@@ -1645,20 +1659,16 @@ let create_artifact_module ~target ~local_lib ~module_ ~odoc_config =
   let lib = Lib.Local.to_lib local_lib in
   let lib_name = Lib.name lib in
   let archive = Lib_name.to_string lib_name in
-  let kind =
-    Module
-      { visible = Module.visibility module_ = Visibility.Public
-      ; module_name = Module.name module_
-      ; archive
-      }
+  let mod_ =
+    { visible = Module.visibility module_ = Visibility.Public
+    ; module_name = Module.name module_
+    ; archive
+    }
   in
+  let kind = Module (mod_, target) in
   let obj_dir = Lib.Local.obj_dir local_lib in
   let source_file = Obj_dir.Module.cmti_file obj_dir module_ ~cm_kind:(Ocaml Cmi) in
-  Artifact.create
-    ~kind
-    ~source:(Local_source source_file)
-    ~target
-    ~odoc_config
+  Artifact.create ~kind ~source:(Local_source source_file) ~odoc_config
 ;;
 
 (* Discover modules for a local library and create artifacts.
@@ -1878,8 +1888,9 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
           List.map source_mlds ~f:(fun (mld : Doc_sources.mld) ->
             let in_doc_str = Path.Local.to_string mld.in_doc in
             let name = Filename.remove_extension in_doc_str in
-            let kind = Page { name; pkg_libs } in
-            Artifact.create ~kind ~source:(Local_source mld.path) ~target ~odoc_config)
+            let page = { name; pkg_libs } in
+            let kind = Page (page, target) in
+            Artifact.create ~kind ~source:(Local_source mld.path) ~odoc_config)
         in
 
         (* Create artifacts for generated package index if it doesn't exist in sources *)
@@ -1891,8 +1902,9 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
           if has_index_mld then []
           else
             let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-            let kind = Page { name = "index"; pkg_libs } in
-            [ Artifact.create ~kind ~source:(Local_source gen_mld) ~target ~odoc_config ]
+            let page = { name = "index"; pkg_libs } in
+            let kind = Page (page, target) in
+            [ Artifact.create ~kind ~source:(Local_source gen_mld) ~odoc_config ]
         in
 
         (* Create artifacts for library index.mld files *)
@@ -1911,8 +1923,9 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
             else
               let index_mld_path = Paths.lib_index_mld ctx pkg lib_name in
               let name = sp "%s/index" (Lib_name.to_string lib_name) in
-              let kind = Page { name; pkg_libs } in
-              Memo.return (Some (Artifact.create ~kind ~source:(Local_source index_mld_path) ~target ~odoc_config)))
+              let page = { name; pkg_libs } in
+              let kind = Page (page, target) in
+              Memo.return (Some (Artifact.create ~kind ~source:(Local_source index_mld_path) ~odoc_config)))
         in
         let library_index_artifacts = List.filter_map library_index_artifacts ~f:Fun.id in
 
