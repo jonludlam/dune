@@ -1,11 +1,10 @@
 Test that package mld files can reference modules from other packages.
 Package A's index.mld contains a reference to {!Libb} from package B.
+With documentation dependencies declared in dune-project, cross-package references resolve correctly.
 
-Build documentation (note: cross-package references in mld files currently show warnings):
+Build documentation:
 
   $ dune build @doc
-  File "pkga/index.mld", line 5, characters 47-54:
-  Warning: Failed to resolve reference unresolvedroot(Libb) Couldn't find "Libb"
 
 Verify documentation was generated for both packages:
 
@@ -25,10 +24,15 @@ Check that HTML was generated for both package indexes:
   $ ls _build/default/_doc/_html/pkgb/index.html
   _build/default/_doc/_html/pkgb/index.html
 
-Both libraries' HTML should be generated even though cross-package references don't resolve:
+Both libraries' HTML should be generated with cross-package references resolved:
 
   $ ls _build/default/_doc/_html/pkga/pkga.lib/Liba/index.html
   _build/default/_doc/_html/pkga/pkga.lib/Liba/index.html
 
   $ ls _build/default/_doc/_html/pkgb/pkgb.lib/Libb/index.html
   _build/default/_doc/_html/pkgb/pkgb.lib/Libb/index.html
+
+Verify that all cross-package references resolved correctly (no unresolved xrefs):
+
+  $ grep -r "xref-unresolved" _build/default/_doc/_html/pkga/ _build/default/_doc/_html/pkgb/
+  [1]

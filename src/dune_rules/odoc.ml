@@ -1336,7 +1336,7 @@ let compute_link_requires sctx ~artifact =
       Memo.parallel_map extra_lib_names ~f:(fun lib_name -> Lib.DB.find lib_db lib_name)
       >>| List.filter_map ~f:Fun.id
     in
-    (* Get all libraries from extra packages using Package_discovery *)
+    (* Get all libraries from extra packages *)
     let* extra_libs_from_pkgs =
       match Artifact.target artifact with
       | Toplevel ->
@@ -1346,9 +1346,18 @@ let compute_link_requires sctx ~artifact =
         if List.is_empty extra_pkg_names
         then Memo.return []
         else (
+          let* packages = Dune_load.packages () in
           let* pkg_discovery = Package_discovery.create ~context:ctx in
           Memo.parallel_map extra_pkg_names ~f:(fun pkg_name ->
-            Memo.return (Package_discovery.libraries_of_package pkg_discovery pkg_name))
+            (* Check if this is a local package or an installed package *)
+            if Package.Name.Map.mem packages pkg_name
+            then
+              (* Local package: use libs_of_pkg to get libraries *)
+              let* local_libs = Context.name ctx |> libs_of_pkg ~pkg:pkg_name in
+              Memo.return (List.map local_libs ~f:Lib.Local.to_lib)
+            else
+              (* Installed package: use Package_discovery *)
+              Memo.return (Package_discovery.libraries_of_package pkg_discovery pkg_name))
           >>| List.concat)
     in
     let all_extra_libs = extra_libs_from_names @ extra_libs_from_pkgs in
