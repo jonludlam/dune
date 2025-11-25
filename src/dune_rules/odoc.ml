@@ -561,17 +561,25 @@ module Flags = struct
     | Fatal
     | Nonfatal
 
-  type t = { warnings : warnings }
+  type sidebar = Dune_env.Odoc.sidebar =
+    | Global
+    | Per_package
 
-  let default = { warnings = Nonfatal }
+  type t =
+    { warnings : warnings
+    ; sidebar : sidebar
+    }
 
-  let get ~dir =
+  let default = { warnings = Nonfatal; sidebar = Global }
+
+  let get_memo ~dir =
     Env_stanza_db.value ~default ~dir ~f:(fun config ->
-      match config.odoc.warnings with
-      | None -> Memo.return None
-      | Some warnings -> Memo.return (Some { warnings }))
-    |> Action_builder.of_memo
+      let warnings = Option.value config.odoc.warnings ~default:default.warnings in
+      let sidebar = Option.value config.odoc.sidebar ~default:default.sidebar in
+      Memo.return (Some { warnings; sidebar }))
   ;;
+
+  let get ~dir = get_memo ~dir |> Action_builder.of_memo
 end
 
 let odoc_base_flags quiet build_dir =
@@ -1437,14 +1445,16 @@ let setup_toplevel_index_html sctx mode =
     let odocls = [ Artifact.odocl_file ctx artifact ] in
     Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
   in
-  (* Determine sidebar file based on mode *)
+  (* Determine sidebar file based on mode and env config *)
+  let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
   let sidebar_file =
-    match mode with
-    | Doc_mode.Local_only ->
-      (* Use global sidebar for Local_only mode *)
+    match mode, flags.sidebar with
+    | Doc_mode.Local_only, Flags.Global ->
+      (* Use global sidebar for Local_only mode with global sidebar config *)
       Some (Paths.sidebar_file ctx Global)
-    | Doc_mode.Full ->
-      (* No sidebar for Full mode toplevel index *)
+    | Doc_mode.Local_only, Flags.Per_package
+    | Doc_mode.Full, _ ->
+      (* No sidebar for per-package mode or Full mode toplevel index *)
       None
   in
   (* Generate HTML for the artifact *)
@@ -2203,15 +2213,17 @@ let generate_html_for_package
       (* Synthetic package (private lib) - no sidebar *)
       Memo.return None
     else (
-      (* Real package - generate/reference sidebar based on mode *)
+      (* Real package - determine sidebar scope based on env config and mode *)
       let pkg = Package.Name.of_string pkg_or_lib_name in
+      let* flags = Flags.get_memo ~dir in
       let scope, should_generate_json =
-        match mode with
-        | Doc_mode.Local_only ->
-          (* Local_only uses global sidebar - JSON already generated at _html root *)
+        match mode, flags.sidebar with
+        | Doc_mode.Local_only, Flags.Global ->
+          (* Local_only with global sidebar - JSON already generated at _html root *)
           Global, false
-        | Doc_mode.Full ->
-          (* Full uses per-package sidebar - generate JSON here *)
+        | Doc_mode.Local_only, Flags.Per_package
+        | Doc_mode.Full, _ ->
+          (* Per-package sidebar - generate JSON here *)
           Per_package pkg, true
       in
       let index_file = Paths.index_file ctx scope in
@@ -3072,9 +3084,13 @@ let gen_rules sctx ~dir rest =
             let html_file = Output_format.target ctx Doc_mode.Local_only output artifact in
             let alias = Dep.format_alias output Doc_mode.Local_only ctx Toplevel in
             Dep.add_file_deps alias [ Path.build html_file ])
-          >>> (* Generate global sidebar JSON for Local_only mode *)
-          let index_file = Paths.index_file ctx Global in
-          generate_sidebar_json sctx ~mode:Doc_mode.Local_only ~scope:Global ~index_file)
+          >>> (* Generate global sidebar JSON for Local_only mode if configured *)
+          let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
+          (match flags.sidebar with
+           | Flags.Global ->
+             let index_file = Paths.index_file ctx Global in
+             generate_sidebar_json sctx ~mode:Doc_mode.Local_only ~scope:Global ~index_file
+           | Flags.Per_package -> Memo.return ()))
       in
       Memo.return
         (Build_config.Gen_rules.make
@@ -3273,12 +3289,18 @@ let gen_rules sctx ~dir rest =
         ];
       Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
     | [ "_sidebar" ] ->
-      (* Root sidebar directory - generate global sidebar and allow package subdirs *)
+      (* Root sidebar directory - conditionally generate global sidebar and allow package subdirs *)
+      let ctx = Super_context.context sctx in
       let* packages = Dune_load.packages () in
       let pkg_subdirs =
         Package.Name.Map.keys packages |> List.map ~f:Package.Name.to_string
       in
-      let rules = Rules.collect_unit (fun () -> generate_global_sidebar sctx) in
+      let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
+      let rules =
+        match flags.sidebar with
+        | Flags.Global -> Rules.collect_unit (fun () -> generate_global_sidebar sctx)
+        | Flags.Per_package -> Memo.return Rules.empty
+      in
       Memo.return
         (Build_config.Gen_rules.make
            ~build_dir_only_sub_dirs:
