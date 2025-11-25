@@ -1952,12 +1952,6 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
       Memo.return (all_artifacts, lib_subdirs))
 ;;
 
-(* Unified handler for _odoc and _odocls package/library directories.
-   Both handlers follow the same pattern:
-   1. Discover artifacts for the package/library
-   2. Group artifacts by library
-   3. Process each library (either compile for _odoc or link for _odocls)
-   4. Return Build_config with rules *)
 (* Helper to compute library directory path for v2 vs v3 *)
 let lib_dir_path ctx ~path_prefix ~pkg_or_lib_name ~lib_name =
   if String.contains pkg_or_lib_name '@'
