@@ -1456,18 +1456,24 @@ let discover_installed_pkg_mld_artifacts ctx ~pkg ~pkg_libs : Artifact.t list Me
         in
         match find_odoc_pages_ancestor mld_path with
         | Some odoc_pages_dir ->
-          (* Get the relative path from odoc-pages directory *)
-          (match Path.descendant mld_path ~of_:odoc_pages_dir with
-           | Some rel_path ->
-             (* Path.to_string always uses forward slashes internally, which is what odoc expects.
-                Remove .mld extension. *)
-             let rel_str = Path.to_string rel_path in
-             (match Filename.remove_extension rel_str with
-              | "" -> rel_str
-              | s -> s)
-           | None ->
-             (* Shouldn't happen, but fallback to basename *)
-             Path.basename mld_path |> Filename.remove_extension)
+          (* Get relative path using string operations since Path.descendant
+             doesn't work for External paths *)
+          let parent_str = Path.to_string odoc_pages_dir in
+          let mld_str = Path.to_string mld_path in
+          let prefix_len = String.length parent_str in
+          if String.is_prefix mld_str ~prefix:parent_str
+             && String.length mld_str > prefix_len
+             && (mld_str.[prefix_len] = '/' || mld_str.[prefix_len] = '\\')
+          then
+            let rel_str = String.drop mld_str (prefix_len + 1) in
+            (* Normalize path separators to forward slashes for odoc page names *)
+            let rel_str = String.map rel_str ~f:(function '\\' -> '/' | c -> c) in
+            (match Filename.remove_extension rel_str with
+             | "" -> rel_str
+             | s -> s)
+          else
+            (* Shouldn't happen, but fallback to basename *)
+            Path.basename mld_path |> Filename.remove_extension
         | None ->
           (* odoc-pages not found in path, use basename *)
           Path.basename mld_path |> Filename.remove_extension
