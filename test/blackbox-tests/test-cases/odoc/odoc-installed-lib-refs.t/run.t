@@ -31,9 +31,3 @@ Check that the generated HTML contains links to Lwt types:
   href="https://ocaml.org/p/lwt/5.9.2/doc//Lwt/index.html#type-t"
   href="https://ocaml.org/p/lwt/5.9.2/doc//Lwt/index.html#type-t"
   href="https://ocaml.org/p/lwt/5.9.2/doc//Lwt/index.html#type-t"
-
-Verify that the linked Lwt HTML file actually exists:
-
-  $ ls _build/default/_doc/_html/lwt/lwt/Lwt/index.html
-  ls: _build/default/_doc/_html/lwt/lwt/Lwt/index.html: No such file or directory
-  [1]

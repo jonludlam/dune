@@ -22,8 +22,6 @@ Demonstrate how odoc interops with the `stdlib` stanza
   > EOF
 
   $ dune build @doc
-  File "_doc/_mlds/l/l/index.mld", line 4, characters 0-17:
-  Warning: Failed to resolve reference unresolvedroot(Bar) Parent_module: Lookup failure (root module): Bar
   File "../_odoc/l/l/l.odoc":
   Warning: Couldn't find the following modules:
     Bar

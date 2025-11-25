@@ -1,8 +1,6 @@
 This test generates documentation for non-hidden modules only for a library:
 
   $ dune build @doc
-  File "_doc/_mlds/foo/foo/index.mld", line 4, characters 0-25:
-  Warning: Failed to resolve reference unresolvedroot(Bar) Parent_module: Lookup failure (root module): Bar
 
  Hidden modules should be compiled
   $ find _build/default/_doc/_odoc/foo -name '*.odoc' | sort -n

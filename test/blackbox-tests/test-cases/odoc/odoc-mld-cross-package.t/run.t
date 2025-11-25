@@ -4,7 +4,7 @@ Package A's index.mld contains a reference to {!Libb} from package B.
 Build documentation (note: cross-package references in mld files currently show warnings):
 
   $ dune build @doc
-  File "liba/index.mld", line 5, characters 47-54:
+  File "pkga/index.mld", line 5, characters 47-54:
   Warning: Failed to resolve reference unresolvedroot(Libb) Couldn't find "Libb"
 
 Verify documentation was generated for both packages:
