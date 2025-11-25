@@ -1437,8 +1437,18 @@ let setup_toplevel_index_html sctx mode =
     let odocls = [ Artifact.odocl_file ctx artifact ] in
     Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
   in
+  (* Determine sidebar file based on mode *)
+  let sidebar_file =
+    match mode with
+    | Doc_mode.Local_only ->
+      (* Use global sidebar for Local_only mode *)
+      Some (Paths.sidebar_file ctx Global)
+    | Doc_mode.Full ->
+      (* No sidebar for Full mode toplevel index *)
+      None
+  in
   (* Generate HTML for the artifact *)
-  generate_html_artifact sctx ~artifact ~search_db ~sidebar_file:None ~mode ()
+  generate_html_artifact sctx ~artifact ~search_db ~sidebar_file ~mode ()
 ;;
 
 let entry_modules_by_lib sctx lib =
