@@ -9,7 +9,7 @@ Verify the odoc file was compiled with v3 flags (--parent-id and --output-dir)
 
   $ dune clean
   $ dune build _build/default/_doc/_odoc/foo/foo/foo.odoc --verbose 2>&1 | grep -o "\-\-output-dir [^ ]* \-\-parent-id foo/foo"
-  --output-dir _doc/_odoc --parent-id foo/foo
+  --output-dir _odoc --parent-id foo/foo
 
 Test that odocl files are generated in v3 structure
 

@@ -17,7 +17,6 @@ val libs_of_pkg : Context_name.t -> pkg:Package.Name.t -> Lib.Local.t list Memo.
 
 val run_odoc
   :  Super_context.t
-  -> dir:Path.t
   -> string
   -> quiet:bool
   -> flags_for:Path.Build.t option

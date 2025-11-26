@@ -22,7 +22,7 @@ Demonstrate how odoc interops with the `stdlib` stanza
   > EOF
 
   $ dune build @doc
-  File "../_odoc/l/l/l.odoc":
+  File "_odoc/l/l/l.odoc":
   Warning: Couldn't find the following modules:
     Bar
 

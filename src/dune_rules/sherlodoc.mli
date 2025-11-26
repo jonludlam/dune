@@ -17,4 +17,5 @@ val odoc_args
   :  Super_context.t
   -> search_db:Path.Build.t
   -> dir_sherlodoc_dot_js:Path.Build.t
+  -> html_root:Path.Build.t
   -> _ Command.Args.t

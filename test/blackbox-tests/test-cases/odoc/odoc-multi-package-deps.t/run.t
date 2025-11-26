@@ -30,9 +30,9 @@ Verify that bar's HTML contains links to foo's documentation:
   href="../../../foo/foo.lib/Foolib/index.html#type-foo_type"
   href="../../../foo/foo.lib/Foolib/index.html#val-foo_function"
 
-Check that the -P flags are passed correctly during linking (bar should be present):
+Check that the -P flags are passed correctly during linking.
+Only bar's own package is passed as -P (foo is not, since there's no explicit doc dependency):
 
   $ dune clean
   $ dune build @doc --verbose 2>&1 | grep "odoc link.*barlib.odocl" | grep -o "\-P [^ ]*" | sort | uniq
-  -P bar:../_odoc/bar
-  -P foo:../_odoc/foo
+  -P bar:_odoc/bar

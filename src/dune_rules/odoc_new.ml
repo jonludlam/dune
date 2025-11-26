@@ -877,7 +877,6 @@ let compile_module
         in
         Odoc.run_odoc
           sctx
-          ~dir:doc_dir
           "compile"
           ~flags_for:(Some odoc_file)
           ~quiet
@@ -937,7 +936,6 @@ let compile_mld sctx a ~parent_opt ~quiet ~is_index ~children =
     let quiet_arg =
       if quiet then Command.Args.A "--print-warnings=false" else Command.Args.empty
     in
-    let doc_dir = Path.Build.parent_exn (Artifact.odoc_file a) in
     let odoc_input = Artifact.source_file a in
     let parent_args =
       match parent_opt with
@@ -955,7 +953,6 @@ let compile_mld sctx a ~parent_opt ~quiet ~is_index ~children =
     in
     Odoc.run_odoc
       sctx
-      ~dir:(Path.build doc_dir)
       "compile"
       ~flags_for:(Some odoc_file)
       ~quiet
@@ -993,7 +990,6 @@ let link_odoc_rules sctx ~all (artifacts : Artifact.t list) ~quiet ~package ~lib
     let run_odoc =
       Odoc.run_odoc
         sctx
-        ~dir:(Path.parent_exn (Path.build (Artifact.odocl_file a)))
         "link"
         ~quiet
         ~flags_for:(Some (Artifact.odoc_file a))
@@ -1015,27 +1011,30 @@ let link_odoc_rules sctx ~all (artifacts : Artifact.t list) ~quiet ~package ~lib
 let html_generate sctx all ~search_db (a : Artifact.t) =
   let ctx = Super_context.context sctx in
   let html_output = Paths.html_root ctx ~all in
-  let support_relative =
+  let doc_root = Paths.root ctx ~all in
+  (* Compute relative paths from doc_root since run_odoc runs from there *)
+  let html_output_rel = Path.reach (Path.build html_output) ~from:(Path.build doc_root) in
+  (* Compute URIs relative to html_output (since URIs are relative to -o argument) *)
+  let support_uri =
     let odoc_support_path = Paths.odoc_support ctx ~all in
     Path.reach (Path.build odoc_support_path) ~from:(Path.build html_output)
   in
   let search_args =
-    Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:(Index.html_dir ctx ~all [])
+    Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:(Index.html_dir ctx ~all []) ~html_root:html_output
   in
   let run_odoc =
     Odoc.run_odoc
       sctx
-      ~quiet:false
-      ~dir:(Path.build html_output)
       "html-generate"
+      ~quiet:false
       ~flags_for:None
       [ Command.Args.A "-o"
-      ; Path (Path.build html_output)
+      ; A html_output_rel
       ; search_args
       ; A "--support-uri"
-      ; A support_relative
+      ; A support_uri
       ; A "--theme-uri"
-      ; A support_relative
+      ; A support_uri
       ; Dep (Path.build (Artifact.odocl_file a))
       ]
   in
@@ -1956,9 +1955,8 @@ let setup_css_rule sctx ~all =
     let cmd =
       Odoc.run_odoc
         sctx
-        ~quiet:false
-        ~dir:(Path.build (Context.build_dir ctx))
         "support-files"
+        ~quiet:false
         ~flags_for:None
         [ Command.Args.A "-o"; Path (Path.build dir) ]
     in
