@@ -537,7 +537,28 @@ end
 (* Get list of local workspace packages *)
 let get_workspace_packages () =
   let* packages = Dune_load.packages () in
-  Memo.return (Package.Name.Map.keys packages)
+  let* projects = Dune_load.projects () in
+  let* vendored_packages =
+    Memo.List.fold_left
+      projects
+      ~init:Package.Name.Set.empty
+      ~f:(fun vendored (project : Dune_project.t) ->
+        let project_root = Dune_project.root project in
+        let* dir_opt = Source_tree.find_dir project_root in
+        match dir_opt with
+        | None -> Memo.return vendored
+        | Some dir ->
+          (match Source_tree.Dir.status dir with
+          | Vendored ->
+            let pkgs = Dune_project.including_hidden_packages project in
+            Memo.return (Package.Name.Set.of_keys pkgs |> Package.Name.Set.union vendored)
+          | Normal | Data_only -> Memo.return vendored))
+  in
+  let non_vendored_list =
+    Package.Name.Map.keys packages
+    |> List.filter ~f:(fun pkg_name -> not (Package.Name.Set.mem vendored_packages pkg_name))
+  in
+  Memo.return non_vendored_list
 ;;
 
 (* Get package version using Package_discovery *)
@@ -1243,12 +1264,13 @@ let compute_link_requires sctx ~artifact =
   let* base_requires =
     match Artifact.kind artifact with
     | Module (_, (Lib (_, lib) | Private_lib (_, lib))) ->
-      (* Module in a library: use library's dependencies PLUS the library itself.
+      (* Module in a library: use library's transitive dependencies PLUS the library itself.
        This ensures all modules in the library (including hidden/wrapped ones) are compiled
-       before any module is linked. Critical for wrapped libraries. *)
-      let* external_requires = Lib.requires lib in
+       before any module is linked. Critical for wrapped libraries.
+       Use closure to get transitive dependencies, needed for resolving installed library deps. *)
+      let* closure = Lib.closure [ lib ] ~linking:false in
       Memo.return
-        (Resolve.bind external_requires ~f:(fun libs ->
+        (Resolve.bind closure ~f:(fun libs ->
            (* Add the library itself to ensure .odoc-all dependency includes all modules *)
            Resolve.return (lib :: libs)))
     | Page ({ pkg_libs; _ }, (Pkg _ | Toplevel)) ->
@@ -1741,10 +1763,12 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
       let* packages = Dune_load.packages () in
       Memo.return (Package.Name.Map.mem packages pkg)
     in
-    if is_project_pkg
+    let* local_libs =
+      if is_project_pkg then Context.name ctx |> libs_of_pkg ~pkg else Memo.return []
+    in
+    if is_project_pkg && not (List.is_empty local_libs)
     then
-      (* Local package - discover mld artifacts + all library artifacts *)
-      let* local_libs = Context.name ctx |> libs_of_pkg ~pkg in
+      (* Local package with actual libraries - discover mld artifacts + all library artifacts *)
       (* Get library subdirectory names *)
       let lib_subdirs =
         List.map local_libs ~f:(fun local_lib ->
@@ -2573,7 +2597,9 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
                (List.filter all_targets_with_pkg ~f:(fun (Any_target target) ->
                   match target with
                   | Pkg p -> Package.Name.Set.mem workspace_pkg_set p
-                  | Lib (p, _) -> Package.Name.Set.mem workspace_pkg_set p
+                  | Lib (p, lib) ->
+                    Package.Name.Set.mem workspace_pkg_set p
+                    && Option.is_some (Lib.Local.of_lib lib)
                   | Private_lib _ | Toplevel -> true (* Private libs and toplevel are always local *)))
            | Doc_mode.Full ->
              (* Include all dependencies *)
