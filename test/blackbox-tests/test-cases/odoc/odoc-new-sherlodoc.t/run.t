@@ -62,25 +62,7 @@ This test if the sherlodoc js files are generated
   /*   - --favored ../../index/local/foo/byte/page-byte.odocl */
   $ dune runtest
   <!DOCTYPE html>
-  <html xmlns="http://www.w3.org/1999/xhtml">
-    <head>
-      <title>index</title>
-      <link rel="stylesheet" href="./odoc.support/odoc.css"/>
-      <meta charset="utf-8"/>
-      <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-    </head>
-    <body>
-      <main class="content">
-        <div class="by-name">
-        <h2>OCaml package documentation</h2>
-        <ol>
-        <li><a href="bar/index.html">bar</a></li>
-        <li><a href="foo/index.html">foo</a></li>
-        </ol>
-        </div>
-      </main>
-    </body>
-  </html>
+  <html xmlns="http://www.w3.org/1999/xhtml"><head><title>index (index)</title><meta charset="utf-8"/><link rel="stylesheet" href="odoc.support/odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"></nav><header class="odoc-preamble"><h1 id="ocaml-package-documentation"><a href="#ocaml-package-documentation" class="anchor"></a>OCaml package documentation</h1><ul><li><a href="bar/index.html" title="index">bar</a></li><li><a href="foo/index.html" title="index">foo</a></li></ul></header><div class="odoc-content"></div></body></html>
 
   $ dune build @foo-mld
   {0 foo index}

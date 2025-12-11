@@ -3,35 +3,21 @@ This test generates documentation using odoc for a library:
   $ dune build @doc
 
 This test if `.odocl` files are generated
-  $ find _build/default/_doc/_odocls -name '*.odocl' | sort -n
-  _build/default/_doc/_odocls/bar/bar.odocl
+  $ find _build/default/_doc/_odocls/{bar,foo} -name '*.odocl' | sort -n
+  _build/default/_doc/_odocls/bar/bar/bar.odocl
+  _build/default/_doc/_odocls/bar/bar/page-index.odocl
   _build/default/_doc/_odocls/bar/page-index.odocl
-  _build/default/_doc/_odocls/foo/foo.odocl
-  _build/default/_doc/_odocls/foo/foo2.odocl
-  _build/default/_doc/_odocls/foo/foo_byte.odocl
+  _build/default/_doc/_odocls/foo/foo.byte/foo_byte.odocl
+  _build/default/_doc/_odocls/foo/foo.byte/page-index.odocl
+  _build/default/_doc/_odocls/foo/foo/foo.odocl
+  _build/default/_doc/_odocls/foo/foo/foo2.odocl
+  _build/default/_doc/_odocls/foo/foo/foo3.odocl
+  _build/default/_doc/_odocls/foo/foo/page-index.odocl
   _build/default/_doc/_odocls/foo/page-index.odocl
 
   $ dune runtest
   <!DOCTYPE html>
-  <html xmlns="http://www.w3.org/1999/xhtml">
-    <head>
-      <title>index</title>
-      <link rel="stylesheet" href="./odoc.support/odoc.css"/>
-      <meta charset="utf-8"/>
-      <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-    </head>
-    <body>
-      <main class="content">
-        <div class="by-name">
-        <h2>OCaml package documentation</h2>
-        <ol>
-        <li><a href="bar/index.html">bar</a></li>
-        <li><a href="foo/index.html">foo</a></li>
-        </ol>
-        </div>
-      </main>
-    </body>
-  </html>
+  <html xmlns="http://www.w3.org/1999/xhtml"><head><title>index (index)</title><meta charset="utf-8"/><link rel="stylesheet" href="odoc.support/odoc.css"/><meta name="generator" content="odoc 3.1.0"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"></nav><header class="odoc-preamble"><h1 id="ocaml-package-documentation"><a href="#ocaml-package-documentation" class="anchor"></a>OCaml package documentation</h1><ul><li><a href="bar/index.html" title="index">bar</a></li><li><a href="foo/index.html" title="index">foo</a></li></ul></header><div class="odoc-content"></div></body></html>
 
   $ dune build @foo-mld
   {0 foo index}

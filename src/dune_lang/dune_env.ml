@@ -48,9 +48,16 @@ module Odoc = struct
     | Fatal
     | Nonfatal
 
-  type t = { warnings : warnings option }
+  type sidebar =
+    | Global
+    | Per_package
 
-  let empty = { warnings = None }
+  type t =
+    { warnings : warnings option
+    ; sidebar : sidebar option
+    }
+
+  let empty = { warnings = None; sidebar = None }
 
   let warnings_equal x y =
     match x, y with
@@ -58,13 +65,25 @@ module Odoc = struct
     | (Fatal | Nonfatal), _ -> false
   ;;
 
-  let equal x y = Option.equal warnings_equal x.warnings y.warnings
+  let sidebar_equal x y =
+    match x, y with
+    | Global, Global | Per_package, Per_package -> true
+    | (Global | Per_package), _ -> false
+  ;;
+
+  let equal x y =
+    Option.equal warnings_equal x.warnings y.warnings
+    && Option.equal sidebar_equal x.sidebar y.sidebar
+  ;;
+
   let warnings_decode = enum [ "fatal", Fatal; "nonfatal", Nonfatal ]
+  let sidebar_decode = enum [ "global", Global; "per-package", Per_package ]
 
   let decode =
     fields
-    @@ let+ warnings = field_o "warnings" warnings_decode in
-       { warnings }
+    @@ let+ warnings = field_o "warnings" warnings_decode
+       and+ sidebar = field_o "sidebar" sidebar_decode in
+       { warnings; sidebar }
   ;;
 end
 
