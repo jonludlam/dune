@@ -15,6 +15,10 @@ module Doc_mode = struct
     | Local_only -> "_html"
     | Full -> "_html_full"
 
+  let json_subdir = function
+    | Local_only -> "_json"
+    | Full -> "_json_full"
+
   let all = [ Local_only; Full ]
 end
 

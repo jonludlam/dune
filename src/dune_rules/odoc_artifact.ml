@@ -113,26 +113,34 @@ let odocl_file ctx t =
     base_dir ++ (basename ^ ".odocl")
 ;;
 
-let html_output_file ctx mode t ~suffix =
+let output_file ~base ~suffix t =
   let basename = get_basename t in
   match t.kind with
-  | Module (_, target) ->
-    let html_base = Odoc_paths.html ctx mode target in
-    let html_dir = html_base ++ Stdune.String.capitalize basename in
-    html_dir ++ ("index" ^ suffix)
-  | Page (page, target) ->
-    let html_base = Odoc_paths.html ctx mode target in
-    (* For hierarchical pages like "deprecated/index", include parent path in directory *)
-    let html_path =
+  | Module _ ->
+    let dir = base ++ Stdune.String.capitalize basename in
+    dir ++ ("index" ^ suffix)
+  | Page (page, _) ->
+    let path =
       match fst (split_page_name page.name) with
-      | Some parent_path -> html_base ++ parent_path ++ basename
-      | None -> html_base ++ basename
+      | Some parent_path -> base ++ parent_path ++ basename
+      | None -> base ++ basename
     in
-    Path.Build.extend_basename html_path ~suffix
+    Path.Build.extend_basename path ~suffix
 ;;
 
-let html_file ctx mode t = html_output_file ctx mode t ~suffix:".html"
-let json_file ctx mode t = html_output_file ctx mode t ~suffix:".html.json"
+let html_file ctx mode t =
+  let base = match t.kind with
+    | Module (_, target) -> Odoc_paths.html ctx mode target
+    | Page (_, target) -> Odoc_paths.html ctx mode target
+  in
+  output_file ~base ~suffix:".html" t
+
+let json_file ctx mode t =
+  let base = match t.kind with
+    | Module (_, target) -> Odoc_paths.json ctx mode target
+    | Page (_, target) -> Odoc_paths.json ctx mode target
+  in
+  output_file ~base ~suffix:".html.json" t
 
 let html_dir_target ctx mode t =
   match t.kind with

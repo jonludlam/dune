@@ -87,7 +87,12 @@ end = struct
 
   let format_alias : type a. Output_format.t -> Doc_mode.t -> Context.t -> a Target.t -> Alias.t
     =
-    fun f mode ctx m -> Output_format.alias f ~mode ~dir:(Paths.html ctx mode m)
+    fun f mode ctx m ->
+      let dir = match f with
+        | Html -> Paths.html ctx mode m
+        | Json -> Paths.json ctx mode m
+      in
+      Output_format.alias f ~mode ~dir
   ;;
 
   let add_file_deps alias files =
@@ -651,8 +656,8 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
      Action_builder.with_no_targets deps >>> run_odoc)
 ;;
 
-(* Unified HTML generation function for artifacts.
-   Takes an artifact, search_db, and optional sidebar file, generates HTML for it.
+(* Unified HTML/JSON generation function for artifacts.
+   Takes an artifact, search_db, and optional sidebar file, generates output for it.
    This follows the same pattern as compile_artifact and link_artifact.
    Mode parameter determines output directory and whether to use remap file. *)
 let generate_html_artifact
@@ -662,14 +667,17 @@ let generate_html_artifact
       ~sidebar_file
       ?(remap_file : Path.Build.t option = None)
       ?(mode = Doc_mode.Local_only)
+      ~output_format
       ()
   =
   let ctx = Super_context.context sctx in
   let html_root = Paths.html_root ctx mode in
+  let json_root = Paths.json_root ctx mode in
   let odoc_support_path = Paths.odoc_support ctx mode in
   let doc_root = Paths.root ctx in
   (* Compute relative paths from doc_root (_doc) for working directory paths *)
   let html_root_rel = Path.reach (Path.build html_root) ~from:(Path.build doc_root) in
+  let json_root_rel = Path.reach (Path.build json_root) ~from:(Path.build doc_root) in
   (* Compute relative paths from html_root for URIs (since URIs are relative to -o argument) *)
   let odoc_support_uri = Path.reach (Path.build odoc_support_path) ~from:(Path.build html_root) in
   let search_args =
@@ -678,50 +686,53 @@ let generate_html_artifact
       Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:html_root ~html_root
     | None -> Command.Args.empty
   in
-  (* Generate HTML for all output formats *)
-  Memo.List.iter Output_format.all ~f:(fun out ->
-    let html_file = Output_format.target ctx mode out artifact in
-    (* Suppress output for installed packages *)
-    let* quiet = Artifact.should_suppress_output artifact in
-    let run_odoc =
-      run_odoc
-        sctx
-        "html-generate"
-        ~quiet
-        ~flags_for:None
-        [ search_args
-        ; A "-o"
-        ; A html_root_rel
-        ; A "--support-uri"
-        ; A odoc_support_uri
-        ; A "--theme-uri"
-        ; A odoc_support_uri
-        ; (match remap_file with
-           | None -> S []
-           | Some rf -> S [ A "--remap-file"; Dep (Path.build rf) ])
-        ; (match sidebar_file with
-           | Some sf -> S [ A "--sidebar"; Dep (Path.build sf) ]
-           | None -> S [])
-        ; Dep (Path.build (Artifact.odocl_file ctx artifact))
-        ; Output_format.args out
-        ; (match Artifact.get_kind artifact with
-           | Page _ -> Hidden_targets [ html_file ]
-           | Module _ -> Command.Args.empty)
-        ]
-    in
-    (* Add explicit dependency on CSS/support files *)
-    let rule =
-      let open Action_builder.With_targets.O in
-      Action_builder.with_no_targets (Action_builder.path (Path.build odoc_support_path))
-      >>> (match Artifact.html_dir_target ctx mode artifact, out with
-           | Some html_dir, Output_format.Html ->
-             (* Module HTML: odoc generates a directory tree *)
-             Action_builder.With_targets.add_directories ~directory_targets:[ html_dir ] run_odoc
-           | Some _, Output_format.Json | None, _ ->
-             (* Module JSON or Page: file target *)
-             Action_builder.With_targets.add ~file_targets:[ html_file ] run_odoc)
-    in
-    add_rule sctx rule)
+  let output_file = Output_format.target ctx mode output_format artifact in
+  (* Use different output directories for HTML vs JSON *)
+  let output_root_rel = match output_format with
+    | Html -> html_root_rel
+    | Json -> json_root_rel
+  in
+  (* Suppress output for installed packages *)
+  let* quiet = Artifact.should_suppress_output artifact in
+  let run_odoc =
+    run_odoc
+      sctx
+      "html-generate"
+      ~quiet
+      ~flags_for:None
+      [ search_args
+      ; A "-o"
+      ; A output_root_rel
+      ; A "--support-uri"
+      ; A odoc_support_uri
+      ; A "--theme-uri"
+      ; A odoc_support_uri
+      ; (match remap_file with
+         | None -> S []
+         | Some rf -> S [ A "--remap-file"; Dep (Path.build rf) ])
+      ; (match sidebar_file with
+         | Some sf -> S [ A "--sidebar"; Dep (Path.build sf) ]
+         | None -> S [])
+      ; Dep (Path.build (Artifact.odocl_file ctx artifact))
+      ; Output_format.args output_format
+      ; (match Artifact.get_kind artifact with
+         | Page _ -> Hidden_targets [ output_file ]
+         | Module _ -> Command.Args.empty)
+      ]
+  in
+  (* Add explicit dependency on CSS/support files *)
+  let rule =
+    let open Action_builder.With_targets.O in
+    Action_builder.with_no_targets (Action_builder.path (Path.build odoc_support_path))
+    >>> (match Artifact.html_dir_target ctx mode artifact, output_format with
+         | Some html_dir, Output_format.Html ->
+           (* Module HTML: odoc generates a directory tree *)
+           Action_builder.With_targets.add_directories ~directory_targets:[ html_dir ] run_odoc
+         | Some _, Output_format.Json | None, _ ->
+           (* Module JSON or Page: file target *)
+           Action_builder.With_targets.add ~file_targets:[ output_file ] run_odoc)
+  in
+  add_rule sctx rule
 ;;
 
 let setup_css_rule sctx ~mode =
@@ -843,18 +854,28 @@ let setup_toplevel_index_html sctx mode =
     then Some (Paths.sidebar_file ctx mode Global)
     else None
   in
-  (* Generate HTML for the artifact *)
-  generate_html_artifact sctx ~artifact ?search_db ~sidebar_file ~mode ()
+  (* Generate HTML for the artifact (only HTML, not JSON) *)
+  generate_html_artifact sctx ~artifact ?search_db ~sidebar_file ~mode ~output_format:Html ()
 ;;
 
-(* Add dependencies from the toplevel index alias to all child HTML aliases.
-   This ensures that building @doc-full triggers building HTML for all packages
+(* Generate JSON for the toplevel index *)
+let setup_toplevel_index_json sctx mode =
+  let ctx = Super_context.context sctx in
+  let* artifact = Odoc_discovery.toplevel_index_artifact ctx ~mode in
+  generate_html_artifact sctx ~artifact ~sidebar_file:None ~mode ~output_format:Json ()
+;;
+
+(* Add dependencies from the toplevel index alias to all child package aliases.
+   This ensures that building @doc-full (or @doc-json) triggers building output for all packages
    and private libraries, including those in vendored directories that are
    skipped by normal alias recursion. *)
-let setup_toplevel_index_deps sctx mode =
+let setup_toplevel_index_deps sctx mode output =
   let ctx = Super_context.context sctx in
-  let html_root = Paths.html_root ctx mode in
-  let toplevel_alias = Output_format.alias Html ~mode ~dir:html_root in
+  let root = match output with
+    | Output_format.Html -> Paths.html_root ctx mode
+    | Output_format.Json -> Paths.json_root ctx mode
+  in
+  let toplevel_alias = Output_format.alias output ~mode ~dir:root in
   let* items = Odoc_discovery.Toplevel_index.get_items ~mode ctx in
   let child_aliases =
     List.map items ~f:(fun item ->
@@ -862,8 +883,8 @@ let setup_toplevel_index_deps sctx mode =
         | Odoc_discovery.Toplevel_index.Package { name; _ } -> name
         | Odoc_discovery.Toplevel_index.Private_lib { unique_name; _ } -> unique_name
       in
-      let dir = html_root ++ name in
-      Output_format.alias Html ~mode ~dir)
+      let dir = root ++ name in
+      Output_format.alias output ~mode ~dir)
   in
   let deps =
     List.map child_aliases ~f:(fun alias -> Dune_engine.Dep.alias alias)
@@ -953,10 +974,10 @@ let generate_sidebar_binary sctx ~mode ~scope ~index_file =
   Memo.return sidebar_file
 ;;
 
-(* Generate JSON sidebar file from its index - called in _html handler *)
-let generate_sidebar_json sctx ~mode ~scope ~index_file =
+(* Generate JSON sidebar file from its index *)
+let generate_sidebar_json sctx ~mode ~scope ~index_file ~output_format =
   let ctx = Super_context.context sctx in
-  let sidebar_json = Paths.sidebar_json ctx mode scope in
+  let sidebar_json = Paths.sidebar_json ctx mode scope output_format in
   (* Generate JSON sidebar - run from _doc directory with relative path to index *)
   let sidebar_dir =
     match mode with
@@ -1082,7 +1103,7 @@ let handle_remap_artifacts sctx =
   Memo.return (Build_config.Gen_rules.make rules)
 ;;
 
-(* Helper function to generate HTML for a package in a specific mode *)
+(* Helper function to generate HTML/JSON for a package in a specific mode *)
 let generate_html_for_package
       sctx
       ~ctx
@@ -1091,44 +1112,57 @@ let generate_html_for_package
       ~all_lib_names
       ~dir
       ~mode
+      ~output_format
       ()
   =
   (* Filter to only visible artifacts for HTML generation *)
   let visible_artifacts =
     List.filter all_artifacts ~f:(fun a -> not (Artifact.hidden a))
   in
-  (* Generate JSON sidebar and reference binary sidebar *)
-  let* sidebar_file_opt =
-    let pkg = Package.Name.of_string pkg_or_lib_name in
-    let* flags = Flags.get_memo ~dir in
-    let is_private_lib = String.contains pkg_or_lib_name '@' in
-    let scope, should_generate_json =
-      match is_private_lib, mode, flags.sidebar with
-      | true, _, _ ->
-        (* Private libraries always use per-package sidebar with their pseudo-package name *)
-        Per_package pkg, true
-      | false, Doc_mode.Local_only, Flags.Global ->
-        (* Local_only with global sidebar - JSON already generated at _html root *)
-        Global, false
-      | false, Doc_mode.Local_only, Flags.Per_package
-      | false, Doc_mode.Full, _ ->
-        (* Per-package sidebar - generate JSON here *)
-        Per_package pkg, true
-    in
-    let index_file = Paths.index_file ctx mode scope in
-    let* () =
-      if should_generate_json
-      then generate_sidebar_json sctx ~mode ~scope ~index_file
-      else Memo.return ()
-    in
-    Memo.return (Some (Paths.sidebar_file ctx mode scope))
+  (* Compute sidebar scope based on configuration *)
+  let pkg = Package.Name.of_string pkg_or_lib_name in
+  let* flags = Flags.get_memo ~dir in
+  let is_private_lib = String.contains pkg_or_lib_name '@' in
+  let scope, should_generate_sidebar_json =
+    match is_private_lib, mode, flags.sidebar with
+    | true, _, _ ->
+      (* Private libraries always use per-package sidebar with their pseudo-package name *)
+      Per_package pkg, true
+    | false, Doc_mode.Local_only, Flags.Global ->
+      (* Local_only with global sidebar - JSON already generated at root *)
+      Global, false
+    | false, Doc_mode.Local_only, Flags.Per_package
+    | false, Doc_mode.Full, _ ->
+      (* Per-package sidebar - generate JSON here *)
+      Per_package pkg, true
   in
-  (* Create search_db for the entire package (all visible artifacts) *)
+  let index_file = Paths.index_file ctx mode scope in
+  (* Generate sidebar.json for the appropriate output directory *)
+  let paths_output_format = match output_format with
+    | Output_format.Html -> Paths.Html
+    | Output_format.Json -> Paths.Json
+  in
+  let* () =
+    if should_generate_sidebar_json
+    then generate_sidebar_json sctx ~mode ~scope ~index_file ~output_format:paths_output_format
+    else Memo.return ()
+  in
+  (* Reference binary sidebar for HTML generation only *)
+  let sidebar_file_opt =
+    match output_format with
+    | Html -> Some (Paths.sidebar_file ctx mode scope)
+    | Json -> None
+  in
+  (* Create search_db for the entire package - only for HTML *)
   let* search_db =
-    let odocls =
-      List.map visible_artifacts ~f:(fun artifact -> Artifact.odocl_file ctx artifact)
-    in
-    Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
+    match output_format with
+    | Json -> Memo.return None
+    | Html ->
+      let odocls =
+        List.map visible_artifacts ~f:(fun artifact -> Artifact.odocl_file ctx artifact)
+      in
+      let+ db = Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls in
+      Some db
   in
   (* Use shared remap file for Local_only mode (skip for synthetic packages) *)
   let remap_file_opt =
@@ -1139,43 +1173,46 @@ let generate_html_for_package
       else Some (Paths.remap_file ctx)
     | Doc_mode.Full -> None
   in
-  (* Generate HTML for all visible artifacts *)
+  (* Generate output for all visible artifacts *)
   let* () =
     Memo.parallel_iter visible_artifacts ~f:(fun artifact ->
-      let call =
-        match remap_file_opt with
-        | None ->
-          generate_html_artifact
-            sctx
-            ~artifact
-            ~search_db
-            ~sidebar_file:sidebar_file_opt
-            ~mode
-            ()
-        | Some rf ->
-          generate_html_artifact
-            sctx
-            ~artifact
-            ~search_db
-            ~sidebar_file:sidebar_file_opt
-            ~remap_file:(Some rf)
-            ~mode
-            ()
-      in
-      call)
+      match remap_file_opt with
+      | None ->
+        generate_html_artifact
+          sctx
+          ~artifact
+          ?search_db
+          ~sidebar_file:sidebar_file_opt
+          ~mode
+          ~output_format
+          ()
+      | Some rf ->
+        generate_html_artifact
+          sctx
+          ~artifact
+          ?search_db
+          ~sidebar_file:sidebar_file_opt
+          ~remap_file:(Some rf)
+          ~mode
+          ~output_format
+          ())
   in
-  (* Create format aliases for all output formats *)
+  (* Create package-level alias with all output files *)
   let pkg_name = Package.Name.of_string pkg_or_lib_name in
-  let* () =
-    Memo.parallel_iter Output_format.all ~f:(fun output ->
-      (* Create package-level alias with all HTML files *)
-      let all_paths =
-        List.map visible_artifacts ~f:(fun artifact ->
-          Path.build (Output_format.target ctx mode output artifact))
-      in
-      let pkg_alias = Dep.format_alias output mode ctx (Pkg pkg_name) in
-      Dep.add_file_deps pkg_alias all_paths)
+  let artifact_paths =
+    List.map visible_artifacts ~f:(fun artifact ->
+      Path.build (Output_format.target ctx mode output_format artifact))
   in
+  (* Also include sidebar.json if we generated it *)
+  let all_paths =
+    if should_generate_sidebar_json
+    then
+      let sidebar_json = Paths.sidebar_json ctx mode scope paths_output_format in
+      Path.build sidebar_json :: artifact_paths
+    else artifact_paths
+  in
+  let pkg_alias = Dep.format_alias output_format mode ctx (Pkg pkg_name) in
+  let* () = Dep.add_file_deps pkg_alias all_paths in
   (* Also create library-level aliases for each library *)
   let visible_lib_artifacts =
     List.filter visible_artifacts ~f:(fun a ->
@@ -1183,16 +1220,15 @@ let generate_html_for_package
       | Module _ -> true
       | Page _ -> false)
   in
-  (* Add each visible library artifact's HTML files to its library alias *)
+  (* Add each visible library artifact's files to its library alias *)
   let* () =
     Memo.parallel_iter visible_lib_artifacts ~f:(fun artifact ->
-      Memo.parallel_iter Output_format.all ~f:(fun output ->
-        match Artifact.get_kind artifact with
-        | Module (_, ((Lib (_, _) | Private_lib (_, _)) as target)) ->
-          let lib_alias = Dep.format_alias output mode ctx target in
-          let html_file = Path.build (Output_format.target ctx mode output artifact) in
-          Dep.add_file_deps lib_alias [html_file]
-        | Page _ -> Memo.return () (* Package artifacts don't have library aliases *)))
+      match Artifact.get_kind artifact with
+      | Module (_, ((Lib (_, _) | Private_lib (_, _)) as target)) ->
+        let lib_alias = Dep.format_alias output_format mode ctx target in
+        let output_file = Path.build (Output_format.target ctx mode output_format artifact) in
+        Dep.add_file_deps lib_alias [output_file]
+      | Page _ -> Memo.return () (* Package artifacts don't have library aliases *))
   in
   (* Create empty aliases for libraries with no visible artifacts *)
   let lib_names_with_artifacts =
@@ -1217,9 +1253,8 @@ let generate_html_for_package
       in
       match lib_opt with
       | Some lib ->
-        Memo.parallel_iter Output_format.all ~f:(fun output ->
-          let lib_alias = Dep.format_alias output mode ctx (Lib (pkg_name, lib)) in
-          Dep.add_file_deps lib_alias [])
+        let lib_alias = Dep.format_alias output_format mode ctx (Lib (pkg_name, lib)) in
+        Dep.add_file_deps lib_alias []
       | None -> Memo.return ()))
 ;;
 
@@ -1373,13 +1408,42 @@ let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
   let rules =
     Rules.collect_unit (fun () ->
       generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~all_artifacts ~all_lib_names ~dir
-        ~mode ())
+        ~mode ~output_format:Html ()
+      (* Also define empty doc-json alias in _html to prevent alias recursion issues *)
+      >>> let json_alias = Output_format.alias Json ~mode ~dir in
+          Rules.Produce.Alias.add_deps json_alias (Action_builder.return ())
+          >>> (* Add empty JSON aliases for library subdirectories too *)
+          Memo.parallel_iter (Lib_name.Set.to_list all_lib_names) ~f:(fun lib_name ->
+            let lib_dir = dir ++ Lib_name.to_string lib_name in
+            let lib_json_alias = Output_format.alias Json ~mode ~dir:lib_dir in
+            Rules.Produce.Alias.add_deps lib_json_alias (Action_builder.return ())))
   in
   Memo.return
     (Build_config.Gen_rules.make
        ~build_dir_only_sub_dirs:
          (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir (Subdir_set.of_list lib_subdirs))
        ~directory_targets
+       rules)
+;;
+
+let handle_json_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
+  let ctx = Super_context.context sctx in
+  let* all_artifacts, lib_subdirs =
+    Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
+  in
+  let all_lib_names =
+    List.map lib_subdirs ~f:Lib_name.of_string |> Lib_name.Set.of_list
+  in
+  (* JSON uses file targets, not directory targets *)
+  let rules =
+    Rules.collect_unit (fun () ->
+      generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~all_artifacts ~all_lib_names ~dir
+        ~mode ~output_format:Json ())
+  in
+  Memo.return
+    (Build_config.Gen_rules.make
+       ~build_dir_only_sub_dirs:
+         (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir (Subdir_set.of_list lib_subdirs))
        rules)
 ;;
 
@@ -1589,20 +1653,20 @@ let gen_rules sctx ~dir rest =
           Sherlodoc.sherlodoc_dot_js sctx ~dir:(Paths.html_root ctx Doc_mode.Local_only)
           >>> setup_css_rule sctx ~mode:Doc_mode.Local_only
           >>> setup_toplevel_index_html sctx Doc_mode.Local_only
-          >>> Memo.parallel_iter Output_format.all ~f:(fun output ->
-            let* artifact = Odoc_discovery.toplevel_index_artifact ctx ~mode:Doc_mode.Local_only in
-            let html_file = Output_format.target ctx Doc_mode.Local_only output artifact in
-            let alias = Dep.format_alias output Doc_mode.Local_only ctx (Toplevel Doc_mode.Local_only) in
-            Dep.add_file_deps alias [ Path.build html_file ])
+          >>> let* artifact = Odoc_discovery.toplevel_index_artifact ctx ~mode:Doc_mode.Local_only in
+              let html_file = Output_format.target ctx Doc_mode.Local_only Html artifact in
+              let alias = Dep.format_alias Html Doc_mode.Local_only ctx (Toplevel Doc_mode.Local_only) in
+              Dep.add_file_deps alias [ Path.build html_file ]
           >>> (* Generate global sidebar JSON for Local_only mode if configured *)
           let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
           (match flags.sidebar with
            | Flags.Global ->
              let index_file = Paths.index_file ctx Doc_mode.Local_only Global in
              generate_sidebar_json sctx ~mode:Doc_mode.Local_only ~scope:Global ~index_file
+               ~output_format:Paths.Html
            | Flags.Per_package -> Memo.return ())
           (* Add dependencies on all child HTML directories so @doc builds everything *)
-          >>> setup_toplevel_index_deps sctx Doc_mode.Local_only)
+          >>> setup_toplevel_index_deps sctx Doc_mode.Local_only Output_format.Html)
       in
       Memo.return (Build_config.Gen_rules.make ~directory_targets rules)
     | [ "_html"; _; _ ] | [ "_html"; _; _; _ ] ->
@@ -1678,19 +1742,66 @@ let gen_rules sctx ~dir rest =
           Sherlodoc.sherlodoc_dot_js sctx ~dir:html_root
           >>> setup_css_rule sctx ~mode:Doc_mode.Full
           >>> setup_toplevel_index_html sctx Doc_mode.Full
-          >>> Memo.parallel_iter Output_format.all ~f:(fun output ->
-            let* artifact = Odoc_discovery.toplevel_index_artifact ctx ~mode:Doc_mode.Full in
-            let html_file = Output_format.target ctx Doc_mode.Full output artifact in
-            let alias = Dep.format_alias output Doc_mode.Full ctx (Toplevel Doc_mode.Full) in
-            Dep.add_file_deps alias [ Path.build html_file ])
+          >>> let* artifact = Odoc_discovery.toplevel_index_artifact ctx ~mode:Doc_mode.Full in
+              let html_file = Output_format.target ctx Doc_mode.Full Html artifact in
+              let alias = Dep.format_alias Html Doc_mode.Full ctx (Toplevel Doc_mode.Full) in
+              Dep.add_file_deps alias [ Path.build html_file ]
           (* Add dependencies on all child HTML directories so @doc-full builds everything *)
-          >>> setup_toplevel_index_deps sctx Doc_mode.Full)
+          >>> setup_toplevel_index_deps sctx Doc_mode.Full Output_format.Html)
       in
       Memo.return (Build_config.Gen_rules.make ~directory_targets rules)
     | [ "_html_full"; pkg_or_lib_name ] ->
       handle_html_artifacts sctx ~dir ~mode:Doc_mode.Full ~pkg_or_lib_name
     | [ "_html_full"; _; _ ] | [ "_html_full"; _; _; _ ] ->
       (* Library/module directories redirect to parent - package level handler generates HTML *)
+      Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
+    | [ "_json" ] ->
+      (* Root JSON directory - generate toplevel JSON index *)
+      let ctx = Super_context.context sctx in
+      let rules =
+        Rules.collect_unit (fun () ->
+          setup_toplevel_index_json sctx Doc_mode.Local_only
+          >>> let* artifact = Odoc_discovery.toplevel_index_artifact ctx ~mode:Doc_mode.Local_only in
+              let json_file = Output_format.target ctx Doc_mode.Local_only Json artifact in
+              let alias = Dep.format_alias Json Doc_mode.Local_only ctx (Toplevel Doc_mode.Local_only) in
+              Dep.add_file_deps alias [ Path.build json_file ]
+          >>> (* Generate global sidebar JSON for Local_only mode if configured *)
+          let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
+          (match flags.sidebar with
+           | Flags.Global ->
+             let index_file = Paths.index_file ctx Doc_mode.Local_only Global in
+             generate_sidebar_json sctx ~mode:Doc_mode.Local_only ~scope:Global ~index_file
+               ~output_format:Paths.Json
+           | Flags.Per_package -> Memo.return ())
+          (* Add dependencies on all child JSON directories so @doc-json builds everything *)
+          >>> setup_toplevel_index_deps sctx Doc_mode.Local_only Output_format.Json)
+      in
+      (* Don't use Subdir_set.all - package subdirs are handled by pattern matching *)
+      Memo.return (Build_config.Gen_rules.make rules)
+    | [ "_json"; pkg_or_lib_name ] ->
+      handle_json_artifacts sctx ~dir ~mode:Doc_mode.Local_only ~pkg_or_lib_name
+    | [ "_json"; _; _ ] | [ "_json"; _; _; _ ] ->
+      (* JSON subdirectories redirect to parent *)
+      Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
+    | [ "_json_full" ] ->
+      (* Root JSON_full directory - generate toplevel JSON index *)
+      let ctx = Super_context.context sctx in
+      let rules =
+        Rules.collect_unit (fun () ->
+          setup_toplevel_index_json sctx Doc_mode.Full
+          >>> let* artifact = Odoc_discovery.toplevel_index_artifact ctx ~mode:Doc_mode.Full in
+              let json_file = Output_format.target ctx Doc_mode.Full Json artifact in
+              let alias = Dep.format_alias Json Doc_mode.Full ctx (Toplevel Doc_mode.Full) in
+              Dep.add_file_deps alias [ Path.build json_file ]
+          (* Add dependencies on all child JSON directories so @doc-json-full builds everything *)
+          >>> setup_toplevel_index_deps sctx Doc_mode.Full Output_format.Json)
+      in
+      (* Don't use Subdir_set.all - package subdirs are handled by pattern matching *)
+      Memo.return (Build_config.Gen_rules.make rules)
+    | [ "_json_full"; pkg_or_lib_name ] ->
+      handle_json_artifacts sctx ~dir ~mode:Doc_mode.Full ~pkg_or_lib_name
+    | [ "_json_full"; _; _ ] | [ "_json_full"; _; _; _ ] ->
+      (* JSON subdirectories redirect to parent *)
       Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
     | [ "_sidebar" ] -> handle_sidebar_root sctx ~dir ~mode:Doc_mode.Local_only
     | [ "_sidebar"; pkg_or_lib_name ] ->
