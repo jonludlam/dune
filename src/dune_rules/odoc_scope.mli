@@ -2,6 +2,30 @@
 
 open Import
 
+(** Identifies a scope for documentation generation - either a package or a private library.
+
+    This type replaces ad-hoc string parsing that checks for '@' in names
+    to distinguish between packages and private libraries. *)
+module Scope_id : sig
+  type t =
+    | Package of Package.Name.t
+    | Private_lib of string  (** unique name, e.g. "libname@projectkey" *)
+
+  (** Parse a string into a scope ID. Strings containing '@' are treated as
+      private library unique names; others are treated as package names. *)
+  val of_string : string -> t
+
+  (** Convert to string for use in paths. *)
+  val to_string : t -> string
+
+  (** Check if this is a private library (vs a regular package). *)
+  val is_private_lib : t -> bool
+
+  (** Get as a Package.Name.t. For private libs, this parses the string as a package name
+      (which may be useful for certain operations that need a Package.Name.t). *)
+  val as_package_name : t -> Package.Name.t
+end
+
 (** Scope key encoding for v2 library names.
 
     In odoc v2, private libraries from different projects need unique identifiers

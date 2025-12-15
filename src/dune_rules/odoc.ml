@@ -19,6 +19,7 @@ type odoc_output =
   | Odocls
 
 module Artifact = Odoc_artifact
+module Scope_id = Odoc_scope.Scope_id
 
 (* ============================================================================
    BUILD UTILITIES - Rules, formats, and dependencies
@@ -896,19 +897,19 @@ let setup_toplevel_index_deps sctx mode output =
 (* Artifact discovery functions - organized into a module for clarity *)
 
 (* Helper to compute library directory path for private vs package libraries *)
-let lib_dir_path ctx ~output ~pkg_or_lib_name ~lib_name =
+let lib_dir_path ctx ~output ~scope_id ~lib_name =
   let path_prefix =
     match output with
     | Odoc -> "_odoc"
     | Odocls -> "_odocls"
   in
-  if String.contains pkg_or_lib_name '@'
-  then
-    (* Private library: pkg_or_lib_name already identifies the library *)
-    Paths.root ctx ++ path_prefix ++ pkg_or_lib_name
-  else
+  match scope_id with
+  | Scope_id.Private_lib unique_name ->
+    (* Private library: unique_name already identifies the library *)
+    Paths.root ctx ++ path_prefix ++ unique_name
+  | Scope_id.Package pkg ->
     (* Package library: path is pkg/lib *)
-    Paths.root ctx ++ path_prefix ++ pkg_or_lib_name ++ Lib_name.to_string lib_name
+    Paths.root ctx ++ path_prefix ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
 ;;
 
 (* Generate index file from linked .odocl files *)
@@ -1076,10 +1077,10 @@ let handle_remap_artifacts sctx =
       let* private_libs =
         Memo.List.concat_map workspace_pkgs ~f:(fun pkg ->
           let pkg_name = Package.Name.to_string pkg in
-          (* Skip synthetic packages *)
-          if String.contains pkg_name '@'
-          then Memo.return []
-          else
+          (* Skip synthetic packages (private libs) *)
+          match Scope_id.of_string pkg_name with
+          | Scope_id.Private_lib _ -> Memo.return []
+          | Scope_id.Package _ ->
             let* all_artifacts, _lib_subdirs =
               Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_name
             in
@@ -1107,7 +1108,7 @@ let handle_remap_artifacts sctx =
 let generate_html_for_package
       sctx
       ~ctx
-      ~pkg_or_lib_name
+      ~scope_id
       ~all_artifacts
       ~all_lib_names
       ~dir
@@ -1120,19 +1121,18 @@ let generate_html_for_package
     List.filter all_artifacts ~f:(fun a -> not (Artifact.hidden a))
   in
   (* Compute sidebar scope based on configuration *)
-  let pkg = Package.Name.of_string pkg_or_lib_name in
+  let pkg = Scope_id.as_package_name scope_id in
   let* flags = Flags.get_memo ~dir in
-  let is_private_lib = String.contains pkg_or_lib_name '@' in
   let scope, should_generate_sidebar_json =
-    match is_private_lib, mode, flags.sidebar with
-    | true, _, _ ->
+    match scope_id, mode, flags.sidebar with
+    | Scope_id.Private_lib _, _, _ ->
       (* Private libraries always use per-package sidebar with their pseudo-package name *)
       Per_package pkg, true
-    | false, Doc_mode.Local_only, Flags.Global ->
+    | Scope_id.Package _, Doc_mode.Local_only, Flags.Global ->
       (* Local_only with global sidebar - JSON already generated at root *)
       Global, false
-    | false, Doc_mode.Local_only, Flags.Per_package
-    | false, Doc_mode.Full, _ ->
+    | Scope_id.Package _, Doc_mode.Local_only, Flags.Per_package
+    | Scope_id.Package _, Doc_mode.Full, _ ->
       (* Per-package sidebar - generate JSON here *)
       Per_package pkg, true
   in
@@ -1164,14 +1164,12 @@ let generate_html_for_package
       let+ db = Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls in
       Some db
   in
-  (* Use shared remap file for Local_only mode (skip for synthetic packages) *)
+  (* Use shared remap file for Local_only mode (skip for private libs) *)
   let remap_file_opt =
-    match mode with
-    | Doc_mode.Local_only ->
-      if String.contains pkg_or_lib_name '@'
-      then None (* Synthetic package - no remap *)
-      else Some (Paths.remap_file ctx)
-    | Doc_mode.Full -> None
+    match mode, scope_id with
+    | Doc_mode.Local_only, Scope_id.Private_lib _ -> None (* Private lib - no remap *)
+    | Doc_mode.Local_only, Scope_id.Package _ -> Some (Paths.remap_file ctx)
+    | Doc_mode.Full, _ -> None
   in
   (* Generate output for all visible artifacts *)
   let* () =
@@ -1198,7 +1196,6 @@ let generate_html_for_package
           ())
   in
   (* Create package-level alias with all output files *)
-  let pkg_name = Package.Name.of_string pkg_or_lib_name in
   let artifact_paths =
     List.map visible_artifacts ~f:(fun artifact ->
       Path.build (Output_format.target ctx mode output_format artifact))
@@ -1211,7 +1208,7 @@ let generate_html_for_package
       Path.build sidebar_json :: artifact_paths
     else artifact_paths
   in
-  let pkg_alias = Dep.format_alias output_format mode ctx (Pkg pkg_name) in
+  let pkg_alias = Dep.format_alias output_format mode ctx (Pkg pkg) in
   let* () = Dep.add_file_deps pkg_alias all_paths in
   (* Also create library-level aliases for each library *)
   let visible_lib_artifacts =
@@ -1246,14 +1243,14 @@ let generate_html_for_package
       let* lib_opt =
         let* pkg_discovery = Package_discovery.create ~context:ctx in
         let installed_libs =
-          Package_discovery.libraries_of_package pkg_discovery pkg_name
+          Package_discovery.libraries_of_package pkg_discovery pkg
         in
         Memo.return
           (List.find installed_libs ~f:(fun lib -> Lib_name.equal (Lib.name lib) lib_name))
       in
       match lib_opt with
       | Some lib ->
-        let lib_alias = Dep.format_alias output_format mode ctx (Lib (pkg_name, lib)) in
+        let lib_alias = Dep.format_alias output_format mode ctx (Lib (pkg, lib)) in
         Dep.add_file_deps lib_alias []
       | None -> Memo.return ()))
 ;;
@@ -1261,14 +1258,14 @@ let generate_html_for_package
 (* Common setup for package artifact handlers: discovers artifacts and computes lib names *)
 let with_package_artifacts sctx ~dir ~pkg_or_lib_name ~f =
   let ctx = Super_context.context sctx in
-  let is_private_lib = String.contains pkg_or_lib_name '@' in
+  let scope_id = Scope_id.of_string pkg_or_lib_name in
   let* all_artifacts, lib_subdirs =
     Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
   in
   let all_lib_names =
     List.map lib_subdirs ~f:Lib_name.of_string |> Lib_name.Set.of_list
   in
-  let+ rules = f ~ctx ~is_private_lib ~all_artifacts ~all_lib_names in
+  let+ rules = f ~ctx ~scope_id ~all_artifacts ~all_lib_names in
   Build_config.Gen_rules.make
     ~build_dir_only_sub_dirs:
       (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir (Subdir_set.of_list lib_subdirs))
@@ -1278,7 +1275,7 @@ let with_package_artifacts sctx ~dir ~pkg_or_lib_name ~f =
 let handle_odoc_artifacts sctx ~dir ~pkg_or_lib_name =
   Log.info [ Pp.textf "handle_odoc_artifacts: %s" pkg_or_lib_name ];
   with_package_artifacts sctx ~dir ~pkg_or_lib_name
-    ~f:(fun ~ctx ~is_private_lib ~all_artifacts ~all_lib_names ->
+    ~f:(fun ~ctx ~scope_id ~all_artifacts ~all_lib_names ->
       Log.info
         [ Pp.textf
             "handle_odoc_artifacts(%s): %d artifacts, %d libs: %s"
@@ -1318,24 +1315,24 @@ let handle_odoc_artifacts sctx ~dir ~pkg_or_lib_name =
              Lib_name.Set.to_list all_lib_names
              |> Memo.List.filter_map ~f:(fun lib_name ->
                if Lib_name.Set.mem lib_names_with_artifacts lib_name
-               then Memo.return (Some (lib_dir_path ctx ~output:Odoc ~pkg_or_lib_name ~lib_name))
+               then Memo.return (Some (lib_dir_path ctx ~output:Odoc ~scope_id ~lib_name))
                else (
-                 let lib_dir = lib_dir_path ctx ~output:Odoc ~pkg_or_lib_name ~lib_name in
+                 let lib_dir = lib_dir_path ctx ~output:Odoc ~scope_id ~lib_name in
                  let alias = Dep.odoc_all_alias ~dir:lib_dir in
                  let+ () = Dep.add_file_deps alias [] in
                  Some lib_dir))
            in
-           if is_private_lib
-           then Memo.return ()
-           else (
-             let pkg_dir = Paths.root ctx ++ "_odoc" ++ pkg_or_lib_name in
+           match scope_id with
+           | Scope_id.Private_lib _ -> Memo.return ()
+           | Scope_id.Package pkg ->
+             let pkg_dir = Paths.root ctx ++ "_odoc" ++ Package.Name.to_string pkg in
              let pkg_alias = Dep.odoc_all_alias ~dir:pkg_dir in
-             Dep.add_odoc_all_deps pkg_alias ~dirs:lib_alias_dirs))))
+             Dep.add_odoc_all_deps pkg_alias ~dirs:lib_alias_dirs)))
 ;;
 
 let handle_odocls_artifacts sctx ~dir ~pkg_or_lib_name =
   with_package_artifacts sctx ~dir ~pkg_or_lib_name
-    ~f:(fun ~ctx ~is_private_lib ~all_artifacts ~all_lib_names ->
+    ~f:(fun ~ctx ~scope_id ~all_artifacts ~all_lib_names ->
       Memo.return
         (Rules.collect_unit (fun () ->
            let visible_artifacts =
@@ -1355,7 +1352,7 @@ let handle_odocls_artifacts sctx ~dir ~pkg_or_lib_name =
                match Artifact.lib artifact with
                | Some lib ->
                  let lib_name = Lib.name lib in
-                 let lib_dir = lib_dir_path ctx ~output:Odocls ~pkg_or_lib_name ~lib_name in
+                 let lib_dir = lib_dir_path ctx ~output:Odocls ~scope_id ~lib_name in
                  let lib_alias = Dep.odoc_all_alias ~dir:lib_dir in
                  let odocl_file = Path.build (Artifact.odocl_file ctx artifact) in
                  Dep.add_file_deps lib_alias [ odocl_file ]
@@ -1372,23 +1369,24 @@ let handle_odocls_artifacts sctx ~dir ~pkg_or_lib_name =
                if Lib_name.Set.mem lib_names_with_artifacts lib_name
                then Memo.return ()
                else (
-                 let lib_dir = lib_dir_path ctx ~output:Odocls ~pkg_or_lib_name ~lib_name in
+                 let lib_dir = lib_dir_path ctx ~output:Odocls ~scope_id ~lib_name in
                  let lib_alias = Dep.odoc_all_alias ~dir:lib_dir in
                  Dep.add_file_deps lib_alias []))
            in
-           if is_private_lib
-           then Memo.return ()
-           else (
-             let pkg_dir = Paths.odocl_root ctx ++ pkg_or_lib_name in
+           match scope_id with
+           | Scope_id.Private_lib _ -> Memo.return ()
+           | Scope_id.Package pkg ->
+             let pkg_dir = Paths.odocl_root ctx ++ Package.Name.to_string pkg in
              let pkg_alias = Dep.odoc_all_alias ~dir:pkg_dir in
              let all_odocl_paths =
                List.map visible_artifacts ~f:(fun a -> Path.build (Artifact.odocl_file ctx a))
              in
-             Dep.add_file_deps pkg_alias all_odocl_paths))))
+             Dep.add_file_deps pkg_alias all_odocl_paths)))
 ;;
 
 let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
   let ctx = Super_context.context sctx in
+  let scope_id = Scope_id.of_string pkg_or_lib_name in
   let* all_artifacts, lib_subdirs =
     Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
   in
@@ -1407,7 +1405,7 @@ let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
   in
   let rules =
     Rules.collect_unit (fun () ->
-      generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~all_artifacts ~all_lib_names ~dir
+      generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~all_lib_names ~dir
         ~mode ~output_format:Html ()
       (* Also define empty doc-json alias in _html to prevent alias recursion issues *)
       >>> let json_alias = Output_format.alias Json ~mode ~dir in
@@ -1428,6 +1426,7 @@ let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
 
 let handle_json_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
   let ctx = Super_context.context sctx in
+  let scope_id = Scope_id.of_string pkg_or_lib_name in
   let* all_artifacts, lib_subdirs =
     Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
   in
@@ -1437,7 +1436,7 @@ let handle_json_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
   (* JSON uses file targets, not directory targets *)
   let rules =
     Rules.collect_unit (fun () ->
-      generate_html_for_package sctx ~ctx ~pkg_or_lib_name ~all_artifacts ~all_lib_names ~dir
+      generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~all_lib_names ~dir
         ~mode ~output_format:Json ())
   in
   Memo.return

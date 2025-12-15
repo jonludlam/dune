@@ -745,14 +745,12 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg : (Odoc_artifact.t list * str
 let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
   : (Odoc_artifact.t list * string list) Memo.t
   =
-  (* Check if this is a private library (contains '@') or a package *)
-  if String.contains pkg_or_lib_unique_name '@'
-  then
+  (* Check if this is a private library or a package *)
+  match Odoc_scope.Scope_id.of_string pkg_or_lib_unique_name with
+  | Odoc_scope.Scope_id.Private_lib lib_unique_name ->
     (* Private library *)
-    discover_private_lib_artifacts sctx ctx ~lib_unique_name:pkg_or_lib_unique_name
-  else (
-    (* Package *)
-    let pkg = Package.Name.of_string pkg_or_lib_unique_name in
+    discover_private_lib_artifacts sctx ctx ~lib_unique_name
+  | Odoc_scope.Scope_id.Package pkg ->
     (* Check if this is a local or installed package *)
     let* is_project_pkg =
       let* packages = Dune_load.packages () in
@@ -762,7 +760,7 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
       [ Pp.textf "discover_package_artifacts(%s): is_project_pkg=%b" pkg_or_lib_unique_name is_project_pkg ];
     if is_project_pkg
     then discover_local_pkg_artifacts sctx ctx ~pkg
-    else discover_installed_pkg_artifacts sctx ctx ~pkg)
+    else discover_installed_pkg_artifacts sctx ctx ~pkg
 ;;
 
 (* Collect all visible odocl files from packages (and private libraries for Full mode),

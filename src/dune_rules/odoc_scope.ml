@@ -3,6 +3,33 @@
 open Import
 open Memo.O
 
+module Scope_id = struct
+  type t =
+    | Package of Package.Name.t
+    | Private_lib of string
+
+  let of_string s =
+    if String.contains s '@'
+    then Private_lib s
+    else Package (Package.Name.of_string s)
+  ;;
+
+  let to_string = function
+    | Package pkg -> Package.Name.to_string pkg
+    | Private_lib name -> name
+  ;;
+
+  let is_private_lib = function
+    | Package _ -> false
+    | Private_lib _ -> true
+  ;;
+
+  let as_package_name = function
+    | Package pkg -> pkg
+    | Private_lib name -> Package.Name.of_string name
+  ;;
+end
+
 module Scope_key : sig
   val of_string : Context_name.t -> string -> (Lib_name.t * Lib.DB.t) Memo.t
   val to_string : Lib_name.t -> Dune_project.t -> string
