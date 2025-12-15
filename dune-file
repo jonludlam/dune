@@ -47,6 +47,9 @@
 (env
  (_
   (flags :standard %{dune-warnings} -alert -unstable)
+  (odoc
+   (sidebar per-package)
+   (support per-package))
   (env-vars
    ; Workaround for #6607
    (CLICOLOR_FORCE 0))))

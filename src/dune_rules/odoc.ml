@@ -696,13 +696,12 @@ let generate_html_artifact
   let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
   (* Determine support path: per-package only when configured AND we have a package *)
   let odoc_support_path, odoc_support_uri =
-    match flags.support, pkg_name with
-    | Flags.Per_package, Some pkg ->
-      Paths.odoc_support_for_pkg ctx mode pkg, "odoc.support"
-    | Flags.Root, _ | Flags.Per_package, None ->
-      let path = Paths.odoc_support ctx mode in
-      let uri = Path.reach (Path.build path) ~from:(Path.build html_root) in
-      path, uri
+    let path = match flags.support, pkg_name with
+      | Flags.Per_package, Some pkg -> Paths.odoc_support_for_pkg ctx mode pkg
+      | Flags.Root, _ | Flags.Per_package, None -> Paths.odoc_support ctx mode
+    in
+    let uri = Path.reach (Path.build path) ~from:(Path.build html_root) in
+    path, uri
   in
   let doc_root = Paths.root ctx in
   (* Compute relative paths from doc_root (_doc) for working directory paths *)
@@ -1466,10 +1465,8 @@ let handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format =
     List.map all_dir_targets ~f:(fun dir -> dir, Loc.none)
     |> Path.Build.Map.of_list_exn
   in
-  (* Add odoc.support to subdirs if per-package support is enabled *)
-  let subdirs =
-    if needs_pkg_support then "odoc.support" :: lib_subdirs else lib_subdirs
-  in
+  (* Note: we don't add odoc.support to subdirs - it's just a directory target,
+     same as at the root level. Adding it to subdirs causes conflicts. *)
   let other_format = Output_format.other output_format in
   let rules =
     Rules.collect_unit (fun () ->
@@ -1491,7 +1488,7 @@ let handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format =
   Memo.return
     (Build_config.Gen_rules.make
        ~build_dir_only_sub_dirs:
-         (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir (Subdir_set.of_list subdirs))
+         (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir (Subdir_set.of_list lib_subdirs))
        ~directory_targets
        rules)
 ;;
