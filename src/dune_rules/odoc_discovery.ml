@@ -676,37 +676,34 @@ let create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifa
   Odoc_artifact.create ~kind ~source ~extra_libs:[] ~extra_packages:[]
 ;;
 
-(* Discover artifacts for a private library using validated Scope_id *)
-let discover_private_lib_artifacts sctx ctx ~(scope_id : Odoc_scope.Scope_id.t)
+(* Discover artifacts for a private library.
+   Takes the fields from Scope_id.Private_lib directly to make invalid calls impossible. *)
+let discover_private_lib_artifacts sctx ctx ~lib_unique_name ~lib_name ~project
   : (Odoc_artifact.t list * string list) Memo.t
   =
-  match scope_id with
-  | Odoc_scope.Scope_id.Package _ ->
-    Code_error.raise "discover_private_lib_artifacts called with Package scope_id" []
-  | Odoc_scope.Scope_id.Private_lib { unique_name = lib_unique_name; lib_name; project } ->
-    let* lib_db =
-      let+ scope = Scope.DB.find_by_project (Context.name ctx) project in
-      Scope.libs scope
+  let* lib_db =
+    let+ scope = Scope.DB.find_by_project (Context.name ctx) project in
+    Scope.libs scope
+  in
+  let* lib_opt =
+    let+ lib = Lib.DB.find lib_db lib_name in
+    Option.bind ~f:Lib.Local.of_lib lib
+  in
+  match lib_opt with
+  | None -> Memo.return ([], [])
+  | Some local_lib ->
+    (* Private libraries use a dummy package *)
+    let dummy_pkg = Package.Name.of_string lib_unique_name in
+    let* module_artifacts =
+      discover_local_lib_artifacts sctx ctx ~pkg:dummy_pkg ~lib_name ~local_lib
     in
-    let* lib_opt =
-      let+ lib = Lib.DB.find lib_db lib_name in
-      Option.bind ~f:Lib.Local.of_lib lib
+    (* Generate index page for the private library *)
+    let index_artifact =
+      create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifacts:module_artifacts
     in
-    (match lib_opt with
-     | None -> Memo.return ([], [])
-     | Some local_lib ->
-       (* Private libraries use a dummy package *)
-       let dummy_pkg = Package.Name.of_string lib_unique_name in
-       let* module_artifacts =
-         discover_local_lib_artifacts sctx ctx ~pkg:dummy_pkg ~lib_name ~local_lib
-       in
-       (* Generate index page for the private library *)
-       let index_artifact =
-         create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifacts:module_artifacts
-       in
-       let artifacts = index_artifact :: module_artifacts in
-       (* Private libraries don't have subdirectories in the same sense as packages *)
-       Memo.return (artifacts, []))
+    let artifacts = index_artifact :: module_artifacts in
+    (* Private libraries don't have subdirectories in the same sense as packages *)
+    Memo.return (artifacts, [])
 ;;
 
 (* Discover artifacts for a local package *)
@@ -755,9 +752,9 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
   (* Check if this is a private library or a package *)
   let* scope_id = Odoc_scope.Scope_id.of_string pkg_or_lib_unique_name in
   match scope_id with
-  | Odoc_scope.Scope_id.Private_lib _ ->
-    (* Private library - pass the validated scope_id *)
-    discover_private_lib_artifacts sctx ctx ~scope_id
+  | Odoc_scope.Scope_id.Private_lib { unique_name; lib_name; project } ->
+    (* Private library - pass the validated fields *)
+    discover_private_lib_artifacts sctx ctx ~lib_unique_name:unique_name ~lib_name ~project
   | Odoc_scope.Scope_id.Package pkg ->
     (* Check if this is a local or installed package *)
     let* is_project_pkg =
