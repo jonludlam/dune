@@ -4,16 +4,27 @@ open Import
 
 (** Identifies a scope for documentation generation - either a package or a private library.
 
-    This type replaces ad-hoc string parsing that checks for '@' in names
-    to distinguish between packages and private libraries. *)
+    This type provides validated scope identification. For private libraries,
+    the project is resolved and validated during construction, ensuring that
+    if you have a [Scope_id.t], it refers to a valid scope. *)
 module Scope_id : sig
   type t =
     | Package of Package.Name.t
-    | Private_lib of string  (** unique name, e.g. "libname@projectkey" *)
+    | Private_lib of
+        { unique_name : string
+        ; lib_name : Lib_name.t
+        ; project : Dune_project.t
+        }
 
-  (** Parse a string into a scope ID. Strings containing '@' are treated as
-      private library unique names; others are treated as package names. *)
-  val of_string : string -> t
+  (** Parse and validate a scope ID string.
+
+      For strings containing '@' (private library format "libname@projectkey"),
+      this resolves the project from the key and validates it exists.
+      For other strings, treats them as package names.
+
+      Returns a [Memo.t] because private library validation requires
+      looking up the project by its key. *)
+  val of_string : string -> t Memo.t
 
   (** Convert to string for use in paths. *)
   val to_string : t -> string
@@ -21,9 +32,15 @@ module Scope_id : sig
   (** Check if this is a private library (vs a regular package). *)
   val is_private_lib : t -> bool
 
-  (** Get as a Package.Name.t. For private libs, this parses the string as a package name
-      (which may be useful for certain operations that need a Package.Name.t). *)
+  (** Get as a Package.Name.t. For private libs, this parses the unique_name
+      as a package name (useful for certain operations that need a Package.Name.t). *)
   val as_package_name : t -> Package.Name.t
+
+  (** For private libs, get the library name component. *)
+  val lib_name : t -> Lib_name.t option
+
+  (** For private libs, get the resolved project. *)
+  val project : t -> Dune_project.t option
 end
 
 (** Scope key encoding for v2 library names.

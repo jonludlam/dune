@@ -904,9 +904,9 @@ let lib_dir_path ctx ~output ~scope_id ~lib_name =
     | Odocls -> "_odocls"
   in
   match scope_id with
-  | Scope_id.Private_lib unique_name ->
+  | Scope_id.Private_lib _ ->
     (* Private library: unique_name already identifies the library *)
-    Paths.root ctx ++ path_prefix ++ unique_name
+    Paths.root ctx ++ path_prefix ++ Scope_id.to_string scope_id
   | Scope_id.Package pkg ->
     (* Package library: path is pkg/lib *)
     Paths.root ctx ++ path_prefix ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
@@ -1078,7 +1078,8 @@ let handle_remap_artifacts sctx =
         Memo.List.concat_map workspace_pkgs ~f:(fun pkg ->
           let pkg_name = Package.Name.to_string pkg in
           (* Skip synthetic packages (private libs) *)
-          match Scope_id.of_string pkg_name with
+          let* scope_id = Scope_id.of_string pkg_name in
+          match scope_id with
           | Scope_id.Private_lib _ -> Memo.return []
           | Scope_id.Package _ ->
             let* all_artifacts, _lib_subdirs =
@@ -1258,7 +1259,7 @@ let generate_html_for_package
 (* Common setup for package artifact handlers: discovers artifacts and computes lib names *)
 let with_package_artifacts sctx ~dir ~pkg_or_lib_name ~f =
   let ctx = Super_context.context sctx in
-  let scope_id = Scope_id.of_string pkg_or_lib_name in
+  let* scope_id = Scope_id.of_string pkg_or_lib_name in
   let* all_artifacts, lib_subdirs =
     Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
   in
@@ -1386,7 +1387,7 @@ let handle_odocls_artifacts sctx ~dir ~pkg_or_lib_name =
 
 let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
   let ctx = Super_context.context sctx in
-  let scope_id = Scope_id.of_string pkg_or_lib_name in
+  let* scope_id = Scope_id.of_string pkg_or_lib_name in
   let* all_artifacts, lib_subdirs =
     Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
   in
@@ -1426,7 +1427,7 @@ let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
 
 let handle_json_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
   let ctx = Super_context.context sctx in
-  let scope_id = Scope_id.of_string pkg_or_lib_name in
+  let* scope_id = Scope_id.of_string pkg_or_lib_name in
   let* all_artifacts, lib_subdirs =
     Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
   in

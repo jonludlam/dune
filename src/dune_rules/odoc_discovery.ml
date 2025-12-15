@@ -746,9 +746,11 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
   : (Odoc_artifact.t list * string list) Memo.t
   =
   (* Check if this is a private library or a package *)
-  match Odoc_scope.Scope_id.of_string pkg_or_lib_unique_name with
-  | Odoc_scope.Scope_id.Private_lib lib_unique_name ->
+  let* scope_id = Odoc_scope.Scope_id.of_string pkg_or_lib_unique_name in
+  match scope_id with
+  | Odoc_scope.Scope_id.Private_lib _ ->
     (* Private library *)
+    let lib_unique_name = Odoc_scope.Scope_id.to_string scope_id in
     discover_private_lib_artifacts sctx ctx ~lib_unique_name
   | Odoc_scope.Scope_id.Package pkg ->
     (* Check if this is a local or installed package *)
