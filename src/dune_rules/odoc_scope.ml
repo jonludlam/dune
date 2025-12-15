@@ -77,22 +77,18 @@ module Scope_id = struct
     | Package _ -> None
     | Private_lib { project; _ } -> Some project
   ;;
+
+  let lib_db context = function
+    | Package _ -> Scope.DB.public_libs context
+    | Private_lib { project; _ } ->
+      let+ scope = Scope.DB.find_by_project context project in
+      Scope.libs scope
+  ;;
 end
 
 module Scope_key : sig
-  val of_string : Context_name.t -> string -> (Lib_name.t * Lib.DB.t) Memo.t
   val to_string : Lib_name.t -> Dune_project.t -> string
 end = struct
-  let of_string context s =
-    match String.rsplit2 s ~on:'@' with
-    | None ->
-      let+ public_libs = Scope.DB.public_libs context in
-      Lib_name.parse_string_exn (Loc.none, s), public_libs
-    | Some (lib, key) ->
-      let+ scope = find_project_by_key key >>= Scope.DB.find_by_project context in
-      Lib_name.parse_string_exn (Loc.none, lib), Scope.libs scope
-  ;;
-
   let to_string lib project =
     let key = file_key project in
     sprintf "%s@%s" (Lib_name.to_string lib) key

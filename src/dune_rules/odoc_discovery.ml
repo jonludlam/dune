@@ -676,11 +676,16 @@ let create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifa
   Odoc_artifact.create ~kind ~source ~extra_libs:[] ~extra_packages:[]
 ;;
 
-(* Discover artifacts for a private library (lib_unique_name format like "dune_pkg@e6ee5b2bc981") *)
-let discover_private_lib_artifacts sctx ctx ~lib_unique_name
+(* Discover artifacts for a private library using validated Scope_id *)
+let discover_private_lib_artifacts sctx ctx ~(scope_id : Odoc_scope.Scope_id.t)
   : (Odoc_artifact.t list * string list) Memo.t
   =
-  let* lib_name, lib_db = Odoc_scope.Scope_key.of_string (Context.name ctx) lib_unique_name in
+  let lib_unique_name = Odoc_scope.Scope_id.to_string scope_id in
+  let lib_name = match Odoc_scope.Scope_id.lib_name scope_id with
+    | Some name -> name
+    | None -> Code_error.raise "discover_private_lib_artifacts called with Package scope_id" []
+  in
+  let* lib_db = Odoc_scope.Scope_id.lib_db (Context.name ctx) scope_id in
   let* lib_opt =
     let+ lib = Lib.DB.find lib_db lib_name in
     Option.bind ~f:Lib.Local.of_lib lib
@@ -749,9 +754,8 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
   let* scope_id = Odoc_scope.Scope_id.of_string pkg_or_lib_unique_name in
   match scope_id with
   | Odoc_scope.Scope_id.Private_lib _ ->
-    (* Private library *)
-    let lib_unique_name = Odoc_scope.Scope_id.to_string scope_id in
-    discover_private_lib_artifacts sctx ctx ~lib_unique_name
+    (* Private library - pass the validated scope_id *)
+    discover_private_lib_artifacts sctx ctx ~scope_id
   | Odoc_scope.Scope_id.Package pkg ->
     (* Check if this is a local or installed package *)
     let* is_project_pkg =

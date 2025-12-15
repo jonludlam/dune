@@ -41,6 +41,12 @@ module Scope_id : sig
 
   (** For private libs, get the resolved project. *)
   val project : t -> Dune_project.t option
+
+  (** Get the library database for this scope.
+
+      For packages, returns the public libs database.
+      For private libs, returns the scope's library database. *)
+  val lib_db : Context_name.t -> t -> Lib.DB.t Memo.t
 end
 
 (** Scope key encoding for v2 library names.
@@ -50,12 +56,6 @@ end
     into library names using the format "libname@key" where key is a 12-character
     hash derived from the project name and root path. *)
 module Scope_key : sig
-  (** Parse a v2 library name string and resolve it to a library name and database.
-
-      - Input without '@': treated as public library, uses public_libs database
-      - Input with '@': "libname@key" format, looks up project by key and uses its scope *)
-  val of_string : Context_name.t -> string -> (Lib_name.t * Lib.DB.t) Memo.t
-
   (** Convert a library name to its v2 unique name format.
 
       For a private library in the given project, generates "libname@key" where
