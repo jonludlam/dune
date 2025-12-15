@@ -19,9 +19,14 @@ module Odoc : sig
     | Global
     | Per_package
 
+  type support =
+    | Root
+    | Per_package
+
   type t =
     { warnings : warnings option
     ; sidebar : sidebar option
+    ; support : support option
     }
 
   val decode : t Decoder.t

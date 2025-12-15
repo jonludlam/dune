@@ -81,6 +81,7 @@ let lib_mld_dir ctx pkg lib_name =
 
 let lib_index_mld ctx pkg lib_name = lib_mld_dir ctx pkg lib_name ++ "index.mld"
 let odoc_support ctx mode = html_root ctx mode ++ odoc_support_dirname
+let odoc_support_for_pkg ctx mode pkg = html_root ctx mode ++ pkg ++ odoc_support_dirname
 
 let toplevel_index_mld ctx mode = index_root ctx mode ++ "index.mld"
 

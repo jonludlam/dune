@@ -226,18 +226,24 @@ module Flags = struct
     | Global
     | Per_package
 
+  type support = Dune_env.Odoc.support =
+    | Root
+    | Per_package
+
   type t =
     { warnings : warnings
     ; sidebar : sidebar
+    ; support : support
     }
 
-  let default = { warnings = Nonfatal; sidebar = Per_package }
+  let default = { warnings = Nonfatal; sidebar = Per_package; support = Root }
 
   let get_memo ~dir =
     Env_stanza_db.value ~default ~dir ~f:(fun config ->
       let warnings = Option.value config.odoc.warnings ~default:default.warnings in
       let sidebar = Option.value config.odoc.sidebar ~default:default.sidebar in
-      Memo.return (Some { warnings; sidebar }))
+      let support = Option.value config.odoc.support ~default:default.support in
+      Memo.return (Some { warnings; sidebar; support }))
   ;;
 
   let get ~dir = get_memo ~dir |> Action_builder.of_memo
@@ -671,7 +677,8 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
 (* Unified HTML/JSON generation function for artifacts.
    Takes an artifact, search_db, and optional sidebar file, generates output for it.
    This follows the same pattern as compile_artifact and link_artifact.
-   Mode parameter determines output directory and whether to use remap file. *)
+   Mode parameter determines output directory and whether to use remap file.
+   pkg_name is used for per-package support files - when None (toplevel), always uses root. *)
 let generate_html_artifact
       sctx
       ~artifact
@@ -680,18 +687,27 @@ let generate_html_artifact
       ?(remap_file : Path.Build.t option = None)
       ?(mode = Doc_mode.Local_only)
       ~output_format
+      ?pkg_name
       ()
   =
   let ctx = Super_context.context sctx in
   let html_root = Paths.html_root ctx mode in
   let json_root = Paths.json_root ctx mode in
-  let odoc_support_path = Paths.odoc_support ctx mode in
+  let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
+  (* Determine support path: per-package only when configured AND we have a package *)
+  let odoc_support_path, odoc_support_uri =
+    match flags.support, pkg_name with
+    | Flags.Per_package, Some pkg ->
+      Paths.odoc_support_for_pkg ctx mode pkg, "odoc.support"
+    | Flags.Root, _ | Flags.Per_package, None ->
+      let path = Paths.odoc_support ctx mode in
+      let uri = Path.reach (Path.build path) ~from:(Path.build html_root) in
+      path, uri
+  in
   let doc_root = Paths.root ctx in
   (* Compute relative paths from doc_root (_doc) for working directory paths *)
   let html_root_rel = Path.reach (Path.build html_root) ~from:(Path.build doc_root) in
   let json_root_rel = Path.reach (Path.build json_root) ~from:(Path.build doc_root) in
-  (* Compute relative paths from html_root for URIs (since URIs are relative to -o argument) *)
-  let odoc_support_uri = Path.reach (Path.build odoc_support_path) ~from:(Path.build html_root) in
   let search_args =
     match search_db with
     | Some search_db ->
@@ -750,6 +766,23 @@ let generate_html_artifact
 let setup_css_rule sctx ~mode =
   let ctx = Super_context.context sctx in
   let dir = Paths.odoc_support ctx mode in
+  let run_odoc =
+    let cmd =
+      run_odoc
+        sctx
+        "support-files"
+        ~quiet:false
+        ~flags_for:None
+        [ A "-o"; Path (Path.build dir) ]
+    in
+    Action_builder.With_targets.add_directories ~directory_targets:[ dir ] cmd
+  in
+  add_rule sctx run_odoc
+
+(* Generate support files for a specific package (when support = per_package) *)
+let setup_pkg_css_rule sctx ~mode ~pkg_name =
+  let ctx = Super_context.context sctx in
+  let dir = Paths.odoc_support_for_pkg ctx mode pkg_name in
   let run_odoc =
     let cmd =
       run_odoc
@@ -1184,6 +1217,7 @@ let generate_html_for_package
     | Doc_mode.Full, _ -> None
   in
   (* Generate output for all visible artifacts *)
+  let pkg_name = Scope_id.to_string scope_id in
   let* () =
     Memo.parallel_iter visible_artifacts ~f:(fun artifact ->
       match remap_file_opt with
@@ -1195,6 +1229,7 @@ let generate_html_for_package
           ~sidebar_file:sidebar_file_opt
           ~mode
           ~output_format
+          ~pkg_name
           ()
       | Some rf ->
         generate_html_artifact
@@ -1205,6 +1240,7 @@ let generate_html_for_package
           ~remap_file:(Some rf)
           ~mode
           ~output_format
+          ~pkg_name
           ())
   in
   (* Create package-level alias with all output files *)
@@ -1405,20 +1441,43 @@ let handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format =
   let all_lib_names =
     List.map lib_subdirs ~f:Lib_name.of_string |> Lib_name.Set.of_list
   in
+  (* Check if we need per-package support files (HTML only) *)
+  let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
+  let needs_pkg_support = match flags.support, output_format with
+    | Flags.Per_package, Output_format.Html -> true
+    | _ -> false
+  in
   (* Collect directory targets for module directories (deduplicated) *)
-  let directory_targets =
+  let module_dir_targets =
     List.filter_map all_artifacts ~f:(fun artifact ->
       if Artifact.hidden artifact then None
       else Output_format.dir_target ctx mode output_format artifact)
     |> Path.Build.Set.of_list
     |> Path.Build.Set.to_list
-    |> List.map ~f:(fun dir -> dir, Loc.none)
+  in
+  (* Add support directory target if per-package support is enabled *)
+  let all_dir_targets =
+    if needs_pkg_support then
+      let support_dir = Paths.odoc_support_for_pkg ctx mode pkg_or_lib_name in
+      support_dir :: module_dir_targets
+    else module_dir_targets
+  in
+  let directory_targets =
+    List.map all_dir_targets ~f:(fun dir -> dir, Loc.none)
     |> Path.Build.Map.of_list_exn
+  in
+  (* Add odoc.support to subdirs if per-package support is enabled *)
+  let subdirs =
+    if needs_pkg_support then "odoc.support" :: lib_subdirs else lib_subdirs
   in
   let other_format = Output_format.other output_format in
   let rules =
     Rules.collect_unit (fun () ->
-      generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~all_lib_names ~dir
+      (* Generate per-package support files if needed *)
+      (if needs_pkg_support
+       then setup_pkg_css_rule sctx ~mode ~pkg_name:pkg_or_lib_name
+       else Memo.return ())
+      >>> generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~all_lib_names ~dir
         ~mode ~output_format ()
       (* Also define empty alias for the other format to prevent alias recursion issues *)
       >>> let other_alias = Output_format.alias other_format ~mode ~dir in
@@ -1432,7 +1491,7 @@ let handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format =
   Memo.return
     (Build_config.Gen_rules.make
        ~build_dir_only_sub_dirs:
-         (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir (Subdir_set.of_list lib_subdirs))
+         (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir (Subdir_set.of_list subdirs))
        ~directory_targets
        rules)
 ;;

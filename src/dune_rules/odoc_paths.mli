@@ -20,6 +20,7 @@ val odocl : Context.t -> 'a Odoc_target.t -> Path.Build.t
 val gen_mld_dir : Context.t -> Package.Name.t -> Path.Build.t
 val lib_index_mld : Context.t -> Package.Name.t -> Lib_name.t -> Path.Build.t
 val odoc_support : Context.t -> Doc_mode.t -> Path.Build.t
+val odoc_support_for_pkg : Context.t -> Doc_mode.t -> string -> Path.Build.t
 val toplevel_index_mld : Context.t -> Doc_mode.t -> Path.Build.t
 val index_file : Context.t -> Doc_mode.t -> sidebar_scope -> Path.Build.t
 val sidebar_file : Context.t -> Doc_mode.t -> sidebar_scope -> Path.Build.t
