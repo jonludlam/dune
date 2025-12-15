@@ -68,22 +68,6 @@ module Scope_id = struct
     | Private_lib { unique_name; _ } -> Package.Name.of_string unique_name
   ;;
 
-  let lib_name = function
-    | Package _ -> None
-    | Private_lib { lib_name; _ } -> Some lib_name
-  ;;
-
-  let project = function
-    | Package _ -> None
-    | Private_lib { project; _ } -> Some project
-  ;;
-
-  let lib_db context = function
-    | Package _ -> Scope.DB.public_libs context
-    | Private_lib { project; _ } ->
-      let+ scope = Scope.DB.find_by_project context project in
-      Scope.libs scope
-  ;;
 end
 
 module Scope_key : sig

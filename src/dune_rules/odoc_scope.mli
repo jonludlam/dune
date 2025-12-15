@@ -36,17 +36,6 @@ module Scope_id : sig
       as a package name (useful for certain operations that need a Package.Name.t). *)
   val as_package_name : t -> Package.Name.t
 
-  (** For private libs, get the library name component. *)
-  val lib_name : t -> Lib_name.t option
-
-  (** For private libs, get the resolved project. *)
-  val project : t -> Dune_project.t option
-
-  (** Get the library database for this scope.
-
-      For packages, returns the public libs database.
-      For private libs, returns the scope's library database. *)
-  val lib_db : Context_name.t -> t -> Lib.DB.t Memo.t
 end
 
 (** Scope key encoding for v2 library names.

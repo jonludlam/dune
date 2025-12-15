@@ -680,31 +680,33 @@ let create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifa
 let discover_private_lib_artifacts sctx ctx ~(scope_id : Odoc_scope.Scope_id.t)
   : (Odoc_artifact.t list * string list) Memo.t
   =
-  let lib_unique_name = Odoc_scope.Scope_id.to_string scope_id in
-  let lib_name = match Odoc_scope.Scope_id.lib_name scope_id with
-    | Some name -> name
-    | None -> Code_error.raise "discover_private_lib_artifacts called with Package scope_id" []
-  in
-  let* lib_db = Odoc_scope.Scope_id.lib_db (Context.name ctx) scope_id in
-  let* lib_opt =
-    let+ lib = Lib.DB.find lib_db lib_name in
-    Option.bind ~f:Lib.Local.of_lib lib
-  in
-  match lib_opt with
-  | None -> Memo.return ([], [])
-  | Some local_lib ->
-    (* Private libraries use a dummy package *)
-    let dummy_pkg = Package.Name.of_string lib_unique_name in
-    let* module_artifacts =
-      discover_local_lib_artifacts sctx ctx ~pkg:dummy_pkg ~lib_name ~local_lib
+  match scope_id with
+  | Odoc_scope.Scope_id.Package _ ->
+    Code_error.raise "discover_private_lib_artifacts called with Package scope_id" []
+  | Odoc_scope.Scope_id.Private_lib { unique_name = lib_unique_name; lib_name; project } ->
+    let* lib_db =
+      let+ scope = Scope.DB.find_by_project (Context.name ctx) project in
+      Scope.libs scope
     in
-    (* Generate index page for the private library *)
-    let index_artifact =
-      create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifacts:module_artifacts
+    let* lib_opt =
+      let+ lib = Lib.DB.find lib_db lib_name in
+      Option.bind ~f:Lib.Local.of_lib lib
     in
-    let artifacts = index_artifact :: module_artifacts in
-    (* Private libraries don't have subdirectories in the same sense as packages *)
-    Memo.return (artifacts, [])
+    (match lib_opt with
+     | None -> Memo.return ([], [])
+     | Some local_lib ->
+       (* Private libraries use a dummy package *)
+       let dummy_pkg = Package.Name.of_string lib_unique_name in
+       let* module_artifacts =
+         discover_local_lib_artifacts sctx ctx ~pkg:dummy_pkg ~lib_name ~local_lib
+       in
+       (* Generate index page for the private library *)
+       let index_artifact =
+         create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifacts:module_artifacts
+       in
+       let artifacts = index_artifact :: module_artifacts in
+       (* Private libraries don't have subdirectories in the same sense as packages *)
+       Memo.return (artifacts, []))
 ;;
 
 (* Discover artifacts for a local package *)
