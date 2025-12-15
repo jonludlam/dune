@@ -37,6 +37,11 @@ module Output_format = struct
 
   let all = [ Html; Json ]
 
+  let other = function
+    | Html -> Json
+    | Json -> Html
+  ;;
+
   let args = function
     | Html -> Command.Args.empty
     | Json -> A "--as-json"
@@ -46,6 +51,12 @@ module Output_format = struct
     match t with
     | Html -> Artifact.html_file ctx mode odoc_file
     | Json -> Artifact.json_file ctx mode odoc_file
+  ;;
+
+  let dir_target ctx mode t artifact =
+    match t with
+    | Html -> Artifact.html_dir_target ctx mode artifact
+    | Json -> Artifact.json_dir_target ctx mode artifact
   ;;
 
   let alias t ~mode ~dir =
@@ -725,12 +736,12 @@ let generate_html_artifact
   let rule =
     let open Action_builder.With_targets.O in
     Action_builder.with_no_targets (Action_builder.path (Path.build odoc_support_path))
-    >>> (match Artifact.html_dir_target ctx mode artifact, output_format with
-         | Some html_dir, Output_format.Html ->
-           (* Module HTML: odoc generates a directory tree *)
-           Action_builder.With_targets.add_directories ~directory_targets:[ html_dir ] run_odoc
-         | Some _, Output_format.Json | None, _ ->
-           (* Module JSON or Page: file target *)
+    >>> (match Output_format.dir_target ctx mode output_format artifact with
+         | Some dir_target ->
+           (* Module: odoc generates a directory tree *)
+           Action_builder.With_targets.add_directories ~directory_targets:[ dir_target ] run_odoc
+         | None ->
+           (* Page: file target *)
            Action_builder.With_targets.add ~file_targets:[ output_file ] run_odoc)
   in
   add_rule sctx rule
@@ -1385,7 +1396,7 @@ let handle_odocls_artifacts sctx ~dir ~pkg_or_lib_name =
              Dep.add_file_deps pkg_alias all_odocl_paths)))
 ;;
 
-let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
+let handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format =
   let ctx = Super_context.context sctx in
   let* scope_id = Scope_id.of_string pkg_or_lib_name in
   let* all_artifacts, lib_subdirs =
@@ -1394,28 +1405,29 @@ let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
   let all_lib_names =
     List.map lib_subdirs ~f:Lib_name.of_string |> Lib_name.Set.of_list
   in
-  (* Collect directory targets for module HTML directories (deduplicated) *)
+  (* Collect directory targets for module directories (deduplicated) *)
   let directory_targets =
     List.filter_map all_artifacts ~f:(fun artifact ->
       if Artifact.hidden artifact then None
-      else Artifact.html_dir_target ctx mode artifact)
+      else Output_format.dir_target ctx mode output_format artifact)
     |> Path.Build.Set.of_list
     |> Path.Build.Set.to_list
     |> List.map ~f:(fun dir -> dir, Loc.none)
     |> Path.Build.Map.of_list_exn
   in
+  let other_format = Output_format.other output_format in
   let rules =
     Rules.collect_unit (fun () ->
       generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~all_lib_names ~dir
-        ~mode ~output_format:Html ()
-      (* Also define empty doc-json alias in _html to prevent alias recursion issues *)
-      >>> let json_alias = Output_format.alias Json ~mode ~dir in
-          Rules.Produce.Alias.add_deps json_alias (Action_builder.return ())
-          >>> (* Add empty JSON aliases for library subdirectories too *)
+        ~mode ~output_format ()
+      (* Also define empty alias for the other format to prevent alias recursion issues *)
+      >>> let other_alias = Output_format.alias other_format ~mode ~dir in
+          Rules.Produce.Alias.add_deps other_alias (Action_builder.return ())
+          >>> (* Add empty aliases for the other format in library subdirectories too *)
           Memo.parallel_iter (Lib_name.Set.to_list all_lib_names) ~f:(fun lib_name ->
             let lib_dir = dir ++ Lib_name.to_string lib_name in
-            let lib_json_alias = Output_format.alias Json ~mode ~dir:lib_dir in
-            Rules.Produce.Alias.add_deps lib_json_alias (Action_builder.return ())))
+            let lib_other_alias = Output_format.alias other_format ~mode ~dir:lib_dir in
+            Rules.Produce.Alias.add_deps lib_other_alias (Action_builder.return ())))
   in
   Memo.return
     (Build_config.Gen_rules.make
@@ -1425,26 +1437,12 @@ let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
        rules)
 ;;
 
+let handle_html_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
+  handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format:Html
+;;
+
 let handle_json_artifacts sctx ~dir ~mode ~pkg_or_lib_name =
-  let ctx = Super_context.context sctx in
-  let* scope_id = Scope_id.of_string pkg_or_lib_name in
-  let* all_artifacts, lib_subdirs =
-    Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
-  in
-  let all_lib_names =
-    List.map lib_subdirs ~f:Lib_name.of_string |> Lib_name.Set.of_list
-  in
-  (* JSON uses file targets, not directory targets *)
-  let rules =
-    Rules.collect_unit (fun () ->
-      generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~all_lib_names ~dir
-        ~mode ~output_format:Json ())
-  in
-  Memo.return
-    (Build_config.Gen_rules.make
-       ~build_dir_only_sub_dirs:
-         (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir (Subdir_set.of_list lib_subdirs))
-       rules)
+  handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format:Json
 ;;
 
 let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.t) (mode : Doc_mode.t) =

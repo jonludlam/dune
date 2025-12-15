@@ -142,13 +142,16 @@ let json_file ctx mode t =
   in
   output_file ~base ~suffix:".html.json" t
 
-let html_dir_target ctx mode t =
+let dir_target ~get_base ctx mode t =
   match t.kind with
   | Module (_, target) ->
     let basename = get_basename t in
-    let html_base = Odoc_paths.html ctx mode target in
-    Some (html_base ++ Stdune.String.capitalize basename)
+    let base = get_base ctx mode target in
+    Some (base ++ Stdune.String.capitalize basename)
   | Page _ -> None
+
+let html_dir_target ctx mode t = dir_target ~get_base:Odoc_paths.html ctx mode t
+let json_dir_target ctx mode t = dir_target ~get_base:Odoc_paths.json ctx mode t
 
 let hidden t =
   match t.kind with

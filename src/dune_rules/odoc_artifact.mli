@@ -22,6 +22,7 @@ val odoc_dir : Context.t -> t -> Path.Build.t
 val html_file : Context.t -> Odoc_paths.Doc_mode.t -> t -> Path.Build.t
 val json_file : Context.t -> Odoc_paths.Doc_mode.t -> t -> Path.Build.t
 val html_dir_target : Context.t -> Odoc_paths.Doc_mode.t -> t -> Path.Build.t option
+val json_dir_target : Context.t -> Odoc_paths.Doc_mode.t -> t -> Path.Build.t option
 val pkg : t -> Package.Name.t option
 val lib_name : t -> Lib_name.t
 val lib : t -> Lib.t option
