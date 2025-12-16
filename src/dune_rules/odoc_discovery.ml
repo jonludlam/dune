@@ -165,14 +165,11 @@ let expand_packages_with_odoc_config ctx ~packages ~private_libs =
     let all_libs =
       pkg_libs @ odoc_config_libs @ private_libs @ Option.to_list stdlib_opt
     in
-    (* Get transitive closure of library dependencies *)
-    let* lib_closure =
-      Lib.closure ~linking:false all_libs
-      >>| Resolve.peek
-      >>| function
-      | Ok libs -> libs
-      | Error _ -> all_libs
-    in
+    (* Get transitive closure of library dependencies.
+       We use descriptive_closure rather than closure because we may have
+       conflicting implementations of virtual libraries when documenting
+       multiple packages together - that's fine for documentation purposes. *)
+    let* lib_closure = Lib.descriptive_closure all_libs ~with_pps:false in
     (* Find packages for all libraries in the closure *)
     let* pkgs_from_libs =
       Memo.List.filter_map lib_closure ~f:(fun lib ->
@@ -374,19 +371,24 @@ let create_artifact_module ~target ~local_lib ~module_ ~extra_libs ~extra_packag
 
 (* Discover modules for a local library and create artifacts.
    Handles both libraries with packages and private libraries (without packages). *)
-let discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib : Odoc_artifact.t list Memo.t
-  =
+let discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib : Odoc_artifact.t list Memo.t =
   let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
   let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
-  (* Check if this is a private library (no package) *)
   let info = Lib.Local.info local_lib in
-  let actual_pkg = Lib_info.package info in
-  (* Get odoc config for the package *)
-  let* pkg_discovery = Package_discovery.create ~context:ctx in
-  let* extra_libs, extra_packages = resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg in
+  let pkg = Lib_info.package info in
   let lib_t = Lib.Local.to_lib local_lib in
+  (* Get extras from odoc-config for libraries with packages, empty for private libs.
+     Also include the library's own package in extra_packages. *)
+  let* extra_libs, extra_packages =
+    match pkg with
+    | None -> Memo.return ([], [])
+    | Some pkg ->
+      let* pkg_discovery = Package_discovery.create ~context:ctx in
+      let+ config_libs, config_packages = resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg in
+      (config_libs, pkg :: config_packages)
+  in
   let target =
-    match actual_pkg with
+    match pkg with
     | None ->
       (* Private library - use lib_unique_name for directory structure *)
       let status = Lib_info.status info in
@@ -397,7 +399,7 @@ let discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib : Odoc_artif
           Lib_name.to_string lib_name (* Fallback, shouldn't happen for private libs *)
       in
       Odoc_target.Private_lib (lib_unique_name, lib_t)
-    | Some _ ->
+    | Some pkg ->
       (* Library with package - use pkg/lib directory structure *)
       Odoc_target.Lib (pkg, lib_t)
   in
@@ -585,7 +587,7 @@ let discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib : Odoc_artifact.t list M
   match Lib.Local.of_lib lib with
   | Some local_lib ->
     (* Local library *)
-    discover_local_lib_artifacts sctx ctx ~pkg ~lib_name ~local_lib
+    discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib
   | None ->
     (* Installed library *)
     discover_installed_lib_artifacts sctx ctx ~pkg ~lib_name ~lib
@@ -692,10 +694,8 @@ let discover_private_lib_artifacts sctx ctx ~lib_unique_name ~lib_name ~project
   match lib_opt with
   | None -> Memo.return ([], [])
   | Some local_lib ->
-    (* Private libraries use a dummy package *)
-    let dummy_pkg = Package.Name.of_string lib_unique_name in
     let* module_artifacts =
-      discover_local_lib_artifacts sctx ctx ~pkg:dummy_pkg ~lib_name ~local_lib
+      discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib
     in
     (* Generate index page for the private library *)
     let index_artifact =
