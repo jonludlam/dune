@@ -695,13 +695,17 @@ let generate_html_artifact
   let json_root = Paths.json_root ctx mode in
   let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
   (* Determine support path: per-package only when configured AND we have a package *)
-  let odoc_support_path, odoc_support_uri =
-    let path = match flags.support, pkg_name with
-      | Flags.Per_package, Some pkg -> Paths.odoc_support_for_pkg ctx mode pkg
-      | Flags.Root, _ | Flags.Per_package, None -> Paths.odoc_support ctx mode
-    in
-    let uri = Path.reach (Path.build path) ~from:(Path.build html_root) in
-    path, uri
+  let odoc_support_path, odoc_support_uri, sherlodoc_js_dir =
+    match flags.support, pkg_name with
+    | Flags.Per_package, Some pkg ->
+      let support_path = Paths.odoc_support_for_pkg ctx mode pkg in
+      let pkg_html_dir = html_root ++ pkg in
+      let uri = Path.reach (Path.build support_path) ~from:(Path.build html_root) in
+      (support_path, uri, pkg_html_dir)
+    | Flags.Root, _ | Flags.Per_package, None ->
+      let support_path = Paths.odoc_support ctx mode in
+      let uri = Path.reach (Path.build support_path) ~from:(Path.build html_root) in
+      (support_path, uri, html_root)
   in
   let doc_root = Paths.root ctx in
   (* Compute relative paths from doc_root (_doc) for working directory paths *)
@@ -710,7 +714,8 @@ let generate_html_artifact
   let search_args =
     match search_db with
     | Some search_db ->
-      Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:html_root ~html_root
+      (* Use per-package HTML dir for sherlodoc.js when configured *)
+      Sherlodoc.odoc_args sctx ~search_db ~dir_sherlodoc_dot_js:sherlodoc_js_dir ~html_root
     | None -> Command.Args.empty
   in
   let output_file = Output_format.target ctx mode output_format artifact in
@@ -778,10 +783,13 @@ let setup_css_rule sctx ~mode =
   in
   add_rule sctx run_odoc
 
-(* Generate support files for a specific package (when support = per_package) *)
-let setup_pkg_css_rule sctx ~mode ~pkg_name =
+(* Generate support files for a specific package (when support = per_package).
+   Creates both odoc support files (CSS etc.) in the support directory and
+   sherlodoc.js in the package's HTML directory. *)
+let setup_pkg_support_rule sctx ~mode ~pkg_name =
   let ctx = Super_context.context sctx in
-  let dir = Paths.odoc_support_for_pkg ctx mode pkg_name in
+  let support_dir = Paths.odoc_support_for_pkg ctx mode pkg_name in
+  let pkg_html_dir = Paths.html_root ctx mode ++ pkg_name in
   let run_odoc =
     let cmd =
       run_odoc
@@ -789,11 +797,13 @@ let setup_pkg_css_rule sctx ~mode ~pkg_name =
         "support-files"
         ~quiet:false
         ~flags_for:None
-        [ A "-o"; Path (Path.build dir) ]
+        [ A "-o"; Path (Path.build support_dir) ]
     in
-    Action_builder.With_targets.add_directories ~directory_targets:[ dir ] cmd
+    Action_builder.With_targets.add_directories ~directory_targets:[ support_dir ] cmd
   in
   add_rule sctx run_odoc
+  (* Create sherlodoc.js in the package's HTML directory (not in odoc.support) *)
+  >>> Sherlodoc.sherlodoc_dot_js sctx ~dir:pkg_html_dir
 ;;
 
 (* Compute requires for linking an artifact.
@@ -1472,7 +1482,7 @@ let handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format =
     Rules.collect_unit (fun () ->
       (* Generate per-package support files if needed *)
       (if needs_pkg_support
-       then setup_pkg_css_rule sctx ~mode ~pkg_name:pkg_or_lib_name
+       then setup_pkg_support_rule sctx ~mode ~pkg_name:pkg_or_lib_name
        else Memo.return ())
       >>> generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~all_lib_names ~dir
         ~mode ~output_format ()
