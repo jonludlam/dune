@@ -5,21 +5,15 @@ module Gen_rules = Build_config.Gen_rules
 let ( ++ ) = Path.Build.relative
 
 module Target = Odoc_target
-
-(* Re-export comparison function at top level for convenience *)
-let compare_any_target = Target.compare_any
-
 module Paths = Odoc_paths
 module Doc_mode = Paths.Doc_mode
-type sidebar_scope = Paths.sidebar_scope = Per_package of Package.Name.t | Global
+module Artifact = Odoc_artifact
+module Scope_id = Odoc_scope.Scope_id
 
 (* Type for odoc compilation/linking stages (used by lib_dir_path) *)
 type odoc_output =
   | Odoc
   | Odocls
-
-module Artifact = Odoc_artifact
-module Scope_id = Odoc_scope.Scope_id
 
 (* ============================================================================
    BUILD UTILITIES - Rules, formats, and dependencies
@@ -905,7 +899,7 @@ let setup_toplevel_index_html sctx mode =
   in
   let sidebar_file =
     if use_global
-    then Some (Paths.sidebar_file ctx mode Global)
+    then Some (Paths.sidebar_file ctx mode Paths.Global)
     else None
   in
   (* Generate HTML for the artifact (only HTML, not JSON) *)
@@ -1009,8 +1003,8 @@ let generate_sidebar_binary sctx ~mode ~scope ~index_file =
   in
   let index_relative_path =
     match scope with
-    | Global -> sprintf "%s/index.odoc-index" sidebar_dir
-    | Per_package pkg -> sprintf "%s/%s/index.odoc-index" sidebar_dir (Package.Name.to_string pkg)
+    | Paths.Global -> sprintf "%s/index.odoc-index" sidebar_dir
+    | Paths.Per_package pkg -> sprintf "%s/%s/index.odoc-index" sidebar_dir (Package.Name.to_string pkg)
   in
   let* () =
     let action =
@@ -1040,8 +1034,8 @@ let generate_sidebar_json sctx ~mode ~scope ~index_file ~output_format =
   in
   let index_relative_path =
     match scope with
-    | Global -> sprintf "%s/index.odoc-index" sidebar_dir
-    | Per_package pkg ->
+    | Paths.Global -> sprintf "%s/index.odoc-index" sidebar_dir
+    | Paths.Per_package pkg ->
       sprintf "%s/%s/index.odoc-index" sidebar_dir (Package.Name.to_string pkg)
   in
   let action =
@@ -1063,7 +1057,7 @@ let handle_sidebar_artifacts sctx ~mode pkg_or_lib_name =
   let rules =
     Rules.collect_unit (fun () ->
       let pkg = Package.Name.of_string pkg_or_lib_name in
-      let scope = Per_package pkg in
+      let scope = Paths.Per_package pkg in
       (* Discover artifacts to get all .odocl files *)
       let* all_artifacts, _lib_subdirs =
         Odoc_discovery.discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_or_lib_name
@@ -1087,10 +1081,10 @@ let generate_global_sidebar sctx ~mode =
   let* real_pkgs, all_odocl_files = Odoc_discovery.collect_all_visible_odocls sctx ~mode () in
   (* Generate global index file with all .odocl files *)
   let* index_file =
-    generate_index sctx ~mode ~scope:Global ~packages:real_pkgs ~odocl_files:all_odocl_files
+    generate_index sctx ~mode ~scope:Paths.Global ~packages:real_pkgs ~odocl_files:all_odocl_files
   in
   (* Generate global binary sidebar *)
-  let* _sidebar_file = generate_sidebar_binary sctx ~mode ~scope:Global ~index_file in
+  let* _sidebar_file = generate_sidebar_binary sctx ~mode ~scope:Paths.Global ~index_file in
   Memo.return ()
 ;;
 
@@ -1181,14 +1175,14 @@ let generate_html_for_package
     match scope_id, mode, flags.sidebar with
     | Scope_id.Private_lib _, _, _ ->
       (* Private libraries always use per-package sidebar with their pseudo-package name *)
-      Per_package pkg, true
+      Paths.Per_package pkg, true
     | Scope_id.Package _, Doc_mode.Local_only, Flags.Global ->
       (* Local_only with global sidebar - JSON already generated at root *)
-      Global, false
+      Paths.Global, false
     | Scope_id.Package _, Doc_mode.Local_only, Flags.Per_package
     | Scope_id.Package _, Doc_mode.Full, _ ->
       (* Per-package sidebar - generate JSON here *)
-      Per_package pkg, true
+      Paths.Per_package pkg, true
   in
   let index_file = Paths.index_file ctx mode scope in
   (* Generate sidebar.json for the appropriate output directory *)
@@ -1560,7 +1554,7 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
              (* Include all dependencies *)
              Memo.return all_targets
          in
-         let unique_targets = List.sort_uniq filtered_targets ~compare:compare_any_target in
+         let unique_targets = List.sort_uniq filtered_targets ~compare:Target.compare_any in
          Memo.return
            (unique_targets
             |> List.map ~f:(fun (Target.Any t) -> Dep.format_alias output mode ctx t)
@@ -1725,8 +1719,8 @@ let gen_rules sctx ~dir rest =
           let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
           (match flags.sidebar with
            | Flags.Global ->
-             let index_file = Paths.index_file ctx Doc_mode.Local_only Global in
-             generate_sidebar_json sctx ~mode:Doc_mode.Local_only ~scope:Global ~index_file
+             let index_file = Paths.index_file ctx Doc_mode.Local_only Paths.Global in
+             generate_sidebar_json sctx ~mode:Doc_mode.Local_only ~scope:Paths.Global ~index_file
                ~output_format:Paths.Html
            | Flags.Per_package -> Memo.return ())
           (* Add dependencies on all child HTML directories so @doc builds everything *)
@@ -1833,8 +1827,8 @@ let gen_rules sctx ~dir rest =
           let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
           (match flags.sidebar with
            | Flags.Global ->
-             let index_file = Paths.index_file ctx Doc_mode.Local_only Global in
-             generate_sidebar_json sctx ~mode:Doc_mode.Local_only ~scope:Global ~index_file
+             let index_file = Paths.index_file ctx Doc_mode.Local_only Paths.Global in
+             generate_sidebar_json sctx ~mode:Doc_mode.Local_only ~scope:Paths.Global ~index_file
                ~output_format:Paths.Json
            | Flags.Per_package -> Memo.return ())
           (* Add dependencies on all child JSON directories so @doc-json builds everything *)
