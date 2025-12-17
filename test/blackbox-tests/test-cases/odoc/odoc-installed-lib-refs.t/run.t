@@ -8,10 +8,10 @@ Build documentation:
 
 Check that documentation was generated without broken reference warnings:
 
-  $ find _build/default/_doc/_odocls/mylib -name '*.odocl' | sort -n
-  _build/default/_doc/_odocls/mylib/mylib/mylib.odocl
-  _build/default/_doc/_odocls/mylib/mylib/page-index.odocl
-  _build/default/_doc/_odocls/mylib/page-index.odocl
+  $ find _build/default/_doc/_odocl/mylib -name '*.odocl' | sort -n
+  _build/default/_doc/_odocl/mylib/mylib/mylib.odocl
+  _build/default/_doc/_odocl/mylib/mylib/page-index.odocl
+  _build/default/_doc/_odocl/mylib/page-index.odocl
 
 Check that HTML was generated for our library:
 

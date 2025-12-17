@@ -13,8 +13,8 @@ Verify the odoc file was compiled with v3 flags (--parent-id and --output-dir)
 
 Test that odocl files are generated in v3 structure
 
-  $ dune build _build/default/_doc/_odocls/foo/foo/foo.odocl
-  $ ls _build/default/_doc/_odocls/foo/foo/
+  $ dune build _build/default/_doc/_odocl/foo/foo/foo.odocl
+  $ ls _build/default/_doc/_odocl/foo/foo/
   foo.odocl
 
 Test that HTML files are generated in v3 structure

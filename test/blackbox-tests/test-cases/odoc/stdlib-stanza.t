@@ -34,10 +34,10 @@ Bar is compiled
   _build/default/_doc/_odoc/l/page-index.odoc
 
 Bar is not linked
-  $ find _build/default/_doc/_odocls/l -name '*.odocl' | sort -n
-  _build/default/_doc/_odocls/l/l/l.odocl
-  _build/default/_doc/_odocls/l/l/page-index.odocl
-  _build/default/_doc/_odocls/l/page-index.odocl
+  $ find _build/default/_doc/_odocl/l -name '*.odocl' | sort -n
+  _build/default/_doc/_odocl/l/l/l.odocl
+  _build/default/_doc/_odocl/l/l/page-index.odocl
+  _build/default/_doc/_odocl/l/page-index.odocl
 
 No html is generated for Bar
 

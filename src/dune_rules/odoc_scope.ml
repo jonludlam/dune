@@ -3,7 +3,6 @@
 open Import
 open Memo.O
 
-(* Shared helper to compute project key from a Dune_project *)
 let file_key project =
   let name = Dune_project.name project in
   let root = Dune_project.root project in

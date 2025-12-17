@@ -179,7 +179,6 @@ let parent_id t =
      | None -> base_id)
 ;;
 
-(* Check if a library is vendored using dune's vendored_dirs mechanism *)
 let is_lib_vendored lib =
   let lib_info = Lib.info lib in
   match Lib_info.status lib_info with

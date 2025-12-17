@@ -16,10 +16,10 @@ Verify documentation was generated (wrapped modules compile but don't link separ
 
 Only the wrapper module gets linked:
 
-  $ find _build/default/_doc/_odocls/wraplib -name '*.odocl' | sort -n
-  _build/default/_doc/_odocls/wraplib/page-index.odocl
-  _build/default/_doc/_odocls/wraplib/wraplib/page-index.odocl
-  _build/default/_doc/_odocls/wraplib/wraplib/wraplib.odocl
+  $ find _build/default/_doc/_odocl/wraplib -name '*.odocl' | sort -n
+  _build/default/_doc/_odocl/wraplib/page-index.odocl
+  _build/default/_doc/_odocl/wraplib/wraplib/page-index.odocl
+  _build/default/_doc/_odocl/wraplib/wraplib/wraplib.odocl
 
 Check that HTML was generated for the main module:
 

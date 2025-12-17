@@ -295,7 +295,16 @@ let run_odoc sctx ?dir command ~quiet ~flags_for args =
     | None -> Action_builder.return Command.Args.empty
     | Some path -> odoc_base_flags quiet path
   in
-  let deps = Action_builder.env_var "ODOC_SYNTAX" in
+  (* Depend on ODOC_SYNTAX env var and the odoc binary itself.
+     The binary dependency ensures rules rebuild when odoc is updated. *)
+  let deps =
+    let open Action_builder.O in
+    let* () = Action_builder.env_var "ODOC_SYNTAX" in
+    let* prog_result = program in
+    match prog_result with
+    | Ok path -> Action_builder.path path
+    | Error _ -> Action_builder.return ()
+  in
   let open Action_builder.With_targets.O in
   let run =
     Action_builder.with_no_targets deps
@@ -948,7 +957,7 @@ let lib_dir_path ctx ~output ~scope_id ~lib_name =
   let path_prefix =
     match output with
     | Odoc -> "_odoc"
-    | Odocls -> "_odocls"
+    | Odocls -> "_odocl"
   in
   match scope_id with
   | Scope_id.Private_lib _ ->
@@ -1381,7 +1390,7 @@ let handle_odoc_artifacts sctx ~dir ~pkg_or_lib_name =
              Dep.add_odoc_all_deps pkg_alias ~dirs:lib_alias_dirs)))
 ;;
 
-let handle_odocls_artifacts sctx ~dir ~pkg_or_lib_name =
+let handle_odocl_artifacts sctx ~dir ~pkg_or_lib_name =
   with_package_artifacts sctx ~dir ~pkg_or_lib_name
     ~f:(fun ~ctx ~scope_id ~all_artifacts ~all_lib_names ->
       Memo.return
@@ -1759,12 +1768,12 @@ let gen_rules sctx ~dir rest =
     | [ "_odoc"; _; _ ] ->
       (* Library directories redirect to parent *)
       Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
-    | [ "_odocls" ] ->
-      (* Root odocls directory - just allows any package subdirectory *)
+    | [ "_odocl" ] ->
+      (* Root odocl directory - just allows any package subdirectory *)
       Memo.return (Build_config.Gen_rules.make (Memo.return Rules.empty))
-    | [ "_odocls"; pkg_or_lib_name ] ->
-      handle_odocls_artifacts sctx ~dir ~pkg_or_lib_name
-    | [ "_odocls"; _; _ ] ->
+    | [ "_odocl"; pkg_or_lib_name ] ->
+      handle_odocl_artifacts sctx ~dir ~pkg_or_lib_name
+    | [ "_odocl"; _; _ ] ->
       (* Library directories redirect to parent *)
       Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
     | [ "_index" ] ->

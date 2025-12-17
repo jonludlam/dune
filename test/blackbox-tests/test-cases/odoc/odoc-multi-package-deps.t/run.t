@@ -7,13 +7,13 @@ Build documentation for both packages:
 
 Verify documentation was generated for both packages:
 
-  $ find _build/default/_doc/_odocls/{foo,bar} -name '*.odocl' | sort -n
-  _build/default/_doc/_odocls/bar/bar.lib/barlib.odocl
-  _build/default/_doc/_odocls/bar/bar.lib/page-index.odocl
-  _build/default/_doc/_odocls/bar/page-index.odocl
-  _build/default/_doc/_odocls/foo/foo.lib/foolib.odocl
-  _build/default/_doc/_odocls/foo/foo.lib/page-index.odocl
-  _build/default/_doc/_odocls/foo/page-index.odocl
+  $ find _build/default/_doc/_odocl/{foo,bar} -name '*.odocl' | sort -n
+  _build/default/_doc/_odocl/bar/bar.lib/barlib.odocl
+  _build/default/_doc/_odocl/bar/bar.lib/page-index.odocl
+  _build/default/_doc/_odocl/bar/page-index.odocl
+  _build/default/_doc/_odocl/foo/foo.lib/foolib.odocl
+  _build/default/_doc/_odocl/foo/foo.lib/page-index.odocl
+  _build/default/_doc/_odocl/foo/page-index.odocl
 
 Check that HTML was generated for both libraries:
 

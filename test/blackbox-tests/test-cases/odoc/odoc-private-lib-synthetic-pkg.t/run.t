@@ -17,8 +17,8 @@ Verify the path structure uses the synthetic package name (lib@hash):
 
 Check that odocl files use the same synthetic package structure:
 
-  $ find _build/default/_doc/_odocls -name 'privatelib.odocl' | head -1
-  _build/default/_doc/_odocls/privatelib@e4ac9fdbbbe6/privatelib.odocl
+  $ find _build/default/_doc/_odocl -name 'privatelib.odocl' | head -1
+  _build/default/_doc/_odocl/privatelib@e4ac9fdbbbe6/privatelib.odocl
 
 Check that sidebar files are generated for private libraries:
 
