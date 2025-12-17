@@ -327,9 +327,13 @@ let default_pkg_index ~pkg ~lib_artifacts =
         (match modules with
          | [ x ] ->
            sprintf
-             "The entry point of this library is the module:\n{!module-%s}.\n"
+             "The entry point of this library is the module:\n{!/%s/module-%s}.\n"
+             (Lib_name.to_string lib_name)
              (Module_name.to_string x)
          | _ ->
+           (* TODO: Use qualified paths like {!modules:/lib/Foo /lib/Bar} once odoc
+              supports this syntax in the {!modules:} directive. Currently only
+              bare module names are supported. *)
            sprintf
              "This library exposes the following toplevel modules:\n{!modules:%s}\n"
              (modules |> List.map ~f:Module_name.to_string |> String.concat ~sep:" "))));
@@ -725,9 +729,9 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
 
 (* Collect all visible odocl files from packages (and private libraries for Full mode),
    including toplevel index.
-   If ~include_all_deps is true, includes all transitive dependencies (installed packages).
-   Otherwise, only includes workspace packages (and private libraries for Full mode). *)
-let collect_all_visible_odocls sctx ~mode ?(include_all_deps = false) () =
+   For Full mode, includes all transitive dependencies (installed packages).
+   For Local_only mode, only includes workspace packages. *)
+let collect_all_visible_odocls sctx ~mode () =
   let ctx = Super_context.context sctx in
   let* workspace_pkgs = get_workspace_packages () in
   (* Only get private libraries for Full mode - Local_only should only document packages *)
@@ -738,9 +742,11 @@ let collect_all_visible_odocls sctx ~mode ?(include_all_deps = false) () =
   in
   let private_libs = List.map private_local_libs ~f:Lib.Local.to_lib in
   let* packages_to_collect =
-    if include_all_deps
-    then expand_packages_with_odoc_config ctx ~packages:workspace_pkgs ~private_libs
-    else Memo.return (Package.Name.Set.of_list workspace_pkgs)
+    match mode with
+    | Odoc_target.Doc_mode.Full ->
+      expand_packages_with_odoc_config ctx ~packages:workspace_pkgs ~private_libs
+    | Odoc_target.Doc_mode.Local_only ->
+      Memo.return (Package.Name.Set.of_list workspace_pkgs)
   in
   let* pkg_odocl_files =
     Memo.List.concat_map (Package.Name.Set.to_list packages_to_collect) ~f:(fun pkg ->

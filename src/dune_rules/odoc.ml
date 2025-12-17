@@ -230,7 +230,7 @@ module Flags = struct
     ; support : support
     }
 
-  let default = { warnings = Nonfatal; sidebar = Per_package; support = Root }
+  let default = { warnings = Nonfatal; sidebar = Global; support = Root }
 
   let get_memo ~dir =
     Env_stanza_db.value ~default ~dir ~f:(fun config ->
@@ -883,7 +883,9 @@ let setup_toplevel_index_link sctx ~mode =
 (* Generate global search database from all visible odocl files *)
 let generate_global_search_db sctx ~mode =
   let ctx = Super_context.context sctx in
-  let* _real_pkgs, all_odocl_files = Odoc_discovery.collect_all_visible_odocls sctx ~mode () in
+  let* _real_pkgs, all_odocl_files =
+    Odoc_discovery.collect_all_visible_odocls sctx ~mode ()
+  in
   let dir = Paths.html_root ctx mode in
   Sherlodoc.search_db sctx ~dir ~external_odocls:[] all_odocl_files
 ;;
@@ -894,9 +896,9 @@ let setup_toplevel_index_html sctx mode =
   let* artifact = Odoc_discovery.toplevel_index_artifact ctx ~mode in
   (* Determine sidebar and search scope based on mode and env config *)
   let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
-  let use_global = match mode, flags.sidebar with
-    | Doc_mode.Local_only, Flags.Global -> true
-    | _ -> false
+  let use_global = match flags.sidebar with
+    | Flags.Global -> true
+    | Flags.Per_package -> false
   in
   (* Create search_db and sidebar only for global mode *)
   let* search_db =
@@ -1087,7 +1089,9 @@ let handle_sidebar_artifacts sctx ~mode pkg_or_lib_name =
 
 (* Generate global sidebar for all packages - returns unit Memo.t for use in Rules.collect_unit *)
 let generate_global_sidebar sctx ~mode =
-  let* real_pkgs, all_odocl_files = Odoc_discovery.collect_all_visible_odocls sctx ~mode () in
+  let* real_pkgs, all_odocl_files =
+    Odoc_discovery.collect_all_visible_odocls sctx ~mode ()
+  in
   (* Generate global index file with all .odocl files *)
   let* index_file =
     generate_index sctx ~mode ~scope:Paths.Global ~packages:real_pkgs ~odocl_files:all_odocl_files
@@ -1167,7 +1171,6 @@ let generate_html_for_package
       ~ctx
       ~scope_id
       ~all_artifacts
-      ~all_lib_names
       ~dir
       ~mode
       ~output_format
@@ -1181,15 +1184,11 @@ let generate_html_for_package
   let pkg = Scope_id.as_package_name scope_id in
   let* flags = Flags.get_memo ~dir in
   let scope, should_generate_sidebar_json =
-    match scope_id, mode, flags.sidebar with
-    | Scope_id.Private_lib _, _, _ ->
-      (* Private libraries always use per-package sidebar with their pseudo-package name *)
-      Paths.Per_package pkg, true
-    | Scope_id.Package _, Doc_mode.Local_only, Flags.Global ->
-      (* Local_only with global sidebar - JSON already generated at root *)
+    match flags.sidebar with
+    | Flags.Global ->
+      (* Global sidebar - JSON already generated at root *)
       Paths.Global, false
-    | Scope_id.Package _, Doc_mode.Local_only, Flags.Per_package
-    | Scope_id.Package _, Doc_mode.Full, _ ->
+    | Flags.Per_package ->
       (* Per-package sidebar - generate JSON here *)
       Paths.Per_package pkg, true
   in
@@ -1210,23 +1209,30 @@ let generate_html_for_package
     | Html -> Some (Paths.sidebar_file ctx mode scope)
     | Json -> None
   in
-  (* Create search_db for the entire package - only for HTML *)
+  (* Create search_db - only for HTML *)
   let* search_db =
     match output_format with
     | Json -> Memo.return None
     | Html ->
-      let odocls =
-        List.map visible_artifacts ~f:(fun artifact -> Artifact.odocl_file ctx artifact)
-      in
-      let+ db = Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls in
-      Some db
+      match flags.sidebar with
+      | Flags.Global ->
+        (* Global sidebar mode - reference the global search db at html root.
+           The rule is already added by setup_toplevel_index_html. *)
+        let html_root = Paths.html_root ctx mode in
+        Memo.return (Some (Path.Build.relative html_root "db.js"))
+      | Flags.Per_package ->
+        (* Per-package mode - use package's own search db *)
+        let odocls =
+          List.map visible_artifacts ~f:(fun artifact -> Artifact.odocl_file ctx artifact)
+        in
+        let+ db = Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls in
+        Some db
   in
-  (* Use shared remap file for Local_only mode (skip for private libs) *)
+  (* Use shared remap file for Local_only mode *)
   let remap_file_opt =
-    match mode, scope_id with
-    | Doc_mode.Local_only, Scope_id.Private_lib _ -> None (* Private lib - no remap *)
-    | Doc_mode.Local_only, Scope_id.Package _ -> Some (Paths.remap_file ctx)
-    | Doc_mode.Full, _ -> None
+    match mode with
+    | Doc_mode.Local_only -> Some (Paths.remap_file ctx)
+    | Doc_mode.Full -> None
   in
   (* Generate output for all visible artifacts *)
   let pkg_name = Scope_id.to_string scope_id in
@@ -1287,32 +1293,7 @@ let generate_html_for_package
         Dep.add_file_deps lib_alias [output_file]
       | Page _ -> Memo.return () (* Package artifacts don't have library aliases *))
   in
-  (* Create empty aliases for libraries with no visible artifacts *)
-  let lib_names_with_artifacts =
-    List.filter_map visible_lib_artifacts ~f:(fun a ->
-      Option.map (Artifact.lib a) ~f:Lib.name)
-    |> Lib_name.Set.of_list
-  in
-  Lib_name.Set.to_list all_lib_names
-  |> Memo.parallel_iter ~f:(fun lib_name ->
-    if Lib_name.Set.mem lib_names_with_artifacts lib_name
-    then Memo.return ()
-    else (
-      (* Library with no artifacts - create empty aliases *)
-      (* We need to look up the library to construct the target *)
-      let* lib_opt =
-        let* pkg_discovery = Package_discovery.create ~context:ctx in
-        let installed_libs =
-          Package_discovery.libraries_of_package pkg_discovery pkg
-        in
-        Memo.return
-          (List.find installed_libs ~f:(fun lib -> Lib_name.equal (Lib.name lib) lib_name))
-      in
-      match lib_opt with
-      | Some lib ->
-        let lib_alias = Dep.format_alias output_format mode ctx (Lib (pkg, lib)) in
-        Dep.add_file_deps lib_alias []
-      | None -> Memo.return ()))
+  Memo.return ()
 ;;
 
 (* Common setup for package artifact handlers: discovers artifacts and computes lib names *)
@@ -1487,7 +1468,7 @@ let handle_output_artifacts sctx ~dir ~mode ~pkg_or_lib_name ~output_format =
       (if needs_pkg_support
        then setup_pkg_support_rule sctx ~mode ~pkg_name:pkg_or_lib_name
        else Memo.return ())
-      >>> generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~all_lib_names ~dir
+      >>> generate_html_for_package sctx ~ctx ~scope_id ~all_artifacts ~dir
         ~mode ~output_format ()
       (* Also define empty alias for the other format to prevent alias recursion issues *)
       >>> let other_alias = Output_format.alias other_format ~mode ~dir in
@@ -1813,6 +1794,14 @@ let gen_rules sctx ~dir rest =
               let html_file = Output_format.target ctx Doc_mode.Full Html artifact in
               let alias = Dep.format_alias Html Doc_mode.Full ctx (Toplevel Doc_mode.Full) in
               Dep.add_file_deps alias [ Path.build html_file ]
+          >>> (* Generate global sidebar JSON for Full mode if configured *)
+          let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
+          (match flags.sidebar with
+           | Flags.Global ->
+             let index_file = Paths.index_file ctx Doc_mode.Full Paths.Global in
+             generate_sidebar_json sctx ~mode:Doc_mode.Full ~scope:Paths.Global ~index_file
+               ~output_format:Paths.Html
+           | Flags.Per_package -> Memo.return ())
           (* Add dependencies on all child HTML directories so @doc-full builds everything *)
           >>> setup_toplevel_index_deps sctx Doc_mode.Full Output_format.Html)
       in
@@ -1860,6 +1849,14 @@ let gen_rules sctx ~dir rest =
               let json_file = Output_format.target ctx Doc_mode.Full Json artifact in
               let alias = Dep.format_alias Json Doc_mode.Full ctx (Toplevel Doc_mode.Full) in
               Dep.add_file_deps alias [ Path.build json_file ]
+          >>> (* Generate global sidebar JSON for Full mode if configured *)
+          let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
+          (match flags.sidebar with
+           | Flags.Global ->
+             let index_file = Paths.index_file ctx Doc_mode.Full Paths.Global in
+             generate_sidebar_json sctx ~mode:Doc_mode.Full ~scope:Paths.Global ~index_file
+               ~output_format:Paths.Json
+           | Flags.Per_package -> Memo.return ())
           (* Add dependencies on all child JSON directories so @doc-json-full builds everything *)
           >>> setup_toplevel_index_deps sctx Doc_mode.Full Output_format.Json)
       in
@@ -1885,7 +1882,7 @@ let gen_rules sctx ~dir rest =
       let rules =
         Rules.collect_unit (fun () ->
           let* _real_pkgs, all_odocl_files =
-            Odoc_discovery.collect_all_visible_odocls sctx ~mode:Doc_mode.Full ~include_all_deps:true ()
+            Odoc_discovery.collect_all_visible_odocls sctx ~mode:Doc_mode.Full ()
           in
           let dir = Paths.sherlodoc_root ctx in
           let+ _db = Sherlodoc.search_db_marshal sctx ~dir ~external_odocls:[] all_odocl_files in

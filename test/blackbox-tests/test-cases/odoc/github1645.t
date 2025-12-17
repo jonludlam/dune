@@ -27,15 +27,3 @@ built. See #1645.
 
   $ dune build @install
   $ dune build @doc
-  File "Module":
-  Ambiguous lookup. Possible files: Module
-  Module
-  File "Module":
-  Ambiguous lookup. Possible files: Module
-  Module
-  File "Module":
-  Ambiguous lookup. Possible files: Module
-  Module
-  File "Module":
-  Ambiguous lookup. Possible files: Module
-  Module

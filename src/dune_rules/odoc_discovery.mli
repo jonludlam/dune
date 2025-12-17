@@ -61,12 +61,11 @@ val discover_package_artifacts
     Returns [(workspace_pkgs, odocl_files)] containing the workspace package
     names and paths to all non-hidden .odocl files.
 
-    @param include_all_deps If true, includes transitive dependencies
-           (installed packages). If false, only workspace packages. *)
+    For [Full] mode, includes all transitive dependencies (installed packages).
+    For [Local_only] mode, only includes workspace packages. *)
 val collect_all_visible_odocls
   :  Super_context.t
   -> mode:Odoc_target.Doc_mode.t
-  -> ?include_all_deps:bool
   -> unit
   -> (Package.Name.t list * Path.Build.t list) Memo.t
 

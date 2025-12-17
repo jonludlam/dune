@@ -193,7 +193,7 @@ let is_lib_vendored lib =
 let should_suppress_output t =
   match t.source with
   | Installed_source _ -> Memo.return true
-  | Generated _ -> Memo.return false
+  | Generated _ -> Memo.return true
   | Local_source _ ->
     (* Check if this is a vendored library *)
     (match t.kind with

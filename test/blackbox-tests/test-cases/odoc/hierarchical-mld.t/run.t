@@ -7,10 +7,8 @@ Test hierarchical mld files (mlds in subdirectories)
 Check what HTML was generated - hierarchical pages ARE supported:
 
   $ ls _build/default/_doc/_html/mypkg/
-  db.js
   index.html
   mypkg.html
-  sidebar.json
   tutorial
 
   $ ls _build/default/_doc/_html/mypkg/tutorial/

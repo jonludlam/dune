@@ -260,18 +260,7 @@ let package_of_library t lib =
 ;;
 
 let libraries_of_package t pkg =
-  let libs = Package.Name.Map.find t.libs_of_package pkg |> Option.value ~default:[] in
-  let pkg_str = Package.Name.to_string pkg in
-  if String.equal pkg_str "ocaml-base-compiler"
-  then
-    Log.info
-      [ Pp.textf
-          "libraries_of_package(%s): map has %d entries, returning %d libs"
-          pkg_str
-          (Package.Name.Map.cardinal t.libs_of_package)
-          (List.length libs)
-      ];
-  libs
+  Package.Name.Map.find t.libs_of_package pkg |> Option.value ~default:[]
 ;;
 
 let mlds_of_package t pkg =

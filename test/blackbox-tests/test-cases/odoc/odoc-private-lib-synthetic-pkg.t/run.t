@@ -23,4 +23,4 @@ Check that odocl files use the same synthetic package structure:
 Check that sidebar files are generated for private libraries:
 
   $ find _build/default/_doc -name '*.odoc-sidebar' | sort
-  _build/default/_doc/_sidebar/privatelib@e4ac9fdbbbe6/sidebar.odoc-sidebar
+  _build/default/_doc/_sidebar/sidebar.odoc-sidebar

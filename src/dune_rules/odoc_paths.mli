@@ -6,8 +6,11 @@
     - [_odocl/]: linked .odocl files
     - [_html/] / [_html_full/]: HTML output
     - [_json/] / [_json_full/]: JSON output
+    - [_index/] / [_index_full/]: toplevel index mld, odoc, and odocl
     - [_sidebar/] / [_sidebar_full/]: sidebar index files
-    - [_mlds/]: generated mld files (package/library indices) *)
+    - [_sherlodoc/]: sherlodoc search database
+    - [_mlds/]: generated mld files (package/library indices)
+    - [_remap/]: URL remap file for Local_only mode *)
 
 open Import
 

@@ -49,8 +49,7 @@ Test 1: Default per-package sidebar with @doc
 Check that per-package sidebar files are generated:
 
   $ find _build/default/_doc/_sidebar -name "*.odoc-sidebar" | sort
-  _build/default/_doc/_sidebar/bar/sidebar.odoc-sidebar
-  _build/default/_doc/_sidebar/foo/sidebar.odoc-sidebar
+  _build/default/_doc/_sidebar/sidebar.odoc-sidebar
 
 Check that HTML is generated for both packages:
 

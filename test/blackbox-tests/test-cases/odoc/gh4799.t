@@ -22,4 +22,4 @@ Private libraries attached to packages shouldn't be displayed in the index
   {0 foo index}
   {1 Library foo}
   The entry point of this library is the module:
-  {!module-Foo}.
+  {!/foo/module-Foo}.
