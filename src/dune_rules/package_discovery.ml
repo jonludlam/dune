@@ -1,6 +1,44 @@
 open Import
 open Memo.O
 
+(* Extract package name from a library's src_dir path in pkg mode.
+   In pkg mode, library paths look like:
+   _build/_private/<ctx>/.pkg/<name>.<version>-<digest>/target/lib/<lib-path>/
+   We extract the "<name>.<version>-<digest>" part and parse it. *)
+let extract_package_from_pkg_path path =
+  let path_str = Path.to_string path in
+  let pattern = "/.pkg/" in
+  let pattern_len = String.length pattern in
+  (* Look for "/.pkg/" in the path *)
+  match String.index path_str '/' with
+  | None -> None
+  | Some _ ->
+    (* Search for the pattern manually *)
+    let rec find_pattern pos =
+      if pos + pattern_len > String.length path_str
+      then None
+      else if String.is_prefix (String.drop path_str pos) ~prefix:pattern
+      then Some pos
+      else find_pattern (pos + 1)
+    in
+    (match find_pattern 0 with
+     | None -> None
+     | Some idx ->
+       (* Get the part after "/.pkg/" *)
+       let after_pkg_start = idx + pattern_len in
+       let after_pkg =
+         String.sub path_str ~pos:after_pkg_start ~len:(String.length path_str - after_pkg_start)
+       in
+       (* The next path component is "<name>.<version>-<digest>" *)
+       (match String.lsplit2 after_pkg ~on:'/' with
+        | None -> None
+        | Some (pkg_dir, _rest) ->
+          (* Parse "<name>.<version>-<digest>" - split on first dot to get name *)
+          (match String.lsplit2 pkg_dir ~on:'.' with
+           | None -> None
+           | Some (name, _version_and_digest) -> Some (Package.Name.of_string name))))
+;;
+
 type t =
   { package_of_lib : Package.Name.t Lib_name.Map.t
   ; libs_of_package : Lib.t list Package.Name.Map.t
@@ -153,6 +191,23 @@ let build_mappings_from_changes_data ~file_to_package_map libs =
       })
 ;;
 
+(* Build library mappings for pkg mode by extracting package names from paths *)
+let build_mappings_from_pkg_paths libs =
+  List.fold_left libs ~init:empty ~f:(fun acc lib ->
+    let src_dir = Lib.info lib |> Lib_info.src_dir in
+    match extract_package_from_pkg_path src_dir with
+    | None -> acc
+    | Some pkg_name ->
+      let lib_name = Lib.name lib in
+      { acc with
+        package_of_lib = Lib_name.Map.set acc.package_of_lib lib_name pkg_name
+      ; libs_of_package =
+          Package.Name.Map.update acc.libs_of_package pkg_name ~f:(function
+            | None -> Some [ lib ]
+            | Some libs -> Some (lib :: libs))
+      })
+;;
+
 (* Build all package maps in a single pass over packages_with_files *)
 let build_package_maps packages_with_files ~opam_prefix =
   List.fold_left
@@ -213,42 +268,72 @@ let get_opam_prefix ~context =
      | None -> Memo.return None)
 ;;
 
+(* Create discovery for pkg mode - uses path-based package extraction *)
+let create_impl_pkg_mode context =
+  let* installed_libs = Lib.DB.installed context in
+  let* all_libs_set = Lib.DB.all installed_libs in
+  let all_libs = Lib.Set.to_list all_libs_set in
+  Log.info
+    [ Pp.textf "Package_discovery.create_impl_pkg_mode: processing %d libs" (List.length all_libs)
+    ];
+  let lib_mappings = build_mappings_from_pkg_paths all_libs in
+  Log.info
+    [ Pp.textf
+        "Package_discovery (pkg mode): mapped %d libs to packages"
+        (Lib_name.Map.cardinal lib_mappings.package_of_lib)
+    ];
+  (* TODO: Add mld and config discovery for pkg mode if needed *)
+  Memo.return lib_mappings
+;;
+
+(* Create discovery for opam mode - uses .changes files *)
+let create_impl_opam_mode context ~opam_prefix =
+  let* packages_with_files = discover_opam_packages ~opam_prefix in
+  let file_to_package, installed_files_map, mlds_map, config_map =
+    build_package_maps packages_with_files ~opam_prefix
+  in
+  (* Map all installed libraries to their packages via .changes files *)
+  let* installed_libs = Lib.DB.installed context in
+  let* all_libs_set = Lib.DB.all installed_libs in
+  let all_libs = Lib.Set.to_list all_libs_set in
+  Log.info
+    [ Pp.textf
+        "Package_discovery.create_impl_opam_mode: processing %d libs"
+        (List.length all_libs)
+    ];
+  let lib_mappings =
+    build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs
+  in
+  let obc_libs =
+    Package.Name.Map.find
+      lib_mappings.libs_of_package
+      (Package.Name.of_string "ocaml-base-compiler")
+  in
+  Log.info
+    [ Pp.textf
+        "Package_discovery: ocaml-base-compiler has %d libs"
+        (Option.value ~default:[] obc_libs |> List.length)
+    ];
+  Memo.return
+    { lib_mappings with
+      mlds_of_package = mlds_map
+    ; config_of_package = config_map
+    ; installed_files = installed_files_map
+    ; opam_prefix = Some opam_prefix
+    }
+;;
+
 let create_impl context =
-  let* opam_prefix = get_opam_prefix ~context in
-  match opam_prefix with
-  | None -> Memo.return empty
-  | Some prefix ->
-    let* packages_with_files = discover_opam_packages ~opam_prefix:prefix in
-    let file_to_package, installed_files_map, mlds_map, config_map =
-      build_package_maps packages_with_files ~opam_prefix:prefix
-    in
-    (* Map all installed libraries to their packages via .changes files *)
-    let* installed_libs = Lib.DB.installed context in
-    let* all_libs_set = Lib.DB.all installed_libs in
-    let all_libs = Lib.Set.to_list all_libs_set in
-    Log.info
-      (sprintf "Package_discovery.create_impl: processing %d libs" (List.length all_libs))
-      [];
-    let lib_mappings =
-      build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs
-    in
-    let obc_libs =
-      Package.Name.Map.find
-        lib_mappings.libs_of_package
-        (Package.Name.of_string "ocaml-base-compiler")
-    in
-    Log.info
-      (sprintf
-         "Package_discovery: ocaml-base-compiler has %d libs"
-         (Option.value ~default:[] obc_libs |> List.length))
-      [];
-    Memo.return
-      { lib_mappings with
-        mlds_of_package = mlds_map
-      ; config_of_package = config_map
-      ; installed_files = installed_files_map
-      ; opam_prefix = Some prefix
-      }
+  (* Check if we're in pkg mode *)
+  let ctx_name = Context.name context in
+  let* is_pkg_mode = Lock_dir.lock_dir_active ctx_name in
+  if is_pkg_mode
+  then create_impl_pkg_mode context
+  else
+    let* opam_prefix = get_opam_prefix ~context in
+    match opam_prefix with
+    | None -> Memo.return empty
+    | Some prefix -> create_impl_opam_mode context ~opam_prefix:prefix
 ;;
 
 let create =
