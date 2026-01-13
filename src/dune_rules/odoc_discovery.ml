@@ -104,14 +104,33 @@ let resolve_odoc_config_libraries lib_db ~deps =
     Lib.DB.find lib_db lib_name)
 ;;
 
+(* Check if a package exists (either local or installed) *)
+let package_exists ctx ~pkg =
+  let* packages = Dune_load.packages () in
+  if Package.Name.Map.mem packages pkg
+  then Memo.return true
+  else
+    let* pkg_discovery = Package_discovery.create ~context:ctx in
+    let libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+    Memo.return (not (List.is_empty libs))
+;;
+
 let resolve_odoc_config_deps ctx ~deps =
   let* lib_db = Lib.DB.installed ctx in
   (* Resolve extra_libs from deps.libraries *)
   let* extra_libs_from_names = resolve_odoc_config_libraries lib_db ~deps in
-  (* Resolve extra_libs from deps.packages *)
+  (* Validate and resolve extra_libs from deps.packages *)
   let* extra_libs_from_pkgs =
     Memo.List.concat_map deps.Odoc_config.packages ~f:(fun pkg_name ->
-      libs_of_pkg ctx ~pkg:pkg_name)
+      let* exists = package_exists ctx ~pkg:pkg_name in
+      if not exists
+      then
+        User_error.raise
+          [ Pp.textf
+              "Documentation dependency %S is not installed."
+              (Package.Name.to_string pkg_name)
+          ]
+      else libs_of_pkg ctx ~pkg:pkg_name)
   in
   let extra_libs = extra_libs_from_names @ extra_libs_from_pkgs in
   Memo.return (extra_libs, deps.Odoc_config.packages)

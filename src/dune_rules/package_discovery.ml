@@ -356,6 +356,8 @@ let libraries_of_package t pkg =
   Package.Name.Map.find t.libs_of_package pkg |> Option.value ~default:[]
 ;;
 
+let all_installed_packages t = Package.Name.Map.keys t.libs_of_package
+
 let mlds_of_package t pkg =
   Package.Name.Map.find t.mlds_of_package pkg |> Option.value ~default:[]
 ;;

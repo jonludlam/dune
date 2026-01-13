@@ -36,3 +36,6 @@ val config_of_package : t -> Package.Name.t -> Odoc_config.t
 (** Get the version of an installed package.
     Returns [None] if the package is not installed or version cannot be determined. *)
 val version_of_package : t -> Package.Name.t -> string option Memo.t
+
+(** Get all installed package names known to this discovery instance. *)
+val all_installed_packages : t -> Package.Name.t list

@@ -173,33 +173,27 @@ let get_workspace_packages = Odoc_discovery.get_workspace_packages
    REMAP - URL remapping for external packages
    ============================================================================ *)
 
-(* Generate remap mappings for external (non-local) packages *)
-let generate_remap_mappings ctx pkg_discovery ~packages =
+(* Generate remap mappings for external (non-local) packages.
+   For Local_only mode, we generate package-level remaps without iterating over
+   all libraries in installed packages (which can fail if deprecated subpackages
+   have missing dependencies like angstrom.unix -> angstrom-unix). *)
+let generate_remap_mappings_simple pkg_discovery ~packages =
   (* Filter to non-local (installed) packages that need remapping *)
   let* packages_to_remap =
     Memo.List.filter (Package.Name.Set.to_list packages) ~f:(fun pkg ->
       let+ is_local = Odoc_discovery.is_local_package pkg in
       not is_local)
   in
-  (* Generate mappings for installed packages *)
-  let* mappings =
+  (* Generate package-level mappings only (no library-level to avoid libs_of_pkg) *)
+  let+ mappings =
     Memo.List.map packages_to_remap ~f:(fun pkg_name ->
-      let* version_opt = Package_discovery.version_of_package pkg_discovery pkg_name in
+      let+ version_opt = Package_discovery.version_of_package pkg_discovery pkg_name in
       let version = Option.value version_opt ~default:"latest" in
       let pkg_path = Package.Name.to_string pkg_name in
       let pkg_url = Printf.sprintf "https://ocaml.org/p/%s/%s/doc/" pkg_path version in
-      (* Get libraries in this package for lib-level mappings *)
-      let* libs = Odoc_discovery.libs_of_pkg ctx ~pkg:pkg_name in
-      let lib_mappings =
-        List.map libs ~f:(fun lib ->
-          let lib_name = Lib_name.to_string (Lib.name lib) in
-          let lib_path = pkg_path ^ "/" ^ lib_name in
-          let lib_url = pkg_url ^ lib_name in
-          lib_path, lib_url)
-      in
-      Memo.return ((pkg_path ^ "/", pkg_url) :: lib_mappings))
+      pkg_path ^ "/", pkg_url)
   in
-  Memo.return (List.concat mappings)
+  mappings
 ;;
 
 (* Write remap file with given mappings *)
@@ -1172,42 +1166,21 @@ let handle_sidebar_root sctx ~dir ~mode =
        rules)
 ;;
 
-(* Handle remap file generation - single file for all external dependencies *)
+(* Handle remap file generation - single file for all external dependencies.
+   This is only used for Local_only mode. We generate remaps for all installed
+   packages known to Package_discovery. *)
 let handle_remap_artifacts sctx =
   let ctx = Super_context.context sctx in
   let rules =
     Rules.collect_unit (fun () ->
-      (* Get all workspace packages *)
-      let* workspace_pkgs = get_workspace_packages () in
-      (* Collect all private libs from workspace packages (needed for expand_packages_with_odoc_config) *)
-      let* private_libs =
-        Memo.List.concat_map workspace_pkgs ~f:(fun pkg ->
-          let pkg_name = Package.Name.to_string pkg in
-          (* Skip synthetic packages (private libs) *)
-          let* scope_id = Scope_id.of_string pkg_name in
-          match scope_id with
-          | Scope_id.Private_lib _ -> Memo.return []
-          | Scope_id.Package _ ->
-            let* all_artifacts, _lib_subdirs =
-              Odoc_discovery.discover_package_artifacts
-                sctx
-                ctx
-                ~pkg_or_lib_unique_name:pkg_name
-            in
-            Memo.return (List.filter_map all_artifacts ~f:Artifact.lib))
-      in
-      (* Create package discovery for version lookup *)
       let* pkg_discovery = Package_discovery.create ~context:ctx in
-      (* Get all packages in scope (including odoc config deps) *)
-      let* all_packages =
-        Odoc_discovery.expand_packages_with_odoc_config
-          ctx
-          ~packages:workspace_pkgs
-          ~private_libs
+      let installed_packages =
+        Package_discovery.all_installed_packages pkg_discovery
+        |> Package.Name.Set.of_list
       in
-      (* Generate remap mappings for external dependencies *)
-      let* mappings = generate_remap_mappings ctx pkg_discovery ~packages:all_packages in
-      (* Always create the remap file, even if empty, since it's required as a dependency *)
+      let* mappings =
+        generate_remap_mappings_simple pkg_discovery ~packages:installed_packages
+      in
       let remap_file = Paths.remap_file ctx in
       write_remap_file sctx ~remap_file ~mappings)
   in
@@ -1609,45 +1582,22 @@ let setup_package_aliases_format
     let dir = Path.Build.append_source (Context.build_dir ctx) pkg_dir in
     Output_format.alias output ~mode ~dir
   in
-  (* Wrap the entire transitive closure computation in Action_builder. *)
   let deps_action =
     let open Action_builder.O in
     let* dep_set =
       Action_builder.of_memo
         (let open Memo.O in
-         (* Get doc dependency packages from Package.depends with :with-doc *)
-         let with_doc = Package_variable_name.with_doc in
-         let doc_dep_packages =
-           Package.depends pkg
-           |> List.filter ~f:(Package_dependency.has_constraint_on with_doc)
-           |> List.map ~f:(fun (dep : Package_dependency.t) -> dep.name)
-         in
-         (* Use expand_packages_with_odoc_config to get all required packages *)
-         let* all_packages =
-           Odoc_discovery.expand_packages_with_odoc_config
-             ctx
-             ~packages:(name :: doc_dep_packages)
-             ~private_libs:[]
-         in
-         (* Convert packages to targets *)
-         let pkg_targets =
-           Package.Name.Set.to_list all_packages
-           |> List.map ~f:(fun p -> Target.Any (Target.Pkg p))
-         in
-         (* Add toplevel target *)
-         let all_targets = pkg_targets @ [ Target.Any (Target.Toplevel mode) ] in
-         (* Filter based on mode: Local_only includes only workspace packages *)
-         let* filtered_targets =
+         let* all_targets =
            match mode with
            | Doc_mode.Local_only ->
-             let* workspace_pkgs = get_workspace_packages () in
-             let workspace_pkg_set = Package.Name.Set.of_list workspace_pkgs in
-             Memo.return
-               (List.filter all_targets ~f:(fun (Target.Any target) ->
-                  match target with
-                  | Target.Pkg p -> Package.Name.Set.mem workspace_pkg_set p
-                  | Target.Lib _ | Target.Private_lib _ -> true
-                  | Target.Toplevel _ -> true))
+             (* For Local_only, just use workspace packages directly.
+                No need to compute library closures - the actual file dependencies
+                are handled by the compilation rules. *)
+             let+ workspace_pkgs = get_workspace_packages () in
+             let pkg_targets =
+               List.map workspace_pkgs ~f:(fun p -> Target.Any (Target.Pkg p))
+             in
+             pkg_targets @ [ Target.Any (Target.Toplevel mode) ]
            | Doc_mode.Full ->
              (* For Full mode, expand to include all transitive dependencies *)
              let with_doc = Package_variable_name.with_doc in
@@ -1669,7 +1619,7 @@ let setup_package_aliases_format
              pkg_targets @ [ Target.Any (Target.Toplevel mode) ]
          in
          let unique_targets =
-           List.sort_uniq filtered_targets ~compare:Target.compare_any
+           List.sort_uniq all_targets ~compare:Target.compare_any
          in
          Memo.return
            (unique_targets
