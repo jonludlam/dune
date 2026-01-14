@@ -629,7 +629,8 @@ let compile_artifact sctx ~artifact ~lib_artifacts_by_module ~package_lib_names 
 let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
   let ctx = Super_context.context sctx in
   (* Collect all packages we need dependencies for: current package + config packages *)
-  let all_pkgs = Option.to_list pkg @ Artifact.extra_packages odoc_file in
+  let* extra_packages = Artifact.extra_packages odoc_file in
+  let all_pkgs = Option.to_list pkg @ extra_packages in
   let deps = Dep.deps ctx all_pkgs requires in
   let* stdlib_opt = stdlib_lib (Context.name ctx) in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
@@ -647,8 +648,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
   (* Note: odoc_lib_flags handles -L flags for all libraries in requires,
      including the library itself (which compute_link_requires adds to requires) *)
   let artifact_config =
-    { Odoc_config.deps = { packages = Artifact.extra_packages odoc_file; libraries = [] }
-    }
+    { Odoc_config.deps = { packages = extra_packages; libraries = [] } }
   in
   let run_odoc =
     run_odoc
@@ -843,7 +843,7 @@ let compute_link_requires ~artifact =
       Memo.return (Resolve.return pkg_libs)
   in
   (* Add extra libraries (pre-resolved from odoc_config at artifact creation) *)
-  let extra_libs = Artifact.extra_libs artifact in
+  let* extra_libs = Artifact.extra_libs artifact in
   if List.is_empty extra_libs
   then Memo.return base_requires
   else
@@ -1175,8 +1175,7 @@ let handle_remap_artifacts sctx =
     Rules.collect_unit (fun () ->
       let* pkg_discovery = Package_discovery.create ~context:ctx in
       let installed_packages =
-        Package_discovery.all_installed_packages pkg_discovery
-        |> Package.Name.Set.of_list
+        Package_discovery.all_installed_packages pkg_discovery |> Package.Name.Set.of_list
       in
       let* mappings =
         generate_remap_mappings_simple pkg_discovery ~packages:installed_packages
@@ -1618,9 +1617,7 @@ let setup_package_aliases_format
              in
              pkg_targets @ [ Target.Any (Target.Toplevel mode) ]
          in
-         let unique_targets =
-           List.sort_uniq all_targets ~compare:Target.compare_any
-         in
+         let unique_targets = List.sort_uniq all_targets ~compare:Target.compare_any in
          Memo.return
            (unique_targets
             |> List.map ~f:(fun (Target.Any t) -> Dep.format_alias output mode ctx t)

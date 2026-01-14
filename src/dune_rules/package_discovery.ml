@@ -27,7 +27,10 @@ let extract_package_from_pkg_path path =
        (* Get the part after "/.pkg/" *)
        let after_pkg_start = idx + pattern_len in
        let after_pkg =
-         String.sub path_str ~pos:after_pkg_start ~len:(String.length path_str - after_pkg_start)
+         String.sub
+           path_str
+           ~pos:after_pkg_start
+           ~len:(String.length path_str - after_pkg_start)
        in
        (* The next path component is "<name>.<version>-<digest>" *)
        (match String.lsplit2 after_pkg ~on:'/' with
@@ -274,7 +277,9 @@ let create_impl_pkg_mode context =
   let* all_libs_set = Lib.DB.all installed_libs in
   let all_libs = Lib.Set.to_list all_libs_set in
   Log.info
-    [ Pp.textf "Package_discovery.create_impl_pkg_mode: processing %d libs" (List.length all_libs)
+    [ Pp.textf
+        "Package_discovery.create_impl_pkg_mode: processing %d libs"
+        (List.length all_libs)
     ];
   let lib_mappings = build_mappings_from_pkg_paths all_libs in
   Log.info
