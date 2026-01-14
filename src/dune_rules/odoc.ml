@@ -130,26 +130,28 @@ end = struct
            Dep.Set.add acc (Dep.alias (odoc_all_alias ~dir:(Paths.odocs ctx (Pkg p)))))
        in
        List.fold_left libs ~init ~f:(fun acc (lib : Lib.t) ->
-         match Lib.Local.of_lib lib with
+         let info = Lib.info lib in
+         (* Skip implementations of virtual libraries - they don't have docs *)
+         match Lib_info.implements info with
+         | Some _ -> acc
          | None ->
-           let lib_pkg_opt = Package_discovery.package_of_library pkg_discovery lib in
-           (match lib_pkg_opt with
-            | Some lib_pkg ->
-              let dir =
-                Paths.root ctx
-                ++ "_odoc"
-                ++ Package.Name.to_string lib_pkg
-                ++ Lib_name.to_string (Lib.name lib)
-              in
-              Dep.Set.add acc (Dep.alias (odoc_all_alias ~dir))
-            | None -> acc)
-         | Some local_lib ->
-           let lib_t = Lib.Local.to_lib local_lib in
-           let info = Lib.info lib_t in
-           (* Skip implementations of virtual libraries - they don't have docs *)
-           (match Lib_info.implements info with
-            | Some _ -> acc
+           (match Lib.Local.of_lib lib with
             | None ->
+              let lib_pkg_opt =
+                Package_discovery.package_of_library pkg_discovery lib
+              in
+              (match lib_pkg_opt with
+               | Some lib_pkg ->
+                 let dir =
+                   Paths.root ctx
+                   ++ "_odoc"
+                   ++ Package.Name.to_string lib_pkg
+                   ++ Lib_name.to_string (Lib.name lib)
+                 in
+                 Dep.Set.add acc (Dep.alias (odoc_all_alias ~dir))
+               | None -> acc)
+            | Some local_lib ->
+              let lib_t = Lib.Local.to_lib local_lib in
               let target =
                 match Lib_info.package info with
                 | Some pkg -> Target.Lib (pkg, lib_t)
