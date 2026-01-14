@@ -72,6 +72,7 @@ type t =
   ; version : Package_version.t option
   ; dune_version : Syntax.Version.t
   ; info : Package_info.t
+  ; documentation_index : string option
   ; packages : Package.t Package.Name.Map.t
   ; exclusive_dir_packages : Package_id.t Path.Source.Map.t
   ; stanza_parser : Stanza.t list Decoder.t
@@ -114,6 +115,7 @@ let hash = Poly.hash
 let packages t = t.packages
 let name t = t.name
 let version t = t.version
+let documentation_index t = t.documentation_index
 let root t = t.root
 
 let stanza_parser t ~dir =
@@ -151,6 +153,7 @@ let to_dyn
       ; version
       ; dune_version
       ; info
+      ; documentation_index
       ; project_file
       ; parsing_context = _
       ; extension_args = _
@@ -185,6 +188,7 @@ let to_dyn
     ; "version", (option Package_version.to_dyn) version
     ; "dune_version", Syntax.Version.to_dyn dune_version
     ; "info", Package_info.to_dyn info
+    ; "documentation_index", Dyn.option Dyn.string documentation_index
     ; "project_file", Dyn.option Path.Source.to_dyn project_file
     ; ( "packages"
       , (list (pair Package.Name.to_dyn Package.to_dyn))
@@ -584,6 +588,7 @@ let infer ~dir info packages =
   ; executables_implicit_empty_intf
   ; accept_alternative_dune_file_name = false
   ; stanza_parser
+  ; documentation_index = None
   ; project_file = None
   ; extension_args
   ; parsing_context
@@ -637,6 +642,7 @@ let encode : t -> Dune_sexp.t list =
           _
           (* The next three fields hold metadata that is about the dune-project
              file, but not represented in its content *)
+      ; documentation_index = _
       ; project_file = _
       ; root = _
       ; expand_aliases_in_sandbox
@@ -932,6 +938,8 @@ let parse ~dir ~(lang : Lang.Instance.t) ~file =
   let+ name = field_o "name" Dune_project_name.decode
   and+ version = field_o "version" Package_version.decode
   and+ info = Package_info.decode ()
+  and+ documentation_index =
+    field_o "doc_index" string
   and+ packages = multi_field "package" (Package.decode ~dir)
   and+ pins = Pin_stanza.Project.decode
   and+ implicit_transitive_deps =
@@ -1072,6 +1080,7 @@ let parse ~dir ~(lang : Lang.Instance.t) ~file =
     ; dune_version
     ; info
     ; packages
+    ; documentation_index
     ; stanza_parser
     ; project_file = Some file
     ; extension_args

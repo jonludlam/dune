@@ -18,6 +18,7 @@ val packages : t -> Package.t Package.Name.Map.t
 val exclusive_package : t -> dir:Path.Source.t -> Package_id.t option
 val name : t -> Dune_project_name.t
 val version : t -> Package_version.t option
+val documentation_index : t -> string option
 val root : t -> Path.Source.t
 val stanza_parser : t -> dir:Path.Source.t -> Stanza.t list Decoder.t
 val generate_opam_files : t -> bool
