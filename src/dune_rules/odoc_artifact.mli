@@ -68,11 +68,11 @@ val lib_name : t -> Lib_name.t
 (** The library this artifact belongs to, if it's a module artifact. *)
 val lib : t -> Lib.t option
 
-(** Extra libraries from odoc-config dependencies. *)
-val extra_libs : t -> Lib.t list
+(** Extra libraries from odoc-config dependencies (lazy - only computed when accessed). *)
+val extra_libs : t -> Lib.t list Memo.t
 
-(** Extra packages from odoc-config dependencies. *)
-val extra_packages : t -> Package.Name.t list
+(** Extra packages from odoc-config dependencies (lazy - only computed when accessed). *)
+val extra_packages : t -> Package.Name.t list Memo.t
 
 (** Whether this artifact should be hidden from indices (internal modules). *)
 val hidden : t -> bool
@@ -88,6 +88,6 @@ val should_suppress_output : t -> bool Memo.t
 val create
   :  kind:kind
   -> source:source
-  -> extra_libs:Lib.t list
-  -> extra_packages:Package.Name.t list
+  -> extra_libs:Lib.t list Memo.t
+  -> extra_packages:Package.Name.t list Memo.t
   -> t
