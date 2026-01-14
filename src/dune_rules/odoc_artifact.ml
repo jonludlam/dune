@@ -19,8 +19,8 @@ type source =
 type t =
   { kind : kind
   ; source : source
-  ; extra_libs : Lib.t list
-  ; extra_packages : Package.Name.t list
+  ; extra_libs : Lib.t list Memo.t
+  ; extra_packages : Package.Name.t list Memo.t
   }
 
 let get_kind t = t.kind

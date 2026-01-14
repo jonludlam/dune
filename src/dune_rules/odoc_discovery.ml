@@ -83,20 +83,27 @@ let libs_of_pkg (ctx : Context.t) ~pkg =
 
 (* Get odoc config dependencies for a package, handling local vs installed.
    Local packages use (documentation (depends ...)) which only specifies packages.
-   Installed packages have full odoc-config.sexp with both packages and libraries. *)
+   Installed packages have full odoc-config.sexp with both packages and libraries.
+   Returns (deps, is_local) where is_local indicates if validation should be strict. *)
 let get_odoc_config_deps_for_pkg pkg_discovery pkg =
   let* local_pkg_opt = find_local_package pkg in
   match local_pkg_opt with
   | Some local_pkg ->
     let doc = Package.info local_pkg |> Package_info.documentation in
     Memo.return
-      { Odoc_config.packages =
-          List.map doc.packages ~f:(fun (dep : Package_dependency.t) -> dep.name)
-      ; libraries = []
-      }
+      ( { Odoc_config.packages =
+            List.map doc.packages ~f:(fun (dep : Package_dependency.t) -> dep.name)
+        ; libraries = []
+        }
+      , true (* is_local *) )
   | None ->
+    Log.info
+      [ Pp.textf
+          "DEBUG: Reading odoc-config for INSTALLED package %s"
+          (Package.Name.to_string pkg)
+      ];
     let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
-    Memo.return odoc_config.Odoc_config.deps
+    Memo.return (odoc_config.Odoc_config.deps, false (* not local *))
 ;;
 
 let resolve_odoc_config_libraries lib_db ~deps =
@@ -115,30 +122,44 @@ let package_exists ctx ~pkg =
     Memo.return (not (List.is_empty libs))
 ;;
 
-let resolve_odoc_config_deps ctx ~deps =
+(* Resolve odoc config dependencies.
+   ~validate_packages: if true, raise an error for missing package dependencies.
+   This should be true for local packages (user's own dune-project) but false for
+   installed packages (their odoc-config.sexp may reference uninstalled packages). *)
+let resolve_odoc_config_deps ctx ~deps ~validate_packages =
   let* lib_db = Lib.DB.installed ctx in
   (* Resolve extra_libs from deps.libraries *)
   let* extra_libs_from_names = resolve_odoc_config_libraries lib_db ~deps in
-  (* Validate and resolve extra_libs from deps.packages *)
-  let* extra_libs_from_pkgs =
-    Memo.List.concat_map deps.Odoc_config.packages ~f:(fun pkg_name ->
-      let* exists = package_exists ctx ~pkg:pkg_name in
-      if not exists
-      then
-        User_error.raise
-          [ Pp.textf
-              "Documentation dependency %S is not installed."
-              (Package.Name.to_string pkg_name)
-          ]
-      else libs_of_pkg ctx ~pkg:pkg_name)
+  (* Resolve extra_libs from deps.packages, optionally validating *)
+  let* extra_libs_from_pkgs, resolved_packages =
+    Memo.List.fold_left
+      deps.Odoc_config.packages
+      ~init:([], [])
+      ~f:(fun (libs_acc, pkgs_acc) pkg_name ->
+        let* exists = package_exists ctx ~pkg:pkg_name in
+        if not exists
+        then
+          if validate_packages
+          then
+            User_error.raise
+              [ Pp.textf
+                  "Documentation dependency %S is not installed."
+                  (Package.Name.to_string pkg_name)
+              ]
+          else
+            (* Skip missing packages from installed odoc-config.sexp silently *)
+            Memo.return (libs_acc, pkgs_acc)
+        else
+          let+ pkg_libs = libs_of_pkg ctx ~pkg:pkg_name in
+          libs_acc @ pkg_libs, pkgs_acc @ [ pkg_name ])
   in
   let extra_libs = extra_libs_from_names @ extra_libs_from_pkgs in
-  Memo.return (extra_libs, deps.Odoc_config.packages)
+  Memo.return (extra_libs, resolved_packages)
 ;;
 
 let resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg =
-  let* deps = get_odoc_config_deps_for_pkg pkg_discovery pkg in
-  resolve_odoc_config_deps ctx ~deps
+  let* deps, is_local = get_odoc_config_deps_for_pkg pkg_discovery pkg in
+  resolve_odoc_config_deps ctx ~deps ~validate_packages:is_local
 ;;
 
 (* Expand a set of packages with their odoc-config dependencies transitively.
@@ -153,6 +174,11 @@ let resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg =
    5. Find packages for all those libraries
    6. If there are new packages, repeat until fixed point *)
 let expand_packages_with_odoc_config ctx ~packages ~private_libs =
+  Log.info
+    [ Pp.textf
+        "DEBUG: expand_packages_with_odoc_config called with packages: %s"
+        (packages |> List.map ~f:Package.Name.to_string |> String.concat ~sep:", ")
+    ];
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   (* Use public_libs which includes both local and installed libs, preferring local *)
   let* lib_db = Scope.DB.public_libs (Context.name ctx) in
@@ -168,7 +194,7 @@ let expand_packages_with_odoc_config ctx ~packages ~private_libs =
     let* odoc_config_libs =
       Package.Name.Set.to_list seen_pkgs
       |> Memo.List.concat_map ~f:(fun pkg ->
-        let* deps = get_odoc_config_deps_for_pkg pkg_discovery pkg in
+        let* deps, _is_local = get_odoc_config_deps_for_pkg pkg_discovery pkg in
         resolve_odoc_config_libraries lib_db ~deps)
     in
     (* Union all libraries: package libs + odoc-config libs + private libs + stdlib *)
@@ -189,7 +215,7 @@ let expand_packages_with_odoc_config ctx ~packages ~private_libs =
     let* odoc_config_pkgs =
       Package.Name.Set.to_list seen_pkgs
       |> Memo.List.concat_map ~f:(fun pkg ->
-        let* deps = get_odoc_config_deps_for_pkg pkg_discovery pkg in
+        let* deps, _is_local = get_odoc_config_deps_for_pkg pkg_discovery pkg in
         Memo.return deps.packages)
     in
     let all_new_pkgs =
@@ -361,7 +387,13 @@ let default_pkg_index ~pkg ~lib_artifacts =
   Buffer.contents b
 ;;
 
-let create_artifact_module ~target ~local_lib ~module_ ~extra_libs ~extra_packages =
+let create_artifact_module
+      ~target
+      ~local_lib
+      ~module_
+      ~(extra_libs : Lib.t list Memo.t)
+      ~(extra_packages : Package.Name.t list Memo.t)
+  =
   let mod_ =
     { Odoc_target.visible = Module.visibility module_ = Visibility.Public
     ; module_name = Module_name.Unique.to_name (Module.obj_name module_) ~loc:Loc.none
@@ -388,16 +420,19 @@ let discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib
   let pkg = Lib_info.package info in
   let lib_t = Lib.Local.to_lib local_lib in
   (* Get extras from odoc-config for libraries with packages, empty for private libs.
-     Also include the library's own package in extra_packages. *)
-  let* extra_libs, extra_packages =
+     Also include the library's own package in extra_packages.
+     These are Memo.t values - computation is deferred until accessed. *)
+  let extra_libs, extra_packages =
     match pkg with
-    | None -> Memo.return ([], [])
+    | None -> Memo.return [], Memo.return []
     | Some pkg ->
-      let* pkg_discovery = Package_discovery.create ~context:ctx in
-      let+ config_libs, config_packages =
-        resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg
+      let config_lazy =
+        Memo.lazy_ (fun () ->
+          let* pkg_discovery = Package_discovery.create ~context:ctx in
+          resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg)
       in
-      config_libs, pkg :: config_packages
+      ( Memo.Lazy.force config_lazy >>| fst
+      , Memo.Lazy.force config_lazy >>| fun (_, pkgs) -> pkg :: pkgs )
   in
   let target =
     match pkg with
@@ -437,23 +472,38 @@ let toplevel_index_artifact ctx ~mode =
       | Toplevel_index.Private_lib _ -> None)
   in
   let deps = { Odoc_config.packages = package_names; libraries = [] } in
-  let* extra_libs, extra_packages_from_deps = resolve_odoc_config_deps ctx ~deps in
-  (* Only add private libraries for Full mode - Local_only should only document packages *)
-  let* private_lib_pseudo_pkgs =
-    match mode with
-    | Odoc_target.Doc_mode.Local_only -> Memo.return []
-    | Odoc_target.Doc_mode.Full ->
-      let+ private_local_libs = get_private_libraries ctx in
-      List.map private_local_libs ~f:(fun local_lib ->
-        Package.Name.of_string (Odoc_scope.lib_unique_name local_lib))
+  (* Lazy computation of extra_libs and extra_packages - deferred until accessed *)
+  let config_lazy =
+    Memo.lazy_ (fun () ->
+      (* Don't validate here - packages come from get_items which already filters appropriately *)
+      let* libs, packages_from_deps =
+        resolve_odoc_config_deps ctx ~deps ~validate_packages:false
+      in
+      (* Only add private libraries for Full mode - Local_only should only document packages *)
+      let+ private_lib_pseudo_pkgs =
+        match mode with
+        | Odoc_target.Doc_mode.Local_only -> Memo.return []
+        | Odoc_target.Doc_mode.Full ->
+          let+ private_local_libs = get_private_libraries ctx in
+          List.map private_local_libs ~f:(fun local_lib ->
+            Package.Name.of_string (Odoc_scope.lib_unique_name local_lib))
+      in
+      libs, packages_from_deps @ private_lib_pseudo_pkgs)
   in
-  let extra_packages = extra_packages_from_deps @ private_lib_pseudo_pkgs in
+  let extra_libs = Memo.Lazy.force config_lazy >>| fst in
+  let extra_packages = Memo.Lazy.force config_lazy >>| snd in
   Memo.return (Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages)
 ;;
 
 (* Create mld artifacts for a package (without index artifacts).
    Index artifacts are created separately after module artifacts are discovered. *)
-let discover_pkg_mld_artifacts ~pkg ~pkg_libs ~mld_infos ~extra_libs ~extra_packages =
+let discover_pkg_mld_artifacts
+      ~pkg
+      ~pkg_libs
+      ~mld_infos
+      ~(extra_libs : Lib.t list Memo.t)
+      ~(extra_packages : Package.Name.t list Memo.t)
+  =
   let target = Odoc_target.Pkg pkg in
   let mld_artifacts =
     List.map mld_infos ~f:(fun (source, name) ->
@@ -470,8 +520,8 @@ let create_pkg_index_artifact
       ~pkg
       ~pkg_libs
       ~lib_artifacts
-      ~extra_libs
-      ~extra_packages
+      ~(extra_libs : Lib.t list Memo.t)
+      ~(extra_packages : Package.Name.t list Memo.t)
   =
   let target = Odoc_target.Pkg pkg in
   let output_path = Odoc_paths.gen_mld_dir ctx pkg ++ "index.mld" in
@@ -547,6 +597,12 @@ let parse_classify_output ~archive_names classify_content =
 let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib
   : Odoc_artifact.t list Memo.t
   =
+  Log.info
+    [ Pp.textf
+        "DEBUG: discover_installed_lib_artifacts called for pkg=%s lib=%s"
+        (Package.Name.to_string pkg)
+        (Lib_name.to_string lib_name)
+    ];
   let pkg_name_str = Package.Name.to_string pkg in
   let lib_name_str = Lib_name.to_string lib_name in
   let info = Lib.info lib in
@@ -578,7 +634,14 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib
     then Memo.return []
     else
       let* pkg_discovery = Package_discovery.create ~context:ctx in
-      let* extra_libs, extra_packages = resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg in
+      (* Lazy computation of odoc-config deps - only evaluated when extra_libs/extra_packages
+         are accessed. This avoids reading odoc-config.sexp for installed packages in
+         Local_only mode where these values aren't needed. *)
+      let config_lazy =
+        Memo.lazy_ (fun () -> resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg)
+      in
+      let extra_libs = Memo.Lazy.force config_lazy >>| fst in
+      let extra_packages = Memo.Lazy.force config_lazy >>| snd in
       let+ all_module_artifacts =
         Memo.parallel_map all_module_names ~f:(fun module_name ->
           match Package_discovery.module_source_file pkg_discovery ~lib ~module_name with
@@ -715,7 +778,11 @@ let create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifa
   let kind = Odoc_artifact.Page (page, Odoc_target.Pkg dummy_pkg) in
   let content = library_index_content_from_artifacts ~lib_name ~artifacts:lib_artifacts in
   let source = Odoc_artifact.Generated { content; output_path } in
-  Odoc_artifact.create ~kind ~source ~extra_libs:[] ~extra_packages:[]
+  Odoc_artifact.create
+    ~kind
+    ~source
+    ~extra_libs:(Memo.return [])
+    ~extra_packages:(Memo.return [])
 ;;
 
 (* Discover artifacts for a private library.
@@ -756,7 +823,12 @@ let discover_local_pkg_artifacts sctx ctx ~pkg
       Option.map (Lib.Local.of_lib lib) ~f:Lib.Local.to_lib)
   in
   let* pkg_discovery = Package_discovery.create ~context:ctx in
-  let* extra_libs, extra_packages = resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg in
+  (* Lazy computation of odoc-config deps *)
+  let config_lazy =
+    Memo.lazy_ (fun () -> resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg)
+  in
+  let extra_libs = Memo.Lazy.force config_lazy >>| fst in
+  let extra_packages = Memo.Lazy.force config_lazy >>| snd in
   let* mld_infos = get_local_mld_infos sctx ~pkg in
   discover_pkg_artifacts_common
     sctx
@@ -772,6 +844,11 @@ let discover_local_pkg_artifacts sctx ctx ~pkg
 let discover_installed_pkg_artifacts sctx ctx ~pkg
   : (Odoc_artifact.t list * string list) Memo.t
   =
+  Log.info
+    [ Pp.textf
+        "DEBUG: discover_installed_pkg_artifacts called for pkg=%s"
+        (Package.Name.to_string pkg)
+    ];
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   let libs = Package_discovery.libraries_of_package pkg_discovery pkg in
   Log.info
@@ -780,7 +857,13 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg
         (Package.Name.to_string pkg)
         (List.length libs)
     ];
-  let* extra_libs, extra_packages = resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg in
+  (* Lazy computation of odoc-config deps - avoids reading odoc-config.sexp
+     for installed packages when not needed (e.g., in Local_only mode) *)
+  let config_lazy =
+    Memo.lazy_ (fun () -> resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg)
+  in
+  let extra_libs = Memo.Lazy.force config_lazy >>| fst in
+  let extra_packages = Memo.Lazy.force config_lazy >>| snd in
   let mld_files = Package_discovery.mlds_of_package pkg_discovery pkg in
   let mld_infos =
     List.map mld_files ~f:(fun mld_path ->
