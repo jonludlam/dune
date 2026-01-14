@@ -822,25 +822,58 @@ let setup_pkg_support_rule sctx ~mode ~pkg_name =
 ;;
 
 (* Compute requires for linking an artifact.
-   For modules: use the library's requires + the library itself
+   For modules: use the library's requires + the library itself + sibling libs in same package
    For pages: use all libraries in the package (since pages document the whole package)
    Also includes extra libraries from artifact.extra_libs (pre-resolved from odoc-config.sexp). *)
-let compute_link_requires ~artifact =
+let compute_link_requires sctx ~artifact =
+  let ctx = Super_context.context sctx in
   let* base_requires =
     match Artifact.get_kind artifact with
-    | Module (_, (Lib (_, lib) | Private_lib (_, lib))) ->
-      (* Module in a library: use library's transitive dependencies PLUS the library itself.
-       This ensures all modules in the library (including hidden/wrapped ones) are compiled
-       before any module is linked. Critical for wrapped libraries.
-       Use closure to get transitive dependencies, needed for resolving installed library deps. *)
+    | Module (_, Lib (pkg, lib)) ->
+      (* Module in a library with a package: use library's transitive dependencies,
+         the library itself, AND all other libraries in the same package.
+         This allows cross-references between sibling libraries in documentation. *)
+      let* closure = Lib.closure [ lib ] ~linking:false in
+      let* pkg_libs = Odoc_discovery.libs_of_pkg ctx ~pkg in
+      Memo.return
+        (Resolve.bind closure ~f:(fun closure_libs ->
+           (* Combine: closure + pkg siblings, deduplicated *)
+           let all_libs = lib :: closure_libs @ pkg_libs in
+           let seen = ref Lib.Set.empty in
+           let deduped =
+             List.filter all_libs ~f:(fun l ->
+               if Lib.Set.mem !seen l then false
+               else (
+                 seen := Lib.Set.add !seen l;
+                 true))
+           in
+           Resolve.return deduped))
+    | Module (_, Private_lib (_, lib)) ->
+      (* Private library (no package): just use transitive dependencies *)
       let* closure = Lib.closure [ lib ] ~linking:false in
       Memo.return
         (Resolve.bind closure ~f:(fun libs ->
-           (* Add the library itself to ensure .odoc-all dependency includes all modules *)
            Resolve.return (lib :: libs)))
     | Page ({ pkg_libs; _ }, (Pkg _ | Toplevel _)) ->
-      (* Page in a package or toplevel: use the libraries that were recorded when the artifact was created *)
-      Memo.return (Resolve.return pkg_libs)
+      (* Page in a package or toplevel: use the libraries in the package PLUS their
+         transitive dependencies. This allows pages to reference types from dependencies. *)
+      if List.is_empty pkg_libs
+      then Memo.return (Resolve.return [])
+      else
+        let* closure = Lib.closure pkg_libs ~linking:false in
+        Memo.return
+          (Resolve.bind closure ~f:(fun closure_libs ->
+             (* Combine pkg_libs + their deps, deduplicated *)
+             let all_libs = pkg_libs @ closure_libs in
+             let seen = ref Lib.Set.empty in
+             let deduped =
+               List.filter all_libs ~f:(fun l ->
+                 if Lib.Set.mem !seen l then false
+                 else (
+                   seen := Lib.Set.add !seen l;
+                   true))
+             in
+             Resolve.return deduped))
   in
   (* Add extra libraries (pre-resolved from odoc_config at artifact creation) *)
   let* extra_libs = Artifact.extra_libs artifact in
@@ -856,7 +889,7 @@ let compute_link_requires ~artifact =
    This follows the driver's pattern where all information needed to link
    is derived from the artifact itself. *)
 let link_artifact sctx ~artifact =
-  let* requires = compute_link_requires ~artifact in
+  let* requires = compute_link_requires sctx ~artifact in
   (* Call the existing link_odoc_rules with computed requires *)
   link_odoc_rules sctx artifact ~pkg:(Artifact.pkg artifact) ~requires
 ;;
