@@ -259,7 +259,9 @@ let load_opam_file_with_contents ~contents:opam_file_string file name =
   in
   let dir = Path.Source.parent_exn file in
   let info =
-    let documentation = { Dune_lang.Documentation.packages = []; url = get_one "doc" } in
+    let documentation =
+      { Dune_lang.Documentation.packages = []; url = get_one "doc"; index = None }
+    in
     Dune_lang.Package_info.create
       ~maintainers:(get_many "maintainer")
       ~maintenance_intent:(get_many "x-maintenance-intent")

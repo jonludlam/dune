@@ -37,7 +37,7 @@ let empty =
   ; authors = None
   ; homepage = None
   ; bug_reports = None
-  ; documentation = { packages = []; url = None }
+  ; documentation = { packages = []; url = None; index = None }
   ; maintainers = None
   ; maintenance_intent = None
   }
@@ -52,7 +52,7 @@ let example ~authors ~maintainers ~license =
       Some
         (Option.value maintainers ~default:[ "Maintainer Name <maintainer@example.com>" ])
   ; documentation =
-      { packages = []; url = Some "https://url/to/documentation" }
+      { packages = []; url = Some "https://url/to/documentation"; index = None }
       (* homepage and bug_reports are inferred from the source *)
   ; homepage = None
   ; bug_reports = None
@@ -98,7 +98,7 @@ let encode_fields
   let open Encoder in
   let documentation =
     match documentation with
-    | { url = None; packages = [] } -> None
+    | { url = None; packages = []; index = None } -> None
     | x -> Some x
   in
   record_fields
@@ -218,7 +218,8 @@ let decode ~toplevel ?since () =
     field_o "maintainers" (Syntax.since Stanza.syntax (v (1, 10)) >>> repeat string)
   and+ maintenance_intent = field_o "maintenance_intent" decode_maintenance_intent in
   let documentation =
-    documentation |> Option.value ~default:{ Documentation.url = None; packages = [] }
+    documentation
+    |> Option.value ~default:{ Documentation.url = None; packages = []; index = None }
   in
   { source
   ; authors
