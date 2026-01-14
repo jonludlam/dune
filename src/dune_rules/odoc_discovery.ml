@@ -97,13 +97,14 @@ let get_odoc_config_deps_for_pkg pkg_discovery pkg =
   let* local_pkg_opt = find_local_package pkg in
   match local_pkg_opt with
   | Some local_pkg ->
-    let doc = Package.info local_pkg |> Package_info.documentation in
+    let with_doc = Package_variable_name.with_doc in
+    let packages =
+      Package.depends local_pkg
+      |> List.filter ~f:(Package_dependency.has_constraint_on with_doc)
+      |> List.map ~f:(fun (dep : Package_dependency.t) -> dep.name)
+    in
     Memo.return
-      ( { Odoc_config.packages =
-            List.map doc.packages ~f:(fun (dep : Package_dependency.t) -> dep.name)
-        ; libraries = []
-        }
-      , true (* is_local *) )
+      ({ Odoc_config.packages; libraries = [] }, true (* is_local *))
   | None ->
     Log.info
       [ Pp.textf
@@ -470,9 +471,31 @@ let toplevel_index_artifact ctx ~mode =
   let output_path = Odoc_paths.toplevel_index_mld ctx mode in
   let page = { Odoc_target.name = "index"; pkg_libs = [] } in
   let kind = Odoc_artifact.Page (page, Odoc_target.Toplevel mode) in
+  (* Check for a custom index.mld from dune-project (documentation (index ...)) *)
+  let* projects = Dune_load.projects () in
+  let root_project =
+    List.find projects ~f:(fun p ->
+      Path.Source.equal (Dune_project.root p) Path.Source.root)
+  in
+  let custom_index =
+    match root_project with
+    | Some project -> Dune_project.documentation_index project
+    | None -> None
+  in
+  let* source =
+    match custom_index with
+    | Some custom_path ->
+      (* User provided a custom index.mld - read its content *)
+      let source_path = Path.Source.relative Path.Source.root custom_path in
+      let+ content = Build_system.read_file (Path.source source_path) in
+      Odoc_artifact.Generated { content; output_path }
+    | None ->
+      (* Generate the index content as before *)
+      let+ items = Toplevel_index.get_items ~mode ctx in
+      let content = Toplevel_index.mld_content items in
+      Odoc_artifact.Generated { content; output_path }
+  in
   let* items = Toplevel_index.get_items ~mode ctx in
-  let content = Toplevel_index.mld_content items in
-  let source = Odoc_artifact.Generated { content; output_path } in
   let package_names =
     List.filter_map items ~f:(fun item ->
       match item with
