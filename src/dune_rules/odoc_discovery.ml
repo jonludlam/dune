@@ -850,7 +850,13 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg
         (Package.Name.to_string pkg)
     ];
   let* pkg_discovery = Package_discovery.create ~context:ctx in
-  let libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+  let all_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
+  (* Filter out implementations of virtual libraries - they provide the same API
+     as the virtual library but cause conflicts when both are included *)
+  let libs =
+    List.filter all_libs ~f:(fun lib ->
+      Option.is_none (Lib_info.implements (Lib.info lib)))
+  in
   Log.info
     [ Pp.textf
         "discover_installed_pkg_artifacts(%s): got %d libs"
