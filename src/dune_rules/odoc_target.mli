@@ -27,6 +27,16 @@ type page =
   ; pkg_libs : Lib.t list (** Package's libraries, used as base deps for linking *)
   }
 
+(** Asset metadata for static files (images, videos, etc.) in documentation.
+
+    Assets are compiled with [odoc compile-asset] and can be referenced from
+    documentation using [{image!/pkg/path/to/asset}] syntax. *)
+type asset =
+  { asset_name : string (** Filename of the asset (e.g., "logo.png") *)
+  ; asset_rel_path : string
+    (** Relative path within doc structure (e.g., "images/logo.png") *)
+  }
+
 (** Module metadata for library documentation. *)
 type mod_ =
   { visible : bool
