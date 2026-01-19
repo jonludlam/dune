@@ -26,6 +26,11 @@ val libraries_of_package : t -> Package.Name.t -> Lib.t list
     Returns an empty list for unknown/uninstalled packages. *)
 val mlds_of_package : t -> Package.Name.t -> Path.t list
 
+(** Get all asset files (non-.mld files in odoc-pages, all files in odoc-assets)
+    belonging to an installed package.
+    Returns an empty list for unknown/uninstalled packages. *)
+val assets_of_package : t -> Package.Name.t -> Path.t list
+
 (** Get the source file (cmti/cmt) for a specific module in an installed library.
     Returns the path to the .cmti file if it exists, otherwise .cmt. *)
 val module_source_file : t -> lib:Lib.t -> module_name:string -> Path.t option

@@ -7,6 +7,7 @@ let ( ++ ) = Path.Build.relative
 type kind =
   | Module : Odoc_target.mod_ * Odoc_target.mod_ Odoc_target.t -> kind
   | Page : Odoc_target.page * Odoc_target.page Odoc_target.t -> kind
+  | Asset : Odoc_target.asset * Odoc_target.page Odoc_target.t -> kind
 
 type source =
   | Local_source of Path.Build.t
@@ -46,12 +47,14 @@ let pkg t =
   | Module (_, Private_lib _) -> None
   | Page (_, Pkg pkg) -> Some pkg
   | Page (_, Toplevel _) -> None
+  | Asset (_, Pkg pkg) -> Some pkg
+  | Asset (_, Toplevel _) -> None
 ;;
 
 let lib t =
   match t.kind with
   | Module (_, (Lib (_, lib) | Private_lib (_, lib))) -> Some lib
-  | Page _ -> None
+  | Page _ | Asset _ -> None
 ;;
 
 let lib_name t =
@@ -59,12 +62,15 @@ let lib_name t =
   | Module (_, (Lib (_, lib) | Private_lib (_, lib))) -> Lib.name lib
   | Page (_, Pkg pkg) -> Lib_name.of_string (Package.Name.to_string pkg)
   | Page (_, Toplevel _) -> Lib_name.of_string "index"
+  | Asset (_, Pkg pkg) -> Lib_name.of_string (Package.Name.to_string pkg)
+  | Asset (_, Toplevel _) -> Lib_name.of_string "index"
 ;;
 
 let odoc_dir ctx t =
   match t.kind with
   | Module (_, target) -> Odoc_paths.odocs ctx target
   | Page (_, target) -> Odoc_paths.odocs ctx target
+  | Asset (_, target) -> Odoc_paths.odocs ctx target
 ;;
 
 (* Split hierarchical page name like "foo/baz" into (Some "foo", "baz").
@@ -75,12 +81,13 @@ let split_page_name name =
   | None -> None, name
 ;;
 
-(* Extract the basename from kind (for pages) or source (for modules).
+(* Extract the basename from kind (for pages/assets) or source (for modules).
    For hierarchical pages like "foo/baz", returns just the leaf "baz"
    since the parent path "foo" is already in parent_id. *)
 let get_basename t =
   match t.kind, t.source with
   | Page (page, _), _ -> snd (split_page_name page.name)
+  | Asset (asset, _), _ -> snd (split_page_name asset.asset_rel_path)
   | Module (_, _), Local_source src_path ->
     Path.Build.basename src_path |> Filename.remove_extension
   | Module (mod_, _), (Installed_source _ | Generated _) ->
@@ -97,6 +104,12 @@ let odoc_file ctx t =
     (match fst (split_page_name page.name) with
      | Some parent_path -> base_dir ++ parent_path ++ ("page-" ^ basename ^ ".odoc")
      | None -> base_dir ++ ("page-" ^ basename ^ ".odoc"))
+  | Asset (asset, target) ->
+    let base_dir = Odoc_paths.odocs ctx target in
+    (* For hierarchical assets like "images/logo.png", include parent path in directory *)
+    (match fst (split_page_name asset.asset_rel_path) with
+     | Some parent_path -> base_dir ++ parent_path ++ ("asset-" ^ basename ^ ".odoc")
+     | None -> base_dir ++ ("asset-" ^ basename ^ ".odoc"))
   | Module (_, target) ->
     let base_dir = Odoc_paths.odocs ctx target in
     base_dir ++ (basename ^ ".odoc")
@@ -111,6 +124,12 @@ let odocl_file ctx t =
     (match fst (split_page_name page.name) with
      | Some parent_path -> base_dir ++ parent_path ++ ("page-" ^ basename ^ ".odocl")
      | None -> base_dir ++ ("page-" ^ basename ^ ".odocl"))
+  | Asset (asset, target) ->
+    let base_dir = Odoc_paths.odocl ctx target in
+    (* For hierarchical assets like "images/logo.png", include parent path in directory *)
+    (match fst (split_page_name asset.asset_rel_path) with
+     | Some parent_path -> base_dir ++ parent_path ++ ("asset-" ^ basename ^ ".odocl")
+     | None -> base_dir ++ ("asset-" ^ basename ^ ".odocl"))
   | Module (_, target) ->
     let base_dir = Odoc_paths.odocl ctx target in
     base_dir ++ (basename ^ ".odocl")
@@ -129,6 +148,11 @@ let output_file ~base ~suffix t =
       | None -> base ++ basename
     in
     Path.Build.extend_basename path ~suffix
+  | Asset (asset, _) ->
+    (* Assets are copied with their original filename (including extension) *)
+    (match fst (split_page_name asset.asset_rel_path) with
+     | Some parent_path -> base ++ parent_path ++ basename
+     | None -> base ++ basename)
 ;;
 
 let html_file ctx mode t =
@@ -136,6 +160,7 @@ let html_file ctx mode t =
     match t.kind with
     | Module (_, target) -> Odoc_paths.html ctx mode target
     | Page (_, target) -> Odoc_paths.html ctx mode target
+    | Asset (_, target) -> Odoc_paths.html ctx mode target
   in
   output_file ~base ~suffix:".html" t
 ;;
@@ -145,6 +170,7 @@ let json_file ctx mode t =
     match t.kind with
     | Module (_, target) -> Odoc_paths.json ctx mode target
     | Page (_, target) -> Odoc_paths.json ctx mode target
+    | Asset (_, target) -> Odoc_paths.json ctx mode target
   in
   output_file ~base ~suffix:".html.json" t
 ;;
@@ -155,7 +181,7 @@ let dir_target ~get_base ctx mode t =
     let basename = get_basename t in
     let base = get_base ctx mode target in
     Some (base ++ Stdune.String.capitalize basename)
-  | Page _ -> None
+  | Page _ | Asset _ -> None
 ;;
 
 let html_dir_target ctx mode t = dir_target ~get_base:Odoc_paths.html ctx mode t
@@ -163,7 +189,7 @@ let json_dir_target ctx mode t = dir_target ~get_base:Odoc_paths.json ctx mode t
 
 let hidden t =
   match t.kind with
-  | Page _ -> false
+  | Page _ | Asset _ -> false
   | Module _ ->
     let basename = get_basename t in
     String.contains_double_underscore basename
@@ -177,12 +203,19 @@ let parent_id t =
     | Module (_, Private_lib (lib_unique_name, _)) -> lib_unique_name
     | Page (_, Pkg pkg) -> Package.Name.to_string pkg
     | Page (_, Toplevel _) -> ""
+    | Asset (_, Pkg pkg) -> Package.Name.to_string pkg
+    | Asset (_, Toplevel _) -> ""
   in
   match t.kind with
   | Module _ -> base_id
   | Page (page, _) ->
     (* For hierarchical pages like "deprecated/index", include parent path without "page-" prefix *)
     (match fst (split_page_name page.name) with
+     | Some parent_path -> sprintf "%s/%s" base_id parent_path
+     | None -> base_id)
+  | Asset (asset, _) ->
+    (* For hierarchical assets like "images/logo.png", include parent path *)
+    (match fst (split_page_name asset.asset_rel_path) with
      | Some parent_path -> sprintf "%s/%s" base_id parent_path
      | None -> base_id)
 ;;
@@ -206,9 +239,21 @@ let should_suppress_output t =
     (* Check if this is a vendored library *)
     (match t.kind with
      | Module (_, (Lib (_, lib) | Private_lib (_, lib))) -> is_lib_vendored lib
-     | Page _ -> Memo.return false)
+     | Page _ | Asset _ -> Memo.return false)
 ;;
 
 let create ~kind ~source ~extra_libs ~extra_packages =
   { kind; source; extra_libs; extra_packages }
+;;
+
+let asset_name t =
+  match t.kind with
+  | Asset (asset, _) -> Some asset.asset_name
+  | Page _ | Module _ -> None
+;;
+
+let is_asset t =
+  match t.kind with
+  | Asset _ -> true
+  | Page _ | Module _ -> false
 ;;

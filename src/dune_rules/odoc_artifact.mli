@@ -7,10 +7,11 @@
 
 open Import
 
-(** The kind of artifact: module documentation or page documentation. *)
+(** The kind of artifact: module documentation, page documentation, or asset. *)
 type kind =
   | Module : Odoc_target.mod_ * Odoc_target.mod_ Odoc_target.t -> kind
   | Page : Odoc_target.page * Odoc_target.page Odoc_target.t -> kind
+  | Asset : Odoc_target.asset * Odoc_target.page Odoc_target.t -> kind
 
 (** Where the artifact's source content comes from.
 
@@ -82,6 +83,12 @@ val parent_id : t -> string
 
 (** Whether to suppress odoc warnings for this artifact (installed/vendored). *)
 val should_suppress_output : t -> bool Memo.t
+
+(** The asset filename for Asset artifacts, None for other kinds. *)
+val asset_name : t -> string option
+
+(** Whether this artifact is an asset. *)
+val is_asset : t -> bool
 
 (** {1 Construction} *)
 
