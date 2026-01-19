@@ -46,6 +46,7 @@ type t =
   { package_of_lib : Package.Name.t Lib_name.Map.t
   ; libs_of_package : Lib.t list Package.Name.Map.t
   ; mlds_of_package : Path.t list Package.Name.Map.t
+  ; assets_of_package : Path.t list Package.Name.Map.t
   ; config_of_package : Odoc_config.t Package.Name.Map.t
   ; installed_files : string list Package.Name.Map.t (* Files from .changes files *)
   ; opam_prefix : Path.t option (* Root of opam installation *)
@@ -55,6 +56,7 @@ let empty =
   { package_of_lib = Lib_name.Map.empty
   ; libs_of_package = Package.Name.Map.empty
   ; mlds_of_package = Package.Name.Map.empty
+  ; assets_of_package = Package.Name.Map.empty
   ; config_of_package = Package.Name.Map.empty
   ; installed_files = Package.Name.Map.empty
   ; opam_prefix = None
@@ -219,8 +221,9 @@ let build_package_maps packages_with_files ~opam_prefix =
       ( Path.Map.empty (* file_to_package *)
       , Package.Name.Map.empty (* installed_files *)
       , Package.Name.Map.empty (* mlds *)
+      , Package.Name.Map.empty (* assets *)
       , Package.Name.Map.empty (* configs *) )
-    ~f:(fun (file_to_pkg, installed, mlds, configs) (pkg_name, files) ->
+    ~f:(fun (file_to_pkg, installed, mlds, assets, configs) (pkg_name, files) ->
       let pkg_str = Package.Name.to_string pkg_name in
       (* Build file_to_package map *)
       let file_to_pkg =
@@ -229,11 +232,13 @@ let build_package_maps packages_with_files ~opam_prefix =
       in
       (* Build installed_files map *)
       let installed = Package.Name.Map.set installed pkg_name files in
-      (* Extract mld files: doc/{package}/odoc-pages/**/*.mld *)
+      (* Extract mld files: doc/{package}/odoc-pages/**/*.mld
+         Note: .changes files include directory entries (e.g. "doc/pkg/odoc-pages")
+         which we must skip - require at least one path component after odoc-pages *)
       let mld_files =
         List.filter_map files ~f:(fun file_str ->
           match String.split file_str ~on:'/' with
-          | "doc" :: pkg :: "odoc-pages" :: _ when String.equal pkg pkg_str ->
+          | "doc" :: pkg :: "odoc-pages" :: _ :: _ when String.equal pkg pkg_str ->
             if String.ends_with ~suffix:".mld" file_str
             then Some (Path.relative opam_prefix file_str)
             else None
@@ -243,6 +248,29 @@ let build_package_maps packages_with_files ~opam_prefix =
         if List.is_empty mld_files
         then mlds
         else Package.Name.Map.set mlds pkg_name mld_files
+      in
+      (* Extract asset files: non-.mld files in doc/{package}/odoc-pages/ or
+         all files in doc/{package}/odoc-assets/
+         Note: .changes files include directory entries (e.g. "doc/pkg/odoc-pages",
+         "doc/pkg/odoc-assets") which we must skip - require at least one path
+         component after the directory name to ensure it's a file, not a directory *)
+      let asset_files =
+        List.filter_map files ~f:(fun file_str ->
+          match String.split file_str ~on:'/' with
+          | "doc" :: pkg :: "odoc-pages" :: _ :: _ when String.equal pkg pkg_str ->
+            (* Non-.mld files in odoc-pages are assets *)
+            if String.is_suffix file_str ~suffix:".mld"
+            then None
+            else Some (Path.relative opam_prefix file_str)
+          | "doc" :: pkg :: "odoc-assets" :: _ :: _ when String.equal pkg pkg_str ->
+            (* All files in odoc-assets are assets *)
+            Some (Path.relative opam_prefix file_str)
+          | _ -> None)
+      in
+      let assets =
+        if List.is_empty asset_files
+        then assets
+        else Package.Name.Map.set assets pkg_name asset_files
       in
       (* Extract config: doc/{package}/odoc-config.sexp *)
       let configs =
@@ -257,7 +285,7 @@ let build_package_maps packages_with_files ~opam_prefix =
           let config = Odoc_config.load (Path.relative opam_prefix config_file_str) in
           Package.Name.Map.set configs pkg_name config
       in
-      file_to_pkg, installed, mlds, configs)
+      file_to_pkg, installed, mlds, assets, configs)
 ;;
 
 let get_opam_prefix ~context =
@@ -294,7 +322,7 @@ let create_impl_pkg_mode context =
 (* Create discovery for opam mode - uses .changes files *)
 let create_impl_opam_mode context ~opam_prefix =
   let* packages_with_files = discover_opam_packages ~opam_prefix in
-  let file_to_package, installed_files_map, mlds_map, config_map =
+  let file_to_package, installed_files_map, mlds_map, assets_map, config_map =
     build_package_maps packages_with_files ~opam_prefix
   in
   (* Map all installed libraries to their packages via .changes files *)
@@ -322,6 +350,7 @@ let create_impl_opam_mode context ~opam_prefix =
   Memo.return
     { lib_mappings with
       mlds_of_package = mlds_map
+    ; assets_of_package = assets_map
     ; config_of_package = config_map
     ; installed_files = installed_files_map
     ; opam_prefix = Some opam_prefix
@@ -365,6 +394,10 @@ let all_installed_packages t = Package.Name.Map.keys t.libs_of_package
 
 let mlds_of_package t pkg =
   Package.Name.Map.find t.mlds_of_package pkg |> Option.value ~default:[]
+;;
+
+let assets_of_package t pkg =
+  Package.Name.Map.find t.assets_of_package pkg |> Option.value ~default:[]
 ;;
 
 let module_source_file t ~lib ~module_name =

@@ -30,6 +30,11 @@ type page =
   ; pkg_libs : Lib.t list
   }
 
+type asset =
+  { asset_name : string
+  ; asset_rel_path : string
+  }
+
 type mod_ =
   { visible : bool
   ; module_name : Module_name.t

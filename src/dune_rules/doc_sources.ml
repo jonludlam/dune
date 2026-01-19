@@ -1,13 +1,20 @@
 open Import
 open Memo.O
 
-type mld =
+(** A documentation file (mld or asset) with its path and location in doc hierarchy *)
+type doc_file =
   { path : Path.Build.t
   ; in_doc : Path.Local.t
   }
 
+(** Mld documentation file *)
+type mld = doc_file
+
+(** Asset file (image, video, etc.) *)
+type asset = doc_file
+
 module T = struct
-  type t = mld
+  type t = doc_file
 
   let to_dyn { path; in_doc } =
     Dyn.Tuple [ Path.Build.to_dyn path; Path.Local.to_dyn in_doc ]
@@ -60,7 +67,14 @@ let from_mld_files mlds (doc : Documentation.t) dir =
   |> Filename.Map.values
 ;;
 
-let build_mlds_map stanzas ~dir ~files expander =
+let is_mld_file path =
+  match String.rsplit2 (Path.Local.to_string path) ~on:'.' with
+  | Some (_, "mld") -> true
+  | _ -> false
+;;
+
+(** Build a map of all documentation files (both mld and assets) *)
+let build_all_doc_files stanzas ~dir ~files expander =
   let mlds =
     lazy
       (Filename.Set.fold files ~init:Filename.Map.empty ~f:(fun fn acc ->
@@ -76,7 +90,21 @@ let build_mlds_map stanzas ~dir ~files expander =
       Install_entry.File.to_file_bindings_expanded doc.files ~expand ~dir
       >>| of_file_bindings
     in
-    let mlds = from_mld_files @ from_files in
-    let mlds = mlds |> Set.of_list |> Set.to_list in
+    let all_files = from_mld_files @ from_files in
+    let all_files = all_files |> Set.of_list |> Set.to_list in
+    doc, all_files)
+;;
+
+let build_mlds_map stanzas ~dir ~files expander =
+  build_all_doc_files stanzas ~dir ~files expander
+  >>| List.map ~f:(fun (doc, all_files) ->
+    let mlds = List.filter all_files ~f:(fun f -> is_mld_file f.in_doc) in
     doc, mlds)
+;;
+
+let build_assets_map stanzas ~dir ~files expander =
+  build_all_doc_files stanzas ~dir ~files expander
+  >>| List.map ~f:(fun (doc, all_files) ->
+    let assets = List.filter all_files ~f:(fun f -> not (is_mld_file f.in_doc)) in
+    doc, assets)
 ;;

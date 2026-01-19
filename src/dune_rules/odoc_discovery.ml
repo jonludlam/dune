@@ -343,7 +343,7 @@ let library_index_content_from_artifacts ~lib_name ~artifacts =
       else (
         match Odoc_artifact.get_kind artifact with
         | Module ({ visible = true; module_name; _ }, _) -> Some module_name
-        | Module ({ visible = false; _ }, _) | Page _ -> None))
+        | Module ({ visible = false; _ }, _) | Page _ | Asset _ -> None))
     |> List.sort ~compare:Module_name.compare
   in
   if not (List.is_empty module_names)
@@ -744,12 +744,40 @@ let get_local_mld_infos sctx ~pkg =
     source, name)
 ;;
 
+let get_local_asset_infos sctx ~pkg =
+  let+ source_assets = Packages.assets sctx pkg in
+  List.map source_assets ~f:(fun (asset : Doc_sources.asset) ->
+    let in_doc_str = Path.Local.to_string asset.in_doc in
+    let asset_target =
+      { Odoc_target.asset_name = Path.Local.basename asset.in_doc
+      ; asset_rel_path = in_doc_str
+      }
+    in
+    let source = Odoc_artifact.Local_source asset.path in
+    source, asset_target)
+;;
+
+(* Create asset artifacts for a package *)
+let discover_pkg_asset_artifacts
+      ~pkg
+      ~pkg_libs:_
+      ~asset_infos
+      ~(extra_libs : Lib.t list Memo.t)
+      ~(extra_packages : Package.Name.t list Memo.t)
+  =
+  let target = Odoc_target.Pkg pkg in
+  List.map asset_infos ~f:(fun (source, asset) ->
+    let kind = Odoc_artifact.Asset (asset, target) in
+    Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages)
+;;
+
 let discover_pkg_artifacts_common
       sctx
       ctx
       ~pkg
       ~libs
       ~mld_infos
+      ~asset_infos
       ~extra_libs
       ~extra_packages
       ~generate_lib_indices
@@ -757,6 +785,14 @@ let discover_pkg_artifacts_common
   let lib_subdirs = List.map libs ~f:(fun lib -> Lib.name lib |> Lib_name.to_string) in
   let mld_artifacts, has_pkg_index, mld_infos =
     discover_pkg_mld_artifacts ~pkg ~pkg_libs:libs ~mld_infos ~extra_libs ~extra_packages
+  in
+  let asset_artifacts =
+    discover_pkg_asset_artifacts
+      ~pkg
+      ~pkg_libs:libs
+      ~asset_infos
+      ~extra_libs
+      ~extra_packages
   in
   let* lib_artifacts = discover_all_lib_artifacts sctx ctx ~pkg ~libs in
   let pkg_index_artifact =
@@ -797,7 +833,11 @@ let discover_pkg_artifacts_common
   in
   let all_module_artifacts = List.concat_map lib_artifacts ~f:snd in
   let all_artifacts =
-    mld_artifacts @ pkg_index_artifact @ lib_index_artifacts @ all_module_artifacts
+    mld_artifacts
+    @ asset_artifacts
+    @ pkg_index_artifact
+    @ lib_index_artifacts
+    @ all_module_artifacts
   in
   Memo.return (all_artifacts, lib_subdirs)
 ;;
@@ -861,12 +901,14 @@ let discover_local_pkg_artifacts sctx ctx ~pkg
   let extra_libs = Memo.Lazy.force config_lazy >>| fst in
   let extra_packages = Memo.Lazy.force config_lazy >>| snd in
   let* mld_infos = get_local_mld_infos sctx ~pkg in
+  let* asset_infos = get_local_asset_infos sctx ~pkg in
   discover_pkg_artifacts_common
     sctx
     ctx
     ~pkg
     ~libs
     ~mld_infos
+    ~asset_infos
     ~extra_libs
     ~extra_packages
     ~generate_lib_indices:true
@@ -908,12 +950,26 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg
       let source = Odoc_artifact.Installed_source { src_path = mld_path } in
       source, name)
   in
+  (* Get installed asset files (non-.mld files in odoc-pages, all files in odoc-assets) *)
+  let asset_files = Package_discovery.assets_of_package pkg_discovery pkg in
+  let asset_infos =
+    List.map asset_files ~f:(fun asset_path ->
+      (* Unlike mld files, we keep the file extension for assets since odoc
+         compile-asset uses the full filename (e.g. "ocaml_console.png") as the
+         asset name, and the generated .odoc file is "asset-<name>.odoc". *)
+      let asset_name = Path.basename asset_path in
+      let rel_path = asset_name in
+      let asset_target = { Odoc_target.asset_name; asset_rel_path = rel_path } in
+      let source = Odoc_artifact.Installed_source { src_path = asset_path } in
+      source, asset_target)
+  in
   discover_pkg_artifacts_common
     sctx
     ctx
     ~pkg
     ~libs
     ~mld_infos
+    ~asset_infos
     ~extra_libs
     ~extra_packages
     ~generate_lib_indices:false
@@ -983,7 +1039,10 @@ let collect_all_visible_odocls sctx ~mode () =
         (List.filter_map all_artifacts ~f:(fun artifact ->
            if Odoc_artifact.hidden artifact
            then None
-           else Some (Odoc_artifact.odocl_file ctx artifact))))
+           else (
+             match Odoc_artifact.get_kind artifact with
+             | Asset _ -> None
+             | Module _ | Page _ -> Some (Odoc_artifact.odocl_file ctx artifact)))))
   in
   let* private_lib_odocl_files =
     Memo.List.concat_map private_local_libs ~f:(fun local_lib ->
@@ -995,7 +1054,10 @@ let collect_all_visible_odocls sctx ~mode () =
         (List.filter_map all_artifacts ~f:(fun artifact ->
            if Odoc_artifact.hidden artifact
            then None
-           else Some (Odoc_artifact.odocl_file ctx artifact))))
+           else (
+             match Odoc_artifact.get_kind artifact with
+             | Asset _ -> None
+             | Module _ | Page _ -> Some (Odoc_artifact.odocl_file ctx artifact)))))
   in
   let* toplevel_artifact = toplevel_index_artifact ctx ~mode in
   let toplevel_odocl = Odoc_artifact.odocl_file ctx toplevel_artifact in

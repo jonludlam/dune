@@ -1,0 +1,11 @@
+{0 Mylib Documentation}
+
+This is the documentation for mylib.
+
+Here is our logo:
+
+{image!/mylib/logo.png}
+
+{1 Getting Started}
+
+Use the {!Mylib} module to get started.
