@@ -1,0 +1,7 @@
+(library
+ (name mylib)
+ (public_name mylib))
+
+(documentation
+ (package mylib)
+ (files index.mld logo.png))
