@@ -6,3 +6,6 @@ open Import
 (** Collect functions keyed by a package *)
 
 val mlds : Super_context.t -> Package.Name.t -> Doc_sources.mld list Memo.t
+
+(** Collect asset files for a package *)
+val assets : Super_context.t -> Package.Name.t -> Doc_sources.asset list Memo.t
