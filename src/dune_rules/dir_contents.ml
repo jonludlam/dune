@@ -23,6 +23,7 @@ type t =
   ; text_files : Filename.Set.t
   ; foreign_sources : Foreign_sources.t Memo.Lazy.t
   ; mlds : (Documentation.t * Doc_sources.mld list) list Memo.Lazy.t
+  ; assets : (Documentation.t * Doc_sources.asset list) list Memo.Lazy.t
   ; coq : Coq_sources.t Memo.Lazy.t
   ; rocq : Rocq_sources.t Memo.Lazy.t
   ; ml : Ml_sources.t Memo.Lazy.t
@@ -41,6 +42,7 @@ let empty kind ~dir ~source_dir =
   ; text_files = Filename.Set.empty
   ; ml = Memo.Lazy.of_val Ml_sources.empty
   ; mlds = Memo.Lazy.of_val []
+  ; assets = Memo.Lazy.of_val []
   ; foreign_sources = Memo.Lazy.of_val Foreign_sources.empty
   ; coq = Memo.Lazy.of_val Coq_sources.empty
   ; rocq = Memo.Lazy.of_val Rocq_sources.empty
@@ -116,6 +118,23 @@ let mlds t ~(stanza : Documentation.t) =
   | None ->
     Code_error.raise
       "Dir_contents.mlds"
+      [ "doc", Loc.to_dyn_hum stanza.loc
+      ; ( "available"
+        , Dyn.(list Loc.to_dyn_hum)
+            (List.map map ~f:(fun ((d : Documentation.t), _) -> d.loc)) )
+      ]
+;;
+
+let assets t ~(stanza : Documentation.t) =
+  let+ map = Memo.Lazy.force t.assets in
+  match
+    List.find_map map ~f:(fun (stanza', x) ->
+      Option.some_if (Loc.equal stanza.loc stanza'.loc) x)
+  with
+  | Some x -> x
+  | None ->
+    Code_error.raise
+      "Dir_contents.assets"
       [ "doc", Loc.to_dyn_hum stanza.loc
       ; ( "available"
         , Dyn.(list Loc.to_dyn_hum)
@@ -230,6 +249,12 @@ end = struct
       Doc_sources.build_mlds_map dune_file ~dir ~files expander)
   ;;
 
+  let assets ~sctx ~dir ~dune_file ~files =
+    Memo.lazy_ (fun () ->
+      let* expander = Super_context.expander sctx ~dir in
+      Doc_sources.build_assets_map dune_file ~dir ~files expander)
+  ;;
+
   let make_standalone sctx st_dir ~dir (d : Dune_file.t) =
     let human_readable_description () = human_readable_description dir in
     { Standalone_or_root.contents =
@@ -270,6 +295,7 @@ end = struct
                     ~dirs)
           in
           let mlds = mlds ~sctx ~dir ~dune_file:d ~files in
+          let assets = assets ~sctx ~dir ~dune_file:d ~files in
           { Standalone_or_root.root =
               { kind = Standalone
               ; source_dir = Some st_dir
@@ -277,6 +303,7 @@ end = struct
               ; text_files = files
               ; ml
               ; mlds
+              ; assets
               ; foreign_sources =
                   Memo.lazy_ (fun () ->
                     let dune_version = Dune_project.dune_version project in
@@ -383,6 +410,7 @@ end = struct
                stanzas >>| Rocq_sources.of_dir ~dir ~dirs ~include_subdirs)
            in
            let mlds = mlds ~sctx ~dir ~dune_file ~files in
+           let assets = assets ~sctx ~dir ~dune_file ~files in
            let subdirs =
              List.map
                subdirs
@@ -394,6 +422,7 @@ end = struct
                  ; ml
                  ; foreign_sources
                  ; mlds
+                 ; assets
                  ; coq
                  ; rocq
                  })
@@ -406,6 +435,7 @@ end = struct
              ; ml
              ; foreign_sources
              ; mlds
+             ; assets
              ; coq
              ; rocq
              }
