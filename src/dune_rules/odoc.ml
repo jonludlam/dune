@@ -742,6 +742,16 @@ let generate_html_asset_artifact sctx ~artifact ~mode =
   add_rule sctx rule
 ;;
 
+(* Copy an asset to JSON output directory.
+   Unlike HTML which uses odoc html-generate-asset, JSON output just needs the raw file. *)
+let generate_json_asset_artifact sctx ~artifact ~mode =
+  let ctx = Super_context.context sctx in
+  let source_file = Artifact.source_file artifact in
+  let output_file = Artifact.json_file ctx mode artifact in
+  let copy_action = Action_builder.copy ~src:source_file ~dst:output_file in
+  add_rule sctx copy_action
+;;
+
 (* Unified HTML/JSON generation function for artifacts.
    Takes an artifact, search_db, and optional sidebar file, generates output for it.
    This follows the same pattern as compile_artifact and link_artifact.
@@ -759,13 +769,12 @@ let generate_html_artifact
       ()
   =
   let ctx = Super_context.context sctx in
-  (* Handle assets specially - they use html-generate-asset *)
+  (* Handle assets specially - they use html-generate-asset for HTML, direct copy for JSON *)
   match Artifact.get_kind artifact with
   | Asset _ ->
-    (* Assets only generate to HTML, not JSON *)
     (match output_format with
      | Output_format.Html -> generate_html_asset_artifact sctx ~artifact ~mode
-     | Output_format.Json -> Memo.return () (* Assets don't generate JSON output *))
+     | Output_format.Json -> generate_json_asset_artifact sctx ~artifact ~mode)
   | Module _ | Page _ ->
     let html_root = Paths.html_root ctx mode in
     let json_root = Paths.json_root ctx mode in
