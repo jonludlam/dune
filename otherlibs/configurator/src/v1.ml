@@ -790,12 +790,12 @@ let main ?(args = []) ~name f =
   let usage = sprintf "%s [OPTIONS]" (Filename.basename Sys.executable_name) in
   Arg.parse args anon usage;
   let log_db = ref [] in
-  let log s = log_db := s :: !log_db in
+  let log s = log_db := (s : string) :: !log_db in
   try
     let t =
       create_from_inside_dune
         ~dest_dir:!dest_dir
-        ~log:(if !verbose then fun s -> prerr_endline s else fun s -> log s)
+        ~log:(fun s -> if !verbose then prerr_endline s else log s)
         ~build_dir
         ~name
     in
