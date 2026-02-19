@@ -949,9 +949,11 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg
   let asset_files = Package_discovery.assets_of_package pkg_discovery pkg in
   let asset_infos =
     List.map asset_files ~f:(fun asset_path ->
-      (* Extract relative path from installed asset path similar to mld handling *)
-      let rel_path = page_name_from_installed_mld_path asset_path in
+      (* Unlike mld files, we keep the file extension for assets since odoc
+         compile-asset uses the full filename (e.g. "ocaml_console.png") as the
+         asset name, and the generated .odoc file is "asset-<name>.odoc". *)
       let asset_name = Path.basename asset_path in
+      let rel_path = asset_name in
       let asset_target = { Odoc_target.asset_name; asset_rel_path = rel_path } in
       let source = Odoc_artifact.Installed_source { src_path = asset_path } in
       source, asset_target)

@@ -232,11 +232,13 @@ let build_package_maps packages_with_files ~opam_prefix =
       in
       (* Build installed_files map *)
       let installed = Package.Name.Map.set installed pkg_name files in
-      (* Extract mld files: doc/{package}/odoc-pages/**/*.mld *)
+      (* Extract mld files: doc/{package}/odoc-pages/**/*.mld
+         Note: .changes files include directory entries (e.g. "doc/pkg/odoc-pages")
+         which we must skip - require at least one path component after odoc-pages *)
       let mld_files =
         List.filter_map files ~f:(fun file_str ->
           match String.split file_str ~on:'/' with
-          | "doc" :: pkg :: "odoc-pages" :: _ when String.equal pkg pkg_str ->
+          | "doc" :: pkg :: "odoc-pages" :: _ :: _ when String.equal pkg pkg_str ->
             if String.is_suffix file_str ~suffix:".mld"
             then Some (Path.relative opam_prefix file_str)
             else None
@@ -248,16 +250,19 @@ let build_package_maps packages_with_files ~opam_prefix =
         else Package.Name.Map.set mlds pkg_name mld_files
       in
       (* Extract asset files: non-.mld files in doc/{package}/odoc-pages/ or
-         all files in doc/{package}/odoc-assets/ *)
+         all files in doc/{package}/odoc-assets/
+         Note: .changes files include directory entries (e.g. "doc/pkg/odoc-pages",
+         "doc/pkg/odoc-assets") which we must skip - require at least one path
+         component after the directory name to ensure it's a file, not a directory *)
       let asset_files =
         List.filter_map files ~f:(fun file_str ->
           match String.split file_str ~on:'/' with
-          | "doc" :: pkg :: "odoc-pages" :: _ when String.equal pkg pkg_str ->
+          | "doc" :: pkg :: "odoc-pages" :: _ :: _ when String.equal pkg pkg_str ->
             (* Non-.mld files in odoc-pages are assets *)
             if String.is_suffix file_str ~suffix:".mld"
             then None
             else Some (Path.relative opam_prefix file_str)
-          | "doc" :: pkg :: "odoc-assets" :: _ when String.equal pkg pkg_str ->
+          | "doc" :: pkg :: "odoc-assets" :: _ :: _ when String.equal pkg pkg_str ->
             (* All files in odoc-assets are assets *)
             Some (Path.relative opam_prefix file_str)
           | _ -> None)
