@@ -27,6 +27,9 @@ module Odoc : sig
     { warnings : warnings option
     ; sidebar : sidebar option
     ; support : support option
+    ; flags : Ordered_set_lang.Unexpanded.t
+    ; link_flags : Ordered_set_lang.Unexpanded.t
+    ; html_flags : Ordered_set_lang.Unexpanded.t
     }
 
   val decode : t Decoder.t

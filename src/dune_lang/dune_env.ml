@@ -60,9 +60,19 @@ module Odoc = struct
     { warnings : warnings option
     ; sidebar : sidebar option
     ; support : support option
+    ; flags : Ordered_set_lang.Unexpanded.t
+    ; link_flags : Ordered_set_lang.Unexpanded.t
+    ; html_flags : Ordered_set_lang.Unexpanded.t
     }
 
-  let empty = { warnings = None; sidebar = None; support = None }
+  let empty =
+    { warnings = None
+    ; sidebar = None
+    ; support = None
+    ; flags = Ordered_set_lang.Unexpanded.standard
+    ; link_flags = Ordered_set_lang.Unexpanded.standard
+    ; html_flags = Ordered_set_lang.Unexpanded.standard
+    }
 
   let warnings_equal x y =
     match x, y with
@@ -86,6 +96,9 @@ module Odoc = struct
     Option.equal warnings_equal x.warnings y.warnings
     && Option.equal sidebar_equal x.sidebar y.sidebar
     && Option.equal support_equal x.support y.support
+    && Ordered_set_lang.Unexpanded.equal x.flags y.flags
+    && Ordered_set_lang.Unexpanded.equal x.link_flags y.link_flags
+    && Ordered_set_lang.Unexpanded.equal x.html_flags y.html_flags
   ;;
 
   let warnings_decode = enum [ "fatal", Fatal; "nonfatal", Nonfatal ]
@@ -96,8 +109,11 @@ module Odoc = struct
     fields
     @@ let+ warnings = field_o "warnings" warnings_decode
        and+ sidebar = field_o "sidebar" sidebar_decode
-       and+ support = field_o "support" support_decode in
-       { warnings; sidebar; support }
+       and+ support = field_o "support" support_decode
+       and+ flags = Ordered_set_lang.Unexpanded.field "flags"
+       and+ link_flags = Ordered_set_lang.Unexpanded.field "link_flags"
+       and+ html_flags = Ordered_set_lang.Unexpanded.field "html_flags" in
+       { warnings; sidebar; support; flags; link_flags; html_flags }
   ;;
 end
 
