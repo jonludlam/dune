@@ -1034,7 +1034,10 @@ let collect_all_visible_odocls sctx ~mode () =
         (List.filter_map all_artifacts ~f:(fun artifact ->
            if Odoc_artifact.hidden artifact
            then None
-           else Some (Odoc_artifact.odocl_file ctx artifact))))
+           else (
+             match Odoc_artifact.get_kind artifact with
+             | Asset _ -> None
+             | Module _ | Page _ -> Some (Odoc_artifact.odocl_file ctx artifact)))))
   in
   let* private_lib_odocl_files =
     Memo.List.concat_map private_local_libs ~f:(fun local_lib ->
@@ -1046,7 +1049,10 @@ let collect_all_visible_odocls sctx ~mode () =
         (List.filter_map all_artifacts ~f:(fun artifact ->
            if Odoc_artifact.hidden artifact
            then None
-           else Some (Odoc_artifact.odocl_file ctx artifact))))
+           else (
+             match Odoc_artifact.get_kind artifact with
+             | Asset _ -> None
+             | Module _ | Page _ -> Some (Odoc_artifact.odocl_file ctx artifact)))))
   in
   let* toplevel_artifact = toplevel_index_artifact ctx ~mode in
   let toplevel_odocl = Odoc_artifact.odocl_file ctx toplevel_artifact in

@@ -1261,12 +1261,16 @@ let handle_sidebar_artifacts sctx ~mode pkg_or_lib_name =
           ctx
           ~pkg_or_lib_unique_name:pkg_or_lib_name
       in
-      (* Collect all .odocl files from all artifacts (libraries and package pages) *)
+      (* Collect .odocl files from non-hidden, non-asset artifacts for the index.
+         compile-index only accepts pages and units, not assets. *)
       let odocl_files =
         List.filter_map all_artifacts ~f:(fun artifact ->
           if Artifact.hidden artifact
           then None
-          else Some (Artifact.odocl_file ctx artifact))
+          else (
+            match Artifact.get_kind artifact with
+            | Asset _ -> None
+            | Module _ | Page _ -> Some (Artifact.odocl_file ctx artifact)))
       in
       (* Generate index file with all .odocl files *)
       let* index_file = generate_index sctx ~mode ~scope ~packages:[ pkg ] ~odocl_files in
