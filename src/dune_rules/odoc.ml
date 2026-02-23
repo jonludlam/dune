@@ -1963,13 +1963,16 @@ let handle_output_root sctx ~mode ~output_format =
           let* flags = Flags.get_memo ~dir:(Context.build_dir ctx) in
           (match flags.sidebar with
            | Flags.Global ->
+             let paths_fmt = Output_format.to_paths_format output_format in
              let index_file = Paths.index_file ctx mode Paths.Global in
+             let sidebar_json = Paths.sidebar_json ctx mode Paths.Global paths_fmt in
              generate_sidebar_json
                sctx
                ~mode
                ~scope:Paths.Global
                ~index_file
-               ~output_format:(Output_format.to_paths_format output_format)
+               ~output_format:paths_fmt
+             >>> Dep.add_file_deps alias [ Path.build sidebar_json ]
            | Flags.Per_package -> Memo.return ())
           (* Add dependencies on all child directories so the alias builds everything *)
           >>> setup_toplevel_index_deps sctx mode output_format)
