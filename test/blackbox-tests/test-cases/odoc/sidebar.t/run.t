@@ -69,7 +69,7 @@ Create workspace with global sidebar:
   $ cat > dune-workspace <<EOF
   > (lang dune 3.17)
   > (env
-  >  (_
+  >  (dev
   >   (odoc
   >    (sidebar global))))
   > EOF
@@ -80,3 +80,8 @@ Check that global sidebar is generated:
 
   $ ls _build/default/_doc/_sidebar/sidebar.odoc-sidebar
   _build/default/_doc/_sidebar/sidebar.odoc-sidebar
+
+Check that sidebar.json is built by @doc when sidebar is global:
+
+  $ ls _build/default/_doc/_html/sidebar.json
+  _build/default/_doc/_html/sidebar.json
