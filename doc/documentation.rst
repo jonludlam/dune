@@ -61,6 +61,98 @@ don't belong to any particular package, but the generated HTML will still be
 found in ``_build/default/_doc/_html/<library>``.
 
 
+Documentation Dependencies
+==========================
+
+When building documentation, odoc needs to know which packages and libraries
+are available for cross-referencing. There are three sources of documentation
+dependencies, each controlling what you can reference in different contexts:
+
+Library Dependencies (``-L`` flags)
+------------------------------------
+
+Every library listed in a ``(libraries ...)`` stanza, plus its full transitive
+closure of dependencies, is available for cross-referencing in that library's
+``.ml`` and ``.mli`` files. This means if your library depends on
+``odoc-parser``, you can write ``{!Odoc_parser.t}`` in your doc comments and
+it will resolve.
+
+These dependencies are determined automatically from your ``(libraries ...)``
+stanza and require no extra configuration.
+
+Package Dependencies (``-P`` flags)
+------------------------------------
+
+Package-level flags tell odoc where to find compiled documentation for entire
+packages. These are derived from two sources:
+
+1. **Explicit ``:with-doc`` dependencies**: Packages listed with ``:with-doc``
+   in your ``(depends ...)`` stanza. For example:
+
+   .. code-block:: dune
+
+      (package
+       (name mypackage)
+       (depends (odoc :with-doc)))
+
+   This tells Dune that ``odoc`` is a documentation dependency. When your
+   package is installed, the generated ``odoc-config.sexp`` file will list
+   ``odoc`` so that downstream consumers know about the relationship.
+
+2. **Transitive library dependencies**: Any package that contains a library in
+   the transitive closure of your library dependencies. For example, if your
+   library depends on ``odoc-parser`` (which belongs to the ``odoc-parser``
+   package), that package automatically gets ``-P`` flags even if it is not
+   listed as a ``:with-doc`` dependency.
+
+What ``:with-doc`` Is For
+--------------------------
+
+The ``:with-doc`` filter serves two purposes:
+
+- **Documentation-only dependencies**: If you want to reference a package in
+  your documentation pages (``.mld`` files) but don't depend on it as a
+  library, use ``:with-doc``. For example, you might reference ``cmdliner``
+  types in doc comments without actually depending on the ``cmdliner`` library:
+
+  .. code-block:: dune
+
+     (package
+      (name mypackage)
+      (depends (cmdliner :with-doc)))
+
+- **Installed package metadata**: When your package is installed, ``:with-doc``
+  dependencies are recorded in ``odoc-config.sexp``. This allows tools
+  building documentation for installed packages to discover the full set of
+  packages needed.
+
+You do **not** need to add ``:with-doc`` for packages that your libraries
+already depend on. If ``mylib`` has ``(libraries odoc-parser)`` in its
+``dune`` file, ``odoc-parser`` will automatically be available for
+cross-referencing without any ``:with-doc`` entry.
+
+Summary
+-------
+
++-----------------------------------+-------------------------------------------+
+| What you want to reference        | What you need                             |
++===================================+===========================================+
+| Types/values from a library your  | Nothing extra — resolved automatically    |
+| code depends on (in ``.ml`` /     | from the ``(libraries ...)`` stanza.      |
+| ``.mli`` doc comments)            |                                           |
++-----------------------------------+-------------------------------------------+
+| Types/values from a library your  | Add ``(dep :with-doc)`` to your package's |
+| code does **not** depend on (in   | ``(depends ...)`` stanza.                 |
+| ``.mld`` pages or doc comments)   |                                           |
++-----------------------------------+-------------------------------------------+
+| All local packages in your        | Nothing extra — all local packages are    |
+| workspace                         | included automatically.                   |
++-----------------------------------+-------------------------------------------+
+| Installed packages in ``@doc``    | Automatically remapped to ocaml.org URLs. |
+| mode                              | No configuration needed.                  |
++-----------------------------------+-------------------------------------------+
+
+
 Documentation Stanza: Examples
 ------------------------------
 
