@@ -1,0 +1,3 @@
+(library
+ (name libc)
+ (public_name pkgc.lib))
