@@ -1,0 +1,4 @@
+(library
+ (name liba)
+ (public_name pkga.lib)
+ (libraries pkgc.lib odoc-parser))
