@@ -951,13 +951,17 @@ let setup_toplevel_index_html sctx mode =
     | Flags.Global -> true
     | Flags.Per_package -> false
   in
-  (* Create search_db and sidebar only for global mode *)
+  (* Create search_db and sidebar only for global mode.
+     Skip search db entirely for Local_only to avoid expensive sherlodoc generation. *)
   let* search_db =
-    if use_global
-    then
-      let+ db = generate_global_search_db sctx ~mode in
-      Some db
-    else Memo.return None
+    match mode with
+    | Doc_mode.Local_only -> Memo.return None
+    | Doc_mode.Full ->
+      if use_global
+      then
+        let+ db = generate_global_search_db sctx ~mode in
+        Some db
+      else Memo.return None
   in
   let sidebar_file =
     if use_global then Some (Paths.sidebar_file ctx mode Paths.Global) else None
@@ -1272,11 +1276,12 @@ let generate_html_for_package
     | Html -> Some (Paths.sidebar_file ctx mode scope)
     | Json -> None
   in
-  (* Create search_db - only for HTML *)
+  (* Create search_db - only for HTML and Full mode.
+     Skip search db for Local_only to avoid expensive sherlodoc generation. *)
   let* search_db =
-    match output_format with
-    | Json -> Memo.return None
-    | Html ->
+    match output_format, mode with
+    | Json, _ | _, Doc_mode.Local_only -> Memo.return None
+    | Html, Doc_mode.Full ->
       (match flags.sidebar with
        | Flags.Global ->
          (* Global sidebar mode - reference the global search db at html root.
