@@ -59,6 +59,14 @@ let get_private_libraries ctx =
           (match Lib_info.package info with
            | Some _ -> None (* Has a package, skip *)
            | None -> Some local_lib)))
+    >>= Memo.List.filter ~f:(fun local_lib ->
+      let lib_info = Lib.Local.info local_lib in
+      let src_path = Path.drop_optional_build_context (Path.build (Lib_info.src_dir lib_info)) in
+      match Path.as_in_source_tree src_path with
+      | Some src_dir ->
+        let+ is_vendored = Source_tree.is_vendored src_dir in
+        not is_vendored
+      | None -> Memo.return true)
 ;;
 
 let libs_of_pkg (ctx : Context.t) ~pkg =
