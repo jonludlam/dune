@@ -1706,6 +1706,12 @@ let setup_private_library_doc_alias sctx ~scope ~dir (l : Library.t) =
   match l.visibility with
   | Public _ -> Memo.return ()
   | Private _ ->
+    let* is_vendored =
+      Source_tree.is_vendored (Path.Build.drop_build_context_exn dir)
+    in
+    if is_vendored
+    then Memo.return ()
+    else
     let ctx = Super_context.context sctx in
     let* lib =
       let src_dir = Path.drop_optional_build_context_src_exn (Path.build dir) in
