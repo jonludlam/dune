@@ -6,6 +6,7 @@
     - [_odocl/]: linked .odocl files
     - [_html/] / [_html_full/]: HTML output
     - [_json/] / [_json_full/]: JSON output
+    - [_markdown/] / [_markdown_full/]: Markdown output
     - [_index/] / [_index_full/]: toplevel index mld, odoc, and odocl
     - [_sidebar/] / [_sidebar_full/]: sidebar index files
     - [_sherlodoc/]: sherlodoc search database
@@ -35,6 +36,9 @@ val html_root : Context.t -> Doc_mode.t -> Path.Build.t
 (** Root of JSON output for a mode. *)
 val json_root : Context.t -> Doc_mode.t -> Path.Build.t
 
+(** Root of Markdown output for a mode. *)
+val markdown_root : Context.t -> Doc_mode.t -> Path.Build.t
+
 (** Root directory for .odocl files. *)
 val odocl_root : Context.t -> Path.Build.t
 
@@ -46,6 +50,9 @@ val html : Context.t -> Doc_mode.t -> 'a Odoc_target.t -> Path.Build.t
 
 (** JSON output directory for a target. *)
 val json : Context.t -> Doc_mode.t -> 'a Odoc_target.t -> Path.Build.t
+
+(** Markdown output directory for a target. *)
+val markdown : Context.t -> Doc_mode.t -> 'a Odoc_target.t -> Path.Build.t
 
 (** Directory for .odocl files for a target. *)
 val odocl : Context.t -> 'a Odoc_target.t -> Path.Build.t
@@ -75,6 +82,7 @@ val sidebar_file : Context.t -> Doc_mode.t -> sidebar_scope -> Path.Build.t
 type output_format =
   | Html
   | Json
+  | Markdown
 
 (** Path to sidebar.json for web-based navigation. *)
 val sidebar_json

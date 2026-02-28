@@ -1,62 +1,124 @@
+Basic markdown generation with a single library:
+
   $ cat > dune-project << EOF
   > (lang dune 3.10)
-  > 
   > (package
-  >  (name mylib))
+  >  (name l))
   > EOF
 
   $ cat > dune << EOF
   > (library
-  >  (public_name mylib))
+  >  (public_name l))
   > EOF
 
-  $ cat > mylib.ml << EOF
-  > (** This is the main module for mylib *)
-  > 
-  > (** A simple type definition *)
-  > type t = int
-  > 
-  > (** A function that adds one *)
-  > val add_one : int -> int
-  > let add_one x = x + 1
-  > 
-  > module SubModule = struct
-  >   (** A nested module *)
-  >   type nested = string
+  $ cat > l.ml << EOF
+  > module M = struct
+  >   type t = int
   > end
   > EOF
 
-  $ cat > mylib.mli << EOF
-  > (** This is the main module for mylib *)
-  > 
-  > (** A simple type definition *)
-  > type t = int
-  > 
-  > (** A function that adds one *)
-  > val add_one : int -> int
-  > 
-  > module SubModule : sig
-  >   (** A nested module *)
-  >   type nested = string
-  > end
-  > EOF
-
-  $ list_markdown_docs () {
-  >   find _build/default/_doc/_markdown -name '*.md' | sort
+  $ list_md () {
+  >   find _build/default/_doc/_markdown -name '*.md' 2>/dev/null | sort
   > }
 
-Build markdown documentation:
+  $ list_html () {
+  >   find _build/default/_doc/_html -name '*.html' 2>/dev/null | sort
+  > }
 
-  $ dune build @doc-markdown
-  $ list_markdown_docs
+  $ dune build @doc-md
+  $ list_md
   _build/default/_doc/_markdown/index.md
-  _build/default/_doc/_markdown/mylib/Mylib-SubModule.md
-  _build/default/_doc/_markdown/mylib/Mylib.md
-  _build/default/_doc/_markdown/mylib/index.md
+  _build/default/_doc/_markdown/l/index.md
+  _build/default/_doc/_markdown/l/l/L-M.md
+  _build/default/_doc/_markdown/l/l/L.md
+  _build/default/_doc/_markdown/l/l/index.md
 
-Check the top-level index contains markdown:
+@doc-md does not generate HTML files:
 
-  $ cat _build/default/_doc/_markdown/index.md
-  # OCaml Package Documentation
-  
-  - [mylib](mylib/index.md)
+  $ list_html
+
+@doc will continue generating doc as usual (but no markdown):
+
+  $ dune build @doc
+  $ list_html
+  _build/default/_doc/_html/index.html
+  _build/default/_doc/_html/l/index.html
+  _build/default/_doc/_html/l/l/L/M/index.html
+  _build/default/_doc/_html/l/l/L/index.html
+  _build/default/_doc/_html/l/l/index.html
+
+Multiple libraries in a package, with a custom page:
+
+  $ dune clean
+  $ rm -f l.ml l.opam dune
+
+  $ cat > dune-project << EOF
+  > (lang dune 3.16)
+  > (package
+  >  (name mypkg))
+  > EOF
+
+  $ mkdir -p lib1 lib2 doc/mypkg
+
+  $ cat > lib1/dune << EOF
+  > (library
+  >  (name lib1)
+  >  (public_name mypkg.lib1))
+  > EOF
+
+  $ cat > lib1/foo.ml << EOF
+  > type t = int
+  > let x = 42
+  > EOF
+
+  $ cat > lib1/bar.ml << EOF
+  > type t = string
+  > let y = "hello"
+  > EOF
+
+  $ cat > lib2/dune << EOF
+  > (library
+  >  (name lib2)
+  >  (public_name mypkg.lib2))
+  > EOF
+
+  $ cat > lib2/baz.ml << EOF
+  > type t = bool
+  > let z = true
+  > EOF
+
+  $ cat > doc/mypkg/index.mld << EOF
+  > {0 My Package}
+  > Welcome to mypkg.
+  > EOF
+
+Each library gets its own flat directory with all modules:
+
+  $ dune build @doc-md
+  $ list_md
+  _build/default/_doc/_markdown/index.md
+  _build/default/_doc/_markdown/mypkg/index.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1/Lib1-Bar.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1/Lib1-Foo.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1/Lib1.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1/index.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib2/Lib2-Baz.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib2/Lib2.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib2/index.md
+
+Verify the flat structure - no per-module subdirectories:
+
+  $ find _build/default/_doc/_markdown/mypkg -type d | sort
+  _build/default/_doc/_markdown/mypkg
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1
+  _build/default/_doc/_markdown/mypkg/mypkg.lib2
+
+  $ find _build/default/_doc/_markdown/mypkg -type f | sort
+  _build/default/_doc/_markdown/mypkg/index.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1/Lib1-Bar.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1/Lib1-Foo.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1/Lib1.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib1/index.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib2/Lib2-Baz.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib2/Lib2.md
+  _build/default/_doc/_markdown/mypkg/mypkg.lib2/index.md

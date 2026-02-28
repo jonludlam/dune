@@ -22,6 +22,11 @@ module Doc_mode = struct
     | Full -> "_json_full"
   ;;
 
+  let markdown_subdir = function
+    | Local_only -> "_markdown"
+    | Full -> "_markdown_full"
+  ;;
+
   let all = [ Local_only; Full ]
 end
 
