@@ -18,6 +18,7 @@ module Doc_mode : sig
   val subdir : t -> string
   val html_subdir : t -> string
   val json_subdir : t -> string
+  val markdown_subdir : t -> string
   val all : t list
 end
 

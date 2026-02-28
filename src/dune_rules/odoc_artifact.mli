@@ -58,6 +58,15 @@ val html_dir_target : Context.t -> Odoc_paths.Doc_mode.t -> t -> Path.Build.t op
 (** Directory target for JSON output (for modules only, None for pages). *)
 val json_dir_target : Context.t -> Odoc_paths.Doc_mode.t -> t -> Path.Build.t option
 
+(** Path to the markdown output file. *)
+val markdown_file : Context.t -> Odoc_paths.Doc_mode.t -> t -> Path.Build.t
+
+(** Directory target for markdown output (library directory for modules,
+    None for pages/assets). Unlike HTML/JSON which use per-module directory
+    targets, markdown uses per-library directory targets since all modules
+    output to a flat directory. *)
+val markdown_dir_target : Context.t -> Odoc_paths.Doc_mode.t -> t -> Path.Build.t option
+
 (** {1 Metadata} *)
 
 (** Package this artifact belongs to, if any. *)
