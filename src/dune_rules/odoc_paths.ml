@@ -34,6 +34,7 @@ let odocs : type a. Context.t -> a Odoc_target.t -> Path.Build.t =
 
 let html_root ctx mode = root ctx ++ Doc_mode.html_subdir mode
 let json_root ctx mode = root ctx ++ Doc_mode.json_subdir mode
+let markdown_root ctx mode = root ctx ++ Doc_mode.markdown_subdir mode
 let odocl_root ctx = root ctx ++ "_odocl"
 let sherlodoc_root ctx = root ctx ++ "_sherlodoc"
 
@@ -57,6 +58,21 @@ let json : type a. Context.t -> Doc_mode.t -> a Odoc_target.t -> Path.Build.t =
   | Private_lib (lib_unique_name, _) -> json_root ctx mode ++ lib_unique_name
   | Pkg pkg -> json_root ctx mode ++ Package.Name.to_string pkg
   | Toplevel _ -> json_root ctx mode
+;;
+
+let markdown : type a. Context.t -> Doc_mode.t -> a Odoc_target.t -> Path.Build.t =
+  fun ctx mode target ->
+  match target with
+  | Lib (pkg, lib) ->
+    let lib_name = Lib.name lib in
+    markdown_root ctx mode
+    ++ Package.Name.to_string pkg
+    ++ Lib_name.to_string lib_name
+  | Private_lib (lib_unique_name, _) ->
+    markdown_root ctx mode ++ lib_unique_name
+  | Pkg pkg ->
+    markdown_root ctx mode ++ Package.Name.to_string pkg
+  | Toplevel _ -> markdown_root ctx mode
 ;;
 
 let odocl : type a. Context.t -> a Odoc_target.t -> Path.Build.t =
@@ -102,12 +118,14 @@ let sidebar_file ctx mode scope =
 type output_format =
   | Html
   | Json
+  | Markdown
 
 let sidebar_json ctx mode scope output_format =
   let root =
     match output_format with
     | Html -> html_root ctx mode
     | Json -> json_root ctx mode
+    | Markdown -> markdown_root ctx mode
   in
   match scope with
   | Global -> root ++ "sidebar.json"

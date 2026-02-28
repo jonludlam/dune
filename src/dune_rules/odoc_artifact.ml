@@ -187,6 +187,37 @@ let dir_target ~get_base ctx mode t =
 let html_dir_target ctx mode t = dir_target ~get_base:Odoc_paths.html ctx mode t
 let json_dir_target ctx mode t = dir_target ~get_base:Odoc_paths.json ctx mode t
 
+let markdown_file ctx mode t =
+  let base =
+    match t.kind with
+    | Module (_, target) -> Odoc_paths.markdown ctx mode target
+    | Page (_, target) -> Odoc_paths.markdown ctx mode target
+    | Asset (_, target) -> Odoc_paths.markdown ctx mode target
+  in
+  let basename = get_basename t in
+  match t.kind with
+  | Module _ ->
+    (* Markdown outputs flat files: Module.md, not Module/index.md *)
+    base ++ (Stdune.String.capitalize basename ^ ".md")
+  | Page (page, _) ->
+    let path =
+      match fst (split_page_name page.name) with
+      | Some parent_path -> base ++ parent_path ++ basename
+      | None -> base ++ basename
+    in
+    Path.Build.extend_basename path ~suffix:".md"
+  | Asset _ ->
+    (* Assets not used for markdown *)
+    base ++ basename
+;;
+
+let markdown_dir_target ctx mode t =
+  match t.kind with
+  | Module (_, target) ->
+    Some (Odoc_paths.markdown ctx mode target)
+  | Page _ | Asset _ -> None
+;;
+
 let hidden t =
   match t.kind with
   | Page _ | Asset _ -> false
