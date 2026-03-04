@@ -400,7 +400,7 @@ let assets_of_package t pkg =
   Package.Name.Map.find t.assets_of_package pkg |> Option.value ~default:[]
 ;;
 
-let module_source_file t ~lib ~module_name =
+let module_installed_file t ~lib ~module_name ~extensions =
   let open Option.O in
   let* prefix = t.opam_prefix in
   let* pkg = Lib_name.Map.find t.package_of_lib (Lib.name lib) in
@@ -412,15 +412,43 @@ let module_source_file t ~lib ~module_name =
     | Some local -> Path.Local.to_string local
     | None -> Path.to_string src_dir
   in
-  List.find_map [ ".cmti"; ".cmt" ] ~f:(fun ext ->
-    let rel_file =
-      if String.is_empty rel_dir
-      then module_name_lower ^ ext
-      else rel_dir ^ "/" ^ module_name_lower ^ ext
+  (* Try the full mangled name first (e.g. yojson__basic), then strip the
+     lib__ prefix to get the original source name (e.g. basic). This matters
+     for .ml files which are installed under their original names, while .cmt
+     files use the mangled names. *)
+  let candidates =
+    let stripped =
+      let lib_prefix =
+        String.uncapitalize_ascii (Lib_name.to_string (Lib.name lib)) ^ "__"
+      in
+      if String.is_prefix module_name_lower ~prefix:lib_prefix
+      then [ String.uncapitalize_ascii (String.drop module_name_lower (String.length lib_prefix)) ]
+      else []
     in
-    if List.mem files rel_file ~equal:String.equal
-    then Some (Path.relative src_dir (module_name_lower ^ ext))
-    else None)
+    module_name_lower :: stripped
+  in
+  List.find_map candidates ~f:(fun base_name ->
+    List.find_map extensions ~f:(fun ext ->
+      let rel_file =
+        if String.is_empty rel_dir
+        then base_name ^ ext
+        else rel_dir ^ "/" ^ base_name ^ ext
+      in
+      if List.mem files rel_file ~equal:String.equal
+      then Some (Path.relative src_dir (base_name ^ ext))
+      else None))
+;;
+
+let module_source_file t ~lib ~module_name =
+  module_installed_file t ~lib ~module_name ~extensions:[ ".cmti"; ".cmt" ]
+;;
+
+let module_cmt_file t ~lib ~module_name =
+  module_installed_file t ~lib ~module_name ~extensions:[ ".cmt" ]
+;;
+
+let module_ml_file t ~lib ~module_name =
+  module_installed_file t ~lib ~module_name ~extensions:[ ".ml" ]
 ;;
 
 let config_of_package t pkg =

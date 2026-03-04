@@ -6,6 +6,7 @@ Verify the asset .odocl file was compiled:
 
   $ find _build/default/_doc/_odocl/mylib -name '*.odocl' | sort
   _build/default/_doc/_odocl/mylib/asset-logo.png.odocl
+  _build/default/_doc/_odocl/mylib/mylib/impl-mylib.odocl
   _build/default/_doc/_odocl/mylib/mylib/mylib.odocl
   _build/default/_doc/_odocl/mylib/mylib/page-index.odocl
   _build/default/_doc/_odocl/mylib/page-index.odocl

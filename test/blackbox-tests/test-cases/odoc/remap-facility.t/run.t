@@ -37,6 +37,7 @@ Check that local package HTML was built:
   _build/default/_doc/_html/mylib/index.html
   _build/default/_doc/_html/mylib/mylib/Mylib/index.html
   _build/default/_doc/_html/mylib/mylib/index.html
+  _build/default/_doc/_html/mylib/mylib/mylib.ml.html
 
 Build documentation with @doc-full (full mode):
 

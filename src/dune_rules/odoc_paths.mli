@@ -27,8 +27,9 @@ type sidebar_scope =
 (** Root of all documentation: [_build/<context>/_doc] *)
 val root : Context.t -> Path.Build.t
 
-(** Directory for .odoc files for a target. *)
-val odocs : Context.t -> 'a Odoc_target.t -> Path.Build.t
+(** Directory for .odoc files for a target.
+    [?prefix] inserts a single path component between the type-root and the package name. *)
+val odocs : Context.t -> ?prefix:string -> 'a Odoc_target.t -> Path.Build.t
 
 (** Root of HTML output for a mode. *)
 val html_root : Context.t -> Doc_mode.t -> Path.Build.t
@@ -46,28 +47,38 @@ val odocl_root : Context.t -> Path.Build.t
 val sherlodoc_root : Context.t -> Path.Build.t
 
 (** HTML output directory for a target. *)
-val html : Context.t -> Doc_mode.t -> 'a Odoc_target.t -> Path.Build.t
+val html : Context.t -> Doc_mode.t -> ?prefix:string -> 'a Odoc_target.t -> Path.Build.t
+
+(** HTML output directory for source files. Like {!html} but with a [src/]
+    component between the package and library name, matching the odoc_driver
+    convention. *)
+val html_src
+  :  Context.t
+  -> Doc_mode.t
+  -> ?prefix:string
+  -> Odoc_target.mod_ Odoc_target.t
+  -> Path.Build.t
 
 (** JSON output directory for a target. *)
-val json : Context.t -> Doc_mode.t -> 'a Odoc_target.t -> Path.Build.t
+val json : Context.t -> Doc_mode.t -> ?prefix:string -> 'a Odoc_target.t -> Path.Build.t
 
 (** Markdown output directory for a target. *)
-val markdown : Context.t -> Doc_mode.t -> 'a Odoc_target.t -> Path.Build.t
+val markdown : Context.t -> Doc_mode.t -> ?prefix:string -> 'a Odoc_target.t -> Path.Build.t
 
 (** Directory for .odocl files for a target. *)
-val odocl : Context.t -> 'a Odoc_target.t -> Path.Build.t
+val odocl : Context.t -> ?prefix:string -> 'a Odoc_target.t -> Path.Build.t
 
 (** Directory for generated mld files for a package. *)
-val gen_mld_dir : Context.t -> Package.Name.t -> Path.Build.t
+val gen_mld_dir : Context.t -> ?prefix:string -> Package.Name.t -> Path.Build.t
 
 (** Path to generated library index.mld. *)
-val lib_index_mld : Context.t -> Package.Name.t -> Lib_name.t -> Path.Build.t
+val lib_index_mld : Context.t -> ?prefix:string -> Package.Name.t -> Lib_name.t -> Path.Build.t
 
 (** Path to odoc support files (CSS, JS). *)
 val odoc_support : Context.t -> Doc_mode.t -> Path.Build.t
 
 (** Path to odoc support files within a package directory (for per-package mode). *)
-val odoc_support_for_pkg : Context.t -> Doc_mode.t -> string -> Path.Build.t
+val odoc_support_for_pkg : Context.t -> Doc_mode.t -> ?prefix:string -> string -> Path.Build.t
 
 (** Path to toplevel index.mld (generated). *)
 val toplevel_index_mld : Context.t -> Doc_mode.t -> Path.Build.t

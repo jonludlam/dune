@@ -77,7 +77,9 @@ let libs_of_pkg (ctx : Context.t) ~pkg =
     let+ { Scope.DB.Lib_entry.Set.libraries; _ } =
       Scope.DB.lib_entries_of_package (Context.name ctx) pkg
     in
-    (* Filter out implementations of virtual libraries and convert to Lib.t *)
+    (* Filter out implementations of virtual libraries and convert to Lib.t.
+       Impls are handled separately via impl_libs_of_local_pkg to avoid
+       conflicting implementations in the library closure. *)
     List.filter_map libraries ~f:(fun lib ->
       let lib_t = Lib.Local.to_lib lib in
       match Lib.info lib_t |> Lib_info.implements with
@@ -87,6 +89,27 @@ let libs_of_pkg (ctx : Context.t) ~pkg =
     (* Installed package - use Package_discovery *)
     let* pkg_discovery = Package_discovery.create ~context:ctx in
     Memo.return (Package_discovery.libraries_of_package pkg_discovery pkg)
+;;
+
+(* Get local implementation libraries for a package, paired with their virtual library.
+   These are filtered OUT of libs_of_pkg but we need them for source rendering:
+   the impl library provides the .cmt files (source code) while the virtual library
+   provides the documentation (.cmti). *)
+let vlib_impl_libs_of_local_pkg (ctx : Context.t) ~pkg =
+  let* packages = Dune_load.packages () in
+  if Package.Name.Map.mem packages pkg
+  then
+    let* { Scope.DB.Lib_entry.Set.libraries; _ } =
+      Scope.DB.lib_entries_of_package (Context.name ctx) pkg
+    in
+    Memo.List.filter_map libraries ~f:(fun impl_local_lib ->
+      let impl_lib_t = Lib.Local.to_lib impl_local_lib in
+      match Lib.implements impl_lib_t with
+      | None -> Memo.return None
+      | Some vlib_resolve ->
+        let+ vlib = Resolve.Memo.read_memo vlib_resolve in
+        Some (impl_local_lib, vlib))
+  else Memo.return []
 ;;
 
 (* Get odoc config dependencies for a package, handling local vs installed.
@@ -342,8 +365,11 @@ let library_index_content_from_artifacts ~lib_name ~artifacts =
       then None
       else (
         match Odoc_artifact.get_kind artifact with
-        | Module ({ visible = true; module_name; _ }, _) -> Some module_name
-        | Module ({ visible = false; _ }, _) | Page _ | Asset _ -> None))
+        | Module ({ visible = true; module_name; _ }, _) ->
+          Some module_name
+        | Module ({ visible = false; _ }, _)
+        | Impl _ | Page _ | Asset _ ->
+          None))
     |> List.sort ~compare:Module_name.compare
   in
   if not (List.is_empty module_names)
@@ -400,8 +426,10 @@ let create_artifact_module
       ~target
       ~local_lib
       ~module_
+      ~cmti_obj_dir
       ~(extra_libs : Lib.t list Memo.t)
       ~(extra_packages : Package.Name.t list Memo.t)
+      ~prefix
   =
   let mod_ =
     { Odoc_target.visible = Module.visibility module_ = Visibility.Public
@@ -409,18 +437,147 @@ let create_artifact_module
     }
   in
   let kind = Odoc_artifact.Module (mod_, target) in
-  let obj_dir = Lib.Local.obj_dir local_lib in
+  let obj_dir = match cmti_obj_dir with Some d -> d | None -> Lib.Local.obj_dir local_lib in
   let source_file = Obj_dir.Module.cmti_file obj_dir module_ ~cm_kind:(Ocaml Cmi) in
   Odoc_artifact.create
     ~kind
     ~source:(Local_source source_file)
     ~extra_libs
     ~extra_packages
+    ~prefix
+;;
+
+let create_artifact_impl
+      ~target
+      ~local_lib
+      ~module_
+      ~(extra_libs : Lib.t list Memo.t)
+      ~(extra_packages : Package.Name.t list Memo.t)
+      ~prefix
+      ?(src_id_lib : Lib.t option)
+      ()
+  =
+  let module_name =
+    Module_name.Unique.to_name
+      (Module.obj_name module_)
+      ~loc:Loc.none
+  in
+  let obj_dir = Lib.Local.obj_dir local_lib in
+  match
+    Obj_dir.Module.cmt_file
+      obj_dir
+      module_
+      ~ml_kind:Impl
+      ~cm_kind:(Ocaml Cmi)
+  with
+  | None -> None
+  | Some cmt_file ->
+    let src_path =
+      match Module.source module_ ~ml_kind:Impl with
+      | Some file -> Module.File.path file
+      | None ->
+        (* Should not happen since we check Module.has *)
+        Path.build cmt_file
+    in
+    (* For src_id, use src_id_lib if provided (e.g. the virtual library),
+       otherwise use local_lib. This ensures source links in vlib docs
+       resolve relative to the vlib's documentation path. *)
+    let id_lib = match src_id_lib with Some l -> l | None -> Lib.Local.to_lib local_lib in
+    let src_id =
+      let base =
+        match target with
+        | Odoc_target.Private_lib (lib_unique_name, _) ->
+          sp "%s/%s" lib_unique_name (Path.basename src_path)
+        | Odoc_target.Lib (pkg, _) ->
+          sp
+            "%s/src/%s/%s"
+            (Package.Name.to_string pkg)
+            (Lib_name.to_string (Lib.name id_lib))
+            (Path.basename src_path)
+      in
+      match prefix with
+      | Some p -> sp "%s/%s" p base
+      | None -> base
+    in
+    let impl =
+      { Odoc_target.src_id; src_path; module_name }
+    in
+    let kind = Odoc_artifact.Impl (impl, target) in
+    Some
+      (Odoc_artifact.create
+         ~kind
+         ~source:(Local_source cmt_file)
+         ~extra_libs
+         ~extra_packages
+         ~prefix)
+;;
+
+(* Discover source rendering (Impl) artifacts for a virtual library implementation.
+   The implementation library provides the .cmt files and source code, while the
+   virtual library provides the documentation (.cmti). The Impl artifacts are
+   associated with the implementation library's own target (not the vlib's target),
+   following the odoc-driver convention where each library gets its own output
+   directory. This avoids duplicate rules when multiple implementations exist
+   for the same virtual library (e.g. checkseum.c and checkseum.ocaml). *)
+let _discover_vlib_impl_source_artifacts sctx ctx ~impl_local_lib ~vlib:_ ~prefix
+  : Odoc_artifact.t list Memo.t
+  =
+  let* all_modules = Dir_contents.modules_of_local_lib sctx impl_local_lib in
+  let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
+  let impl_lib = Lib.Local.to_lib impl_local_lib in
+  let impl_info = Lib.info impl_lib in
+  let impl_pkg = Lib_info.package impl_info in
+  let impl_name = Lib.name impl_lib in
+  (* Use the implementation library's own target for output paths *)
+  let target =
+    match impl_pkg with
+    | None ->
+      let status = Lib_info.status impl_info in
+      let lib_unique_name =
+        match status with
+        | Lib_info.Status.Private (project, _) ->
+          Odoc_scope.Scope_key.to_string impl_name project
+        | _ -> Lib_name.to_string impl_name
+      in
+      Odoc_target.Private_lib (lib_unique_name, impl_lib)
+    | Some pkg -> Odoc_target.Lib (pkg, impl_lib)
+  in
+  (* Get extras from odoc-config, using the impl's package *)
+  let extra_libs, extra_packages =
+    match impl_pkg with
+    | None -> Memo.return [], Memo.return []
+    | Some pkg ->
+      let config_lazy =
+        Memo.lazy_ (fun () ->
+          let* pkg_discovery = Package_discovery.create ~context:ctx in
+          resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg)
+      in
+      ( Memo.Lazy.force config_lazy >>| fst
+      , Memo.Lazy.force config_lazy >>| fun (_, pkgs) -> pkg :: pkgs )
+  in
+  let artifacts =
+    List.filter_map modules ~f:(fun module_ ->
+      if Module.has module_ ~ml_kind:Impl
+      then
+        create_artifact_impl
+          ~target
+          ~local_lib:impl_local_lib
+          ~module_
+          ~extra_libs
+          ~extra_packages
+          ~prefix
+          ()
+      else None)
+  in
+  Memo.return artifacts
 ;;
 
 (* Discover modules for a local library and create artifacts.
-   Handles both libraries with packages and private libraries (without packages). *)
-let discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib
+   Handles both libraries with packages and private libraries (without packages).
+   For implementation libraries of virtual libs, we use the vlib's obj_dir for
+   the cmti source (interface documentation comes from the vlib) while the impl's
+   own .cmt is used for source rendering, following the odoc-driver convention. *)
+let discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib ~prefix
   : Odoc_artifact.t list Memo.t
   =
   let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
@@ -428,6 +585,17 @@ let discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib
   let info = Lib.Local.info local_lib in
   let pkg = Lib_info.package info in
   let lib_t = Lib.Local.to_lib local_lib in
+  (* For implementation libraries, resolve the vlib to get its obj_dir for cmti files.
+     The vlib's cmti provides the interface documentation; the impl only has .cmt. *)
+  let* vlib_obj_dir =
+    match Lib.implements lib_t with
+    | None -> Memo.return None
+    | Some vlib_resolve ->
+      let+ vlib = Resolve.Memo.read_memo vlib_resolve in
+      match Lib.Local.of_lib vlib with
+      | Some local_vlib -> Some (Lib.Local.obj_dir local_vlib)
+      | None -> None
+  in
   (* Get extras from odoc-config for libraries with packages, empty for private libs.
      Also include the library's own package in extra_packages.
      These are Memo.t values - computation is deferred until accessed. *)
@@ -461,8 +629,42 @@ let discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib
       Odoc_target.Lib (pkg, lib_t)
   in
   let artifacts =
-    List.map modules ~f:(fun module_ ->
-      create_artifact_module ~target ~local_lib ~module_ ~extra_libs ~extra_packages)
+    List.concat_map modules ~f:(fun module_ ->
+      (* For impl libraries, use the vlib's obj_dir for modules that have an
+         interface (.mli from the vlib → .cmti in vlib's obj_dir). For impl-only
+         modules (no .mli, only .ml), the cmti_file will look for a .cmt which
+         lives in the impl's own obj_dir, so don't override. *)
+      let cmti_obj_dir =
+        match vlib_obj_dir with
+        | Some _ when Module.file module_ ~ml_kind:Intf <> None -> vlib_obj_dir
+        | _ -> None
+      in
+      let mod_artifact =
+        create_artifact_module
+          ~target
+          ~local_lib
+          ~module_
+          ~cmti_obj_dir
+          ~extra_libs
+          ~extra_packages
+          ~prefix
+      in
+      if Module.has module_ ~ml_kind:Impl
+      then
+        match
+          create_artifact_impl
+            ~target
+            ~local_lib
+            ~module_
+            ~extra_libs
+            ~extra_packages
+            ~prefix
+            ()
+        with
+        | Some impl_artifact ->
+          [ mod_artifact; impl_artifact ]
+        | None -> [ mod_artifact ]
+      else [ mod_artifact ])
   in
   Memo.return artifacts
 ;;
@@ -523,7 +725,7 @@ let toplevel_index_artifact ctx ~mode =
   in
   let extra_libs = Memo.Lazy.force config_lazy >>| fst in
   let extra_packages = Memo.Lazy.force config_lazy >>| snd in
-  Memo.return (Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages)
+  Memo.return (Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages ~prefix:None)
 ;;
 
 (* Create mld artifacts for a package (without index artifacts).
@@ -534,13 +736,14 @@ let discover_pkg_mld_artifacts
       ~mld_infos
       ~(extra_libs : Lib.t list Memo.t)
       ~(extra_packages : Package.Name.t list Memo.t)
+      ~prefix
   =
   let target = Odoc_target.Pkg pkg in
   let mld_artifacts =
     List.map mld_infos ~f:(fun (source, name) ->
       let page = { Odoc_target.name; pkg_libs } in
       let kind = Odoc_artifact.Page (page, target) in
-      Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages)
+      Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages ~prefix)
   in
   let has_index = List.exists mld_infos ~f:(fun (_, name) -> String.equal name "index") in
   mld_artifacts, has_index, mld_infos
@@ -553,14 +756,15 @@ let create_pkg_index_artifact
       ~lib_artifacts
       ~(extra_libs : Lib.t list Memo.t)
       ~(extra_packages : Package.Name.t list Memo.t)
+      ~prefix
   =
   let target = Odoc_target.Pkg pkg in
-  let output_path = Odoc_paths.gen_mld_dir ctx pkg ++ "index.mld" in
+  let output_path = Odoc_paths.gen_mld_dir ctx ?prefix pkg ++ "index.mld" in
   let page = { Odoc_target.name = "index"; pkg_libs } in
   let kind = Odoc_artifact.Page (page, target) in
   let content = default_pkg_index ~pkg ~lib_artifacts in
   let source = Odoc_artifact.Generated { content; output_path } in
-  Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages
+  Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages ~prefix
 ;;
 
 let create_lib_index_artifact
@@ -571,15 +775,16 @@ let create_lib_index_artifact
       ~lib_artifacts
       ~extra_libs
       ~extra_packages
+      ~prefix
   =
   let target = Odoc_target.Pkg pkg in
   let lib_index_name = sp "%s/index" (Lib_name.to_string lib_name) in
-  let output_path = Odoc_paths.lib_index_mld ctx pkg lib_name in
+  let output_path = Odoc_paths.lib_index_mld ctx ?prefix pkg lib_name in
   let page = { Odoc_target.name = lib_index_name; pkg_libs } in
   let kind = Odoc_artifact.Page (page, target) in
   let content = library_index_content_from_artifacts ~lib_name ~artifacts:lib_artifacts in
   let source = Odoc_artifact.Generated { content; output_path } in
-  Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages
+  Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages ~prefix
 ;;
 
 (* Extract page name from installed mld path by finding odoc-pages ancestor.
@@ -625,12 +830,12 @@ let parse_classify_output ~archive_names classify_content =
       if List.mem archive_names archive ~equal:String.equal then mods else [])
 ;;
 
-let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib
+let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib ~prefix
   : Odoc_artifact.t list Memo.t
   =
   Log.info
     [ Pp.textf
-        "DEBUG: discover_installed_lib_artifacts called for pkg=%s lib=%s"
+        "discover_installed_lib_artifacts: pkg=%s lib=%s"
         (Package.Name.to_string pkg)
         (Lib_name.to_string lib_name)
     ];
@@ -673,6 +878,7 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib
       in
       let extra_libs = Memo.Lazy.force config_lazy >>| fst in
       let extra_packages = Memo.Lazy.force config_lazy >>| snd in
+      let target = Odoc_target.Lib (pkg, lib) in
       let+ all_module_artifacts =
         Memo.parallel_map all_module_names ~f:(fun module_name ->
           match Package_discovery.module_source_file pkg_discovery ~lib ~module_name with
@@ -682,13 +888,48 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib
               ; module_name = Module_name.of_string module_name
               }
             in
-            Memo.return
-              (Some
-                 (Odoc_artifact.create
-                    ~kind:(Module (mod_, Odoc_target.Lib (pkg, lib)))
-                    ~source:(Installed_source { src_path })
-                    ~extra_libs
-                    ~extra_packages))
+            let module_artifact =
+              Odoc_artifact.create
+                ~kind:(Module (mod_, target))
+                ~source:(Installed_source { src_path })
+                ~extra_libs
+                ~extra_packages
+                ~prefix
+            in
+            (* Create an Impl artifact only if we have both a .cmt and a .ml file.
+               The .cmt is the input to compile-impl (type information), the .ml
+               is the source to render (referenced via src_path/src_id). *)
+            let impl_artifact =
+              match Package_discovery.module_cmt_file pkg_discovery ~lib ~module_name,
+                    Package_discovery.module_ml_file pkg_discovery ~lib ~module_name with
+              | Some cmt_path, Some ml_path ->
+                let src_id =
+                  let base =
+                    sp "%s/src/%s/%s"
+                      pkg_name_str
+                      lib_name_str
+                      (Path.basename ml_path)
+                  in
+                  match prefix with
+                  | Some p -> sp "%s/%s" p base
+                  | None -> base
+                in
+                let impl =
+                  { Odoc_target.src_id
+                  ; src_path = ml_path
+                  ; module_name = Module_name.of_string module_name
+                  }
+                in
+                Some
+                  (Odoc_artifact.create
+                     ~kind:(Impl (impl, target))
+                     ~source:(Installed_source { src_path = cmt_path })
+                     ~extra_libs
+                     ~extra_packages
+                     ~prefix)
+              | _ -> None
+            in
+            Memo.return (Some (module_artifact, impl_artifact))
           | None ->
             Log.info
               [ Pp.textf
@@ -699,19 +940,21 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib
               ];
             Memo.return None)
       in
-      List.filter_map all_module_artifacts ~f:Fun.id)
+      List.filter_map all_module_artifacts ~f:Fun.id
+      |> List.concat_map ~f:(fun (mod_art, impl_art) ->
+        mod_art :: (match impl_art with Some a -> [ a ] | None -> [])))
 ;;
 
-let discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib : Odoc_artifact.t list Memo.t =
+let discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib ~prefix : Odoc_artifact.t list Memo.t =
   match Lib.Local.of_lib lib with
-  | Some local_lib -> discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib
-  | None -> discover_installed_lib_artifacts sctx ctx ~pkg ~lib_name ~lib
+  | Some local_lib -> discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib ~prefix
+  | None -> discover_installed_lib_artifacts sctx ctx ~pkg ~lib_name ~lib ~prefix
 ;;
 
-let discover_all_lib_artifacts sctx ctx ~pkg ~libs =
+let discover_all_lib_artifacts sctx ctx ~pkg ~libs ~prefix =
   Memo.List.map libs ~f:(fun lib ->
     let lib_name = Lib.name lib in
-    let+ artifacts = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib in
+    let+ artifacts = discover_lib_artifacts sctx ctx ~pkg ~lib_name ~lib ~prefix in
     lib, artifacts)
 ;;
 
@@ -764,11 +1007,12 @@ let discover_pkg_asset_artifacts
       ~asset_infos
       ~(extra_libs : Lib.t list Memo.t)
       ~(extra_packages : Package.Name.t list Memo.t)
+      ~prefix
   =
   let target = Odoc_target.Pkg pkg in
   List.map asset_infos ~f:(fun (source, asset) ->
     let kind = Odoc_artifact.Asset (asset, target) in
-    Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages)
+    Odoc_artifact.create ~kind ~source ~extra_libs ~extra_packages ~prefix)
 ;;
 
 let discover_pkg_artifacts_common
@@ -781,10 +1025,11 @@ let discover_pkg_artifacts_common
       ~extra_libs
       ~extra_packages
       ~generate_lib_indices
+      ~prefix
   =
   let lib_subdirs = List.map libs ~f:(fun lib -> Lib.name lib |> Lib_name.to_string) in
   let mld_artifacts, has_pkg_index, mld_infos =
-    discover_pkg_mld_artifacts ~pkg ~pkg_libs:libs ~mld_infos ~extra_libs ~extra_packages
+    discover_pkg_mld_artifacts ~pkg ~pkg_libs:libs ~mld_infos ~extra_libs ~extra_packages ~prefix
   in
   let asset_artifacts =
     discover_pkg_asset_artifacts
@@ -793,8 +1038,9 @@ let discover_pkg_artifacts_common
       ~asset_infos
       ~extra_libs
       ~extra_packages
+      ~prefix
   in
-  let* lib_artifacts = discover_all_lib_artifacts sctx ctx ~pkg ~libs in
+  let* lib_artifacts = discover_all_lib_artifacts sctx ctx ~pkg ~libs ~prefix in
   let pkg_index_artifact =
     if has_pkg_index
     then []
@@ -806,6 +1052,7 @@ let discover_pkg_artifacts_common
           ~lib_artifacts
           ~extra_libs
           ~extra_packages
+          ~prefix
       ]
   in
   let lib_index_artifacts =
@@ -829,7 +1076,8 @@ let discover_pkg_artifacts_common
                ~lib_name
                ~lib_artifacts:artifacts
                ~extra_libs
-               ~extra_packages))
+               ~extra_packages
+               ~prefix))
   in
   let all_module_artifacts = List.concat_map lib_artifacts ~f:snd in
   let all_artifacts =
@@ -842,9 +1090,9 @@ let discover_pkg_artifacts_common
   Memo.return (all_artifacts, lib_subdirs)
 ;;
 
-let create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifacts =
+let create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifacts ~prefix =
   let dummy_pkg = Package.Name.of_string lib_unique_name in
-  let output_path = Odoc_paths.gen_mld_dir ctx dummy_pkg ++ "index.mld" in
+  let output_path = Odoc_paths.gen_mld_dir ctx ?prefix dummy_pkg ++ "index.mld" in
   let page = { Odoc_target.name = "index"; pkg_libs = [] } in
   let kind = Odoc_artifact.Page (page, Odoc_target.Pkg dummy_pkg) in
   let content = library_index_content_from_artifacts ~lib_name ~artifacts:lib_artifacts in
@@ -854,11 +1102,12 @@ let create_private_lib_index_artifact ctx ~lib_unique_name ~lib_name ~lib_artifa
     ~source
     ~extra_libs:(Memo.return [])
     ~extra_packages:(Memo.return [])
+    ~prefix
 ;;
 
 (* Discover artifacts for a private library.
    Takes the fields from Scope_id.Private_lib directly to make invalid calls impossible. *)
-let discover_private_lib_artifacts sctx ctx ~lib_unique_name ~lib_name ~project
+let discover_private_lib_artifacts sctx ctx ~lib_unique_name ~lib_name ~project ~prefix
   : (Odoc_artifact.t list * string list) Memo.t
   =
   let* lib_db =
@@ -872,20 +1121,21 @@ let discover_private_lib_artifacts sctx ctx ~lib_unique_name ~lib_name ~project
   match lib_opt with
   | None -> Memo.return ([], [])
   | Some local_lib ->
-    let* module_artifacts = discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib in
+    let* module_artifacts = discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib ~prefix in
     let index_artifact =
       create_private_lib_index_artifact
         ctx
         ~lib_unique_name
         ~lib_name
         ~lib_artifacts:module_artifacts
+        ~prefix
     in
     let artifacts = index_artifact :: module_artifacts in
     (* Private libraries don't have subdirectories in the same sense as packages *)
     Memo.return (artifacts, [])
 ;;
 
-let discover_local_pkg_artifacts sctx ctx ~pkg
+let discover_local_pkg_artifacts sctx ctx ~pkg ~prefix
   : (Odoc_artifact.t list * string list) Memo.t
   =
   let* all_libs = libs_of_pkg ctx ~pkg in
@@ -902,24 +1152,39 @@ let discover_local_pkg_artifacts sctx ctx ~pkg
   let extra_packages = Memo.Lazy.force config_lazy >>| snd in
   let* mld_infos = get_local_mld_infos sctx ~pkg in
   let* asset_infos = get_local_asset_infos sctx ~pkg in
-  discover_pkg_artifacts_common
-    sctx
-    ctx
-    ~pkg
-    ~libs
-    ~mld_infos
-    ~asset_infos
-    ~extra_libs
-    ~extra_packages
-    ~generate_lib_indices:true
+  let* base_artifacts, lib_subdirs =
+    discover_pkg_artifacts_common
+      sctx
+      ctx
+      ~pkg
+      ~libs
+      ~mld_infos
+      ~asset_infos
+      ~extra_libs
+      ~extra_packages
+      ~generate_lib_indices:true
+      ~prefix
+  in
+  (* Discover artifacts for implementation libraries of virtual libs.
+     These are filtered out of libs_of_pkg (to avoid conflicting implementations
+     in the library closure) but each impl gets its own documentation directory
+     with Module artifacts using the vlib's cmti and Impl artifacts for source
+     rendering, following the odoc-driver convention. *)
+  let* impl_artifacts =
+    let* impl_pairs = vlib_impl_libs_of_local_pkg ctx ~pkg in
+    Memo.List.concat_map impl_pairs ~f:(fun (impl_local_lib, _vlib) ->
+      let lib_name = Lib.name (Lib.Local.to_lib impl_local_lib) in
+      discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib:impl_local_lib ~prefix)
+  in
+  Memo.return (base_artifacts @ impl_artifacts, lib_subdirs)
 ;;
 
-let discover_installed_pkg_artifacts sctx ctx ~pkg
+let discover_installed_pkg_artifacts sctx ctx ~pkg ~prefix
   : (Odoc_artifact.t list * string list) Memo.t
   =
   Log.info
     [ Pp.textf
-        "DEBUG: discover_installed_pkg_artifacts called for pkg=%s"
+        "discover_installed_pkg_artifacts: pkg=%s"
         (Package.Name.to_string pkg)
     ];
   let* pkg_discovery = Package_discovery.create ~context:ctx in
@@ -973,6 +1238,7 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg
     ~extra_libs
     ~extra_packages
     ~generate_lib_indices:false
+    ~prefix
 ;;
 
 (* Discover ALL artifacts for a package identifier (either a package name or private lib_unique_name).
@@ -980,7 +1246,7 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg
    For private libraries: returns artifacts for all modules in the library (no mld files)
 
    This is the unified entry point that all handlers (odoc, odocls, html) should use. *)
-let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
+let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name ~prefix
   : (Odoc_artifact.t list * string list) Memo.t
   =
   let* scope_id = Odoc_scope.Scope_id.of_string pkg_or_lib_unique_name in
@@ -992,6 +1258,7 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
       ~lib_unique_name:unique_name
       ~lib_name
       ~project
+      ~prefix
   | Odoc_scope.Scope_id.Package pkg ->
     let* is_project_pkg =
       let* packages = Dune_load.packages () in
@@ -1004,15 +1271,15 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name
           is_project_pkg
       ];
     if is_project_pkg
-    then discover_local_pkg_artifacts sctx ctx ~pkg
-    else discover_installed_pkg_artifacts sctx ctx ~pkg
+    then discover_local_pkg_artifacts sctx ctx ~pkg ~prefix
+    else discover_installed_pkg_artifacts sctx ctx ~pkg ~prefix
 ;;
 
 (* Collect all visible odocl files from packages (and private libraries for Full mode),
    including toplevel index.
    For Full mode, includes all transitive dependencies (installed packages).
    For Local_only mode, only includes workspace packages. *)
-let collect_all_visible_odocls sctx ~mode () =
+let collect_all_visible_odocls sctx ~mode ~prefix ~include_impl () =
   let ctx = Super_context.context sctx in
   let* workspace_pkgs = get_workspace_packages () in
   (* Only get private libraries for Full mode - Local_only should only document packages *)
@@ -1033,7 +1300,7 @@ let collect_all_visible_odocls sctx ~mode () =
     Memo.List.concat_map (Package.Name.Set.to_list packages_to_collect) ~f:(fun pkg ->
       let pkg_name = Package.Name.to_string pkg in
       let* all_artifacts, _lib_subdirs =
-        discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_name
+        discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:pkg_name ~prefix
       in
       Memo.return
         (List.filter_map all_artifacts ~f:(fun artifact ->
@@ -1042,13 +1309,18 @@ let collect_all_visible_odocls sctx ~mode () =
            else (
              match Odoc_artifact.get_kind artifact with
              | Asset _ -> None
-             | Module _ | Page _ -> Some (Odoc_artifact.odocl_file ctx artifact)))))
+             | Impl _ when not include_impl -> None
+             | Module _ | Page _ | Impl _ ->
+               Some
+                 (Odoc_artifact.odocl_file
+                    ctx
+                    artifact)))))
   in
   let* private_lib_odocl_files =
     Memo.List.concat_map private_local_libs ~f:(fun local_lib ->
       let lib_unique_name = Odoc_scope.lib_unique_name local_lib in
       let* all_artifacts, _lib_subdirs =
-        discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:lib_unique_name
+        discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name:lib_unique_name ~prefix
       in
       Memo.return
         (List.filter_map all_artifacts ~f:(fun artifact ->
@@ -1057,7 +1329,12 @@ let collect_all_visible_odocls sctx ~mode () =
            else (
              match Odoc_artifact.get_kind artifact with
              | Asset _ -> None
-             | Module _ | Page _ -> Some (Odoc_artifact.odocl_file ctx artifact)))))
+             | Impl _ when not include_impl -> None
+             | Module _ | Page _ | Impl _ ->
+               Some
+                 (Odoc_artifact.odocl_file
+                    ctx
+                    artifact)))))
   in
   let* toplevel_artifact = toplevel_index_artifact ctx ~mode in
   let toplevel_odocl = Odoc_artifact.odocl_file ctx toplevel_artifact in

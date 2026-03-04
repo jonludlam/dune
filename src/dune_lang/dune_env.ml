@@ -56,10 +56,16 @@ module Odoc = struct
     | Root
     | Per_package
 
+  type source_rendering =
+    | Enabled
+    | Disabled
+
   type t =
     { warnings : warnings option
     ; sidebar : sidebar option
     ; support : support option
+    ; source_rendering : source_rendering option
+    ; prefix : string option
     ; flags : Ordered_set_lang.Unexpanded.t
     ; link_flags : Ordered_set_lang.Unexpanded.t
     ; html_flags : Ordered_set_lang.Unexpanded.t
@@ -69,6 +75,8 @@ module Odoc = struct
     { warnings = None
     ; sidebar = None
     ; support = None
+    ; source_rendering = None
+    ; prefix = None
     ; flags = Ordered_set_lang.Unexpanded.standard
     ; link_flags = Ordered_set_lang.Unexpanded.standard
     ; html_flags = Ordered_set_lang.Unexpanded.standard
@@ -92,10 +100,18 @@ module Odoc = struct
     | (Root | Per_package), _ -> false
   ;;
 
+  let source_rendering_equal x y =
+    match x, y with
+    | Enabled, Enabled | Disabled, Disabled -> true
+    | (Enabled | Disabled), _ -> false
+  ;;
+
   let equal x y =
     Option.equal warnings_equal x.warnings y.warnings
     && Option.equal sidebar_equal x.sidebar y.sidebar
     && Option.equal support_equal x.support y.support
+    && Option.equal source_rendering_equal x.source_rendering y.source_rendering
+    && Option.equal String.equal x.prefix y.prefix
     && Ordered_set_lang.Unexpanded.equal x.flags y.flags
     && Ordered_set_lang.Unexpanded.equal x.link_flags y.link_flags
     && Ordered_set_lang.Unexpanded.equal x.html_flags y.html_flags
@@ -104,16 +120,19 @@ module Odoc = struct
   let warnings_decode = enum [ "fatal", Fatal; "nonfatal", Nonfatal ]
   let sidebar_decode = enum [ "global", Global; "per-package", Per_package ]
   let support_decode = enum [ "root", Root; "per-package", Per_package ]
+  let source_rendering_decode = enum [ "enabled", Enabled; "disabled", Disabled ]
 
   let decode =
     fields
     @@ let+ warnings = field_o "warnings" warnings_decode
        and+ sidebar = field_o "sidebar" sidebar_decode
        and+ support = field_o "support" support_decode
+       and+ source_rendering = field_o "source_rendering" source_rendering_decode
+       and+ prefix = field_o "prefix" string
        and+ flags = Ordered_set_lang.Unexpanded.field "flags"
        and+ link_flags = Ordered_set_lang.Unexpanded.field "link_flags"
        and+ html_flags = Ordered_set_lang.Unexpanded.field "html_flags" in
-       { warnings; sidebar; support; flags; link_flags; html_flags }
+       { warnings; sidebar; support; source_rendering; prefix; flags; link_flags; html_flags }
   ;;
 end
 
