@@ -45,6 +45,12 @@ type mod_ =
   ; module_name : Module_name.t
   }
 
+type impl =
+  { src_id : string
+  ; src_path : Path.t
+  ; module_name : Module_name.t
+  }
+
 type _ t =
   | Lib : Package.Name.t * Lib.t -> mod_ t
   | Private_lib : string * Lib.t -> mod_ t

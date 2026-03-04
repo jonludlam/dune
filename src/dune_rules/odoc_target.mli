@@ -46,6 +46,15 @@ type mod_ =
   ; module_name : Module_name.t
   }
 
+(** Implementation source metadata for source rendering. *)
+type impl =
+  { src_id : string
+    (** Source identifier for odoc (e.g. "pkg/lib/foo.ml") *)
+  ; src_path : Path.t
+    (** Path to the .ml source file *)
+  ; module_name : Module_name.t
+  }
+
 (** Target GADT representing documentation targets.
 
     The type parameter indicates whether this is a module target ([mod_]) or

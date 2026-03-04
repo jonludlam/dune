@@ -1,0 +1,8 @@
+(library
+ (name mylib)
+ (public_name mypkg.mylib))
+
+(env
+ (_
+  (odoc
+   (source_rendering disabled))))

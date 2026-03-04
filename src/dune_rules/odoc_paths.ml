@@ -22,13 +22,23 @@ let index_root ctx mode =
   root ctx ++ subdir
 ;;
 
-let odocs : type a. Context.t -> a Odoc_target.t -> Path.Build.t =
-  fun ctx -> function
+let maybe_prefix base prefix =
+  match prefix with
+  | Some p -> base ++ p
+  | None -> base
+;;
+
+let odocs : type a. Context.t -> ?prefix:string -> a Odoc_target.t -> Path.Build.t =
+  fun ctx ?prefix -> function
   | Odoc_target.Lib (pkg, lib) ->
     let lib_name = Lib.name lib in
-    root ctx ++ "_odoc" ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-  | Odoc_target.Private_lib (lib_unique_name, _) -> root ctx ++ "_odoc" ++ lib_unique_name
-  | Odoc_target.Pkg pkg -> root ctx ++ "_odoc" ++ Package.Name.to_string pkg
+    maybe_prefix (root ctx ++ "_odoc") prefix
+    ++ Package.Name.to_string pkg
+    ++ Lib_name.to_string lib_name
+  | Odoc_target.Private_lib (lib_unique_name, _) ->
+    maybe_prefix (root ctx ++ "_odoc") prefix ++ lib_unique_name
+  | Odoc_target.Pkg pkg ->
+    maybe_prefix (root ctx ++ "_odoc") prefix ++ Package.Name.to_string pkg
   | Odoc_target.Toplevel mode -> index_root ctx mode
 ;;
 
@@ -38,58 +48,95 @@ let markdown_root ctx mode = root ctx ++ Doc_mode.markdown_subdir mode
 let odocl_root ctx = root ctx ++ "_odocl"
 let sherlodoc_root ctx = root ctx ++ "_sherlodoc"
 
-let html : type a. Context.t -> Doc_mode.t -> a Odoc_target.t -> Path.Build.t =
-  fun ctx mode target ->
+let html : type a. Context.t -> Doc_mode.t -> ?prefix:string -> a Odoc_target.t -> Path.Build.t =
+  fun ctx mode ?prefix target ->
   match target with
   | Lib (pkg, lib) ->
     let lib_name = Lib.name lib in
-    html_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-  | Private_lib (lib_unique_name, _) -> html_root ctx mode ++ lib_unique_name
-  | Pkg pkg -> html_root ctx mode ++ Package.Name.to_string pkg
-  | Toplevel _ -> html_root ctx mode
-;;
-
-let json : type a. Context.t -> Doc_mode.t -> a Odoc_target.t -> Path.Build.t =
-  fun ctx mode target ->
-  match target with
-  | Lib (pkg, lib) ->
-    let lib_name = Lib.name lib in
-    json_root ctx mode ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-  | Private_lib (lib_unique_name, _) -> json_root ctx mode ++ lib_unique_name
-  | Pkg pkg -> json_root ctx mode ++ Package.Name.to_string pkg
-  | Toplevel _ -> json_root ctx mode
-;;
-
-let markdown : type a. Context.t -> Doc_mode.t -> a Odoc_target.t -> Path.Build.t =
-  fun ctx mode target ->
-  match target with
-  | Lib (pkg, lib) ->
-    let lib_name = Lib.name lib in
-    markdown_root ctx mode
+    maybe_prefix (html_root ctx mode) prefix
     ++ Package.Name.to_string pkg
     ++ Lib_name.to_string lib_name
   | Private_lib (lib_unique_name, _) ->
-    markdown_root ctx mode ++ lib_unique_name
+    maybe_prefix (html_root ctx mode) prefix ++ lib_unique_name
   | Pkg pkg ->
-    markdown_root ctx mode ++ Package.Name.to_string pkg
+    maybe_prefix (html_root ctx mode) prefix ++ Package.Name.to_string pkg
+  | Toplevel _ -> html_root ctx mode
+;;
+
+(* Source HTML directory: like [html] but with a "src" component between
+   the package and library name, matching the odoc_driver convention
+   (e.g. <pkg>/src/<lib>/ instead of <pkg>/<lib>/) *)
+let html_src ctx mode ?prefix (target : Odoc_target.mod_ Odoc_target.t) =
+  match target with
+  | Lib (pkg, lib) ->
+    let lib_name = Lib.name lib in
+    maybe_prefix (html_root ctx mode) prefix
+    ++ Package.Name.to_string pkg
+    ++ "src"
+    ++ Lib_name.to_string lib_name
+  | Private_lib (lib_unique_name, _) ->
+    maybe_prefix (html_root ctx mode) prefix ++ lib_unique_name
+;;
+
+let json : type a. Context.t -> Doc_mode.t -> ?prefix:string -> a Odoc_target.t -> Path.Build.t =
+  fun ctx mode ?prefix target ->
+  match target with
+  | Lib (pkg, lib) ->
+    let lib_name = Lib.name lib in
+    maybe_prefix (json_root ctx mode) prefix
+    ++ Package.Name.to_string pkg
+    ++ Lib_name.to_string lib_name
+  | Private_lib (lib_unique_name, _) ->
+    maybe_prefix (json_root ctx mode) prefix ++ lib_unique_name
+  | Pkg pkg ->
+    maybe_prefix (json_root ctx mode) prefix ++ Package.Name.to_string pkg
+  | Toplevel _ -> json_root ctx mode
+;;
+
+let markdown : type a. Context.t -> Doc_mode.t -> ?prefix:string -> a Odoc_target.t -> Path.Build.t =
+  fun ctx mode ?prefix target ->
+  match target with
+  | Lib (pkg, lib) ->
+    let lib_name = Lib.name lib in
+    maybe_prefix (markdown_root ctx mode) prefix
+    ++ Package.Name.to_string pkg
+    ++ Lib_name.to_string lib_name
+  | Private_lib (lib_unique_name, _) ->
+    maybe_prefix (markdown_root ctx mode) prefix ++ lib_unique_name
+  | Pkg pkg ->
+    maybe_prefix (markdown_root ctx mode) prefix ++ Package.Name.to_string pkg
   | Toplevel _ -> markdown_root ctx mode
 ;;
 
-let odocl : type a. Context.t -> a Odoc_target.t -> Path.Build.t =
-  fun ctx -> function
+let odocl : type a. Context.t -> ?prefix:string -> a Odoc_target.t -> Path.Build.t =
+  fun ctx ?prefix -> function
   | Lib (pkg, lib) ->
     let lib_name = Lib.name lib in
-    odocl_root ctx ++ Package.Name.to_string pkg ++ Lib_name.to_string lib_name
-  | Private_lib (lib_unique_name, _) -> odocl_root ctx ++ lib_unique_name
-  | Pkg pkg -> odocl_root ctx ++ Package.Name.to_string pkg
+    maybe_prefix (odocl_root ctx) prefix
+    ++ Package.Name.to_string pkg
+    ++ Lib_name.to_string lib_name
+  | Private_lib (lib_unique_name, _) ->
+    maybe_prefix (odocl_root ctx) prefix ++ lib_unique_name
+  | Pkg pkg ->
+    maybe_prefix (odocl_root ctx) prefix ++ Package.Name.to_string pkg
   | Toplevel mode -> index_root ctx mode
 ;;
 
-let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
-let lib_mld_dir ctx pkg lib_name = gen_mld_dir ctx pkg ++ Lib_name.to_string lib_name
-let lib_index_mld ctx pkg lib_name = lib_mld_dir ctx pkg lib_name ++ "index.mld"
+let gen_mld_dir ctx ?prefix pkg =
+  maybe_prefix (root ctx ++ "_mlds") prefix ++ Package.Name.to_string pkg
+;;
+
+let lib_mld_dir ctx ?prefix pkg lib_name =
+  gen_mld_dir ctx ?prefix pkg ++ Lib_name.to_string lib_name
+;;
+
+let lib_index_mld ctx ?prefix pkg lib_name =
+  lib_mld_dir ctx ?prefix pkg lib_name ++ "index.mld"
+;;
 let odoc_support ctx mode = html_root ctx mode ++ odoc_support_dirname
-let odoc_support_for_pkg ctx mode pkg = html_root ctx mode ++ pkg ++ odoc_support_dirname
+let odoc_support_for_pkg ctx mode ?prefix pkg =
+  maybe_prefix (html_root ctx mode) prefix ++ pkg ++ odoc_support_dirname
+;;
 let toplevel_index_mld ctx mode = index_root ctx mode ++ "index.mld"
 
 let sidebar_root ctx mode =

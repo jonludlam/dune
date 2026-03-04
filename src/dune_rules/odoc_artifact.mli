@@ -7,11 +7,13 @@
 
 open Import
 
-(** The kind of artifact: module documentation, page documentation, or asset. *)
+(** The kind of artifact: module documentation, page documentation,
+    asset, or implementation source. *)
 type kind =
   | Module : Odoc_target.mod_ * Odoc_target.mod_ Odoc_target.t -> kind
   | Page : Odoc_target.page * Odoc_target.page Odoc_target.t -> kind
   | Asset : Odoc_target.asset * Odoc_target.page Odoc_target.t -> kind
+  | Impl : Odoc_target.impl * Odoc_target.mod_ Odoc_target.t -> kind
 
 (** Where the artifact's source content comes from.
 
@@ -87,8 +89,12 @@ val extra_packages : t -> Package.Name.t list Memo.t
 (** Whether this artifact should be hidden from indices (internal modules). *)
 val hidden : t -> bool
 
-(** The parent-id for odoc compilation (determines URL structure). *)
+(** The parent-id for odoc compilation (determines URL structure).
+    Includes prefix if the artifact was created with one. *)
 val parent_id : t -> string
+
+(** The optional prefix for this artifact's package paths. *)
+val prefix : t -> string option
 
 (** Whether to suppress odoc warnings for this artifact (installed/vendored). *)
 val should_suppress_output : t -> bool Memo.t
@@ -99,6 +105,15 @@ val asset_name : t -> string option
 (** Whether this artifact is an asset. *)
 val is_asset : t -> bool
 
+(** Whether this artifact is an impl (source rendering). *)
+val is_impl : t -> bool
+
+(** The .ml source path for Impl artifacts, None for others. *)
+val impl_source_path : t -> Path.t option
+
+(** The source identifier for Impl artifacts, None for others. *)
+val impl_source_id : t -> string option
+
 (** {1 Construction} *)
 
 val create
@@ -106,4 +121,5 @@ val create
   -> source:source
   -> extra_libs:Lib.t list Memo.t
   -> extra_packages:Package.Name.t list Memo.t
+  -> prefix:string option
   -> t

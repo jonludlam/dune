@@ -1,0 +1,5 @@
+(library
+ (name mylib)
+ (public_name mypkg.mylib)
+ (virtual_modules mymod)
+ (default_implementation mypkg.mylib_impl))

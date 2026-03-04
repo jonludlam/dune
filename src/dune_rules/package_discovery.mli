@@ -35,6 +35,12 @@ val assets_of_package : t -> Package.Name.t -> Path.t list
     Returns the path to the .cmti file if it exists, otherwise .cmt. *)
 val module_source_file : t -> lib:Lib.t -> module_name:string -> Path.t option
 
+(** Get the .cmt file for a specific module in an installed library. *)
+val module_cmt_file : t -> lib:Lib.t -> module_name:string -> Path.t option
+
+(** Get the .ml source file for a specific module in an installed library. *)
+val module_ml_file : t -> lib:Lib.t -> module_name:string -> Path.t option
+
 (** Get the odoc configuration for an installed package. *)
 val config_of_package : t -> Package.Name.t -> Odoc_config.t
 
