@@ -67,6 +67,7 @@ val discover_package_artifacts
   :  Super_context.t
   -> Context.t
   -> pkg_or_lib_unique_name:string
+  -> prefix:string option
   -> (Odoc_artifact.t list * string list) Memo.t
 
 (** Collect all visible .odocl files for sidebar/index generation.
@@ -79,6 +80,8 @@ val discover_package_artifacts
 val collect_all_visible_odocls
   :  Super_context.t
   -> mode:Odoc_target.Doc_mode.t
+  -> prefix:string option
+  -> include_impl:bool
   -> unit
   -> (Package.Name.t list * Path.Build.t list) Memo.t
 

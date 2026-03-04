@@ -1,0 +1,4 @@
+(library
+ (name mylib_impl)
+ (public_name mypkg.mylib_impl)
+ (implements mypkg.mylib))
