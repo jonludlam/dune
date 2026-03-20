@@ -4,7 +4,7 @@ open Import
 open Memo.O
 
 let ( ++ ) = Path.Build.relative
-let sp = Printf.sprintf
+let sprintf = Printf.sprintf
 
 (* Get list of local workspace packages, respecting -p flag mask *)
 let get_workspace_packages () =
@@ -130,10 +130,9 @@ let get_odoc_config_deps_for_pkg pkg_discovery pkg =
       ({ Odoc_config.packages; libraries = [] }, true (* is_local *))
   | None ->
     Log.info
-      [ Pp.textf
-          "DEBUG: Reading odoc-config for INSTALLED package %s"
-          (Package.Name.to_string pkg)
-      ];
+      (sprintf "DEBUG: Reading odoc-config for INSTALLED package %s"
+         (Package.Name.to_string pkg))
+      [];
     let odoc_config = Package_discovery.config_of_package pkg_discovery pkg in
     Memo.return (odoc_config.Odoc_config.deps, false (* not local *))
 ;;
@@ -207,10 +206,9 @@ let resolve_pkg_odoc_config ctx ~pkg_discovery ~pkg =
    6. If there are new packages, repeat until fixed point *)
 let expand_packages_with_odoc_config ctx ~packages ~private_libs =
   Log.info
-    [ Pp.textf
-        "DEBUG: expand_packages_with_odoc_config called with packages: %s"
-        (packages |> List.map ~f:Package.Name.to_string |> String.concat ~sep:", ")
-    ];
+    (sprintf "DEBUG: expand_packages_with_odoc_config called with packages: %s"
+       (packages |> List.map ~f:Package.Name.to_string |> String.concat ~sep:", "))
+    [];
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   (* Use public_libs which includes both local and installed libs, preferring local *)
   let* lib_db = Scope.DB.public_libs (Context.name ctx) in
@@ -237,7 +235,9 @@ let expand_packages_with_odoc_config ctx ~packages ~private_libs =
        We use descriptive_closure rather than closure because we may have
        conflicting implementations of virtual libraries when documenting
        multiple packages together - that's fine for documentation purposes. *)
-    let* lib_closure = Lib.descriptive_closure all_libs ~with_pps:false in
+    let* lib_closure =
+      Lib.descriptive_closure all_libs ~with_pps:false ~for_:Compilation_mode.Ocaml
+    in
     let* pkgs_from_libs =
       Memo.List.filter_map lib_closure ~f:(fun lib ->
         match Lib.Local.of_lib lib with
@@ -300,7 +300,7 @@ module Toplevel_index = struct
         let version_suffix =
           match version with
           | None -> ""
-          | Some v -> sp " (%s)" (Package_version.to_string v)
+          | Some v -> sprintf " (%s)" (Package_version.to_string v)
         in
         Printf.bprintf b "- {{!/%s/page-index}%s}%s\n" name name version_suffix);
     if not (List.is_empty private_libs)
@@ -487,16 +487,16 @@ let create_artifact_impl
       let base =
         match target with
         | Odoc_target.Private_lib (lib_unique_name, _) ->
-          sp "%s/%s" lib_unique_name (Path.basename src_path)
+          sprintf "%s/%s" lib_unique_name (Path.basename src_path)
         | Odoc_target.Lib (pkg, _) ->
-          sp
+          sprintf
             "%s/src/%s/%s"
             (Package.Name.to_string pkg)
             (Lib_name.to_string (Lib.name id_lib))
             (Path.basename src_path)
       in
       match prefix with
-      | Some p -> sp "%s/%s" p base
+      | Some p -> sprintf "%s/%s" p base
       | None -> base
     in
     let impl =
@@ -522,7 +522,7 @@ let create_artifact_impl
 let _discover_vlib_impl_source_artifacts sctx ctx ~impl_local_lib ~vlib:_ ~prefix
   : Odoc_artifact.t list Memo.t
   =
-  let* all_modules = Dir_contents.modules_of_local_lib sctx impl_local_lib in
+  let* all_modules = Dir_contents.modules_of_local_lib sctx impl_local_lib ~for_:Compilation_mode.Ocaml in
   let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
   let impl_lib = Lib.Local.to_lib impl_local_lib in
   let impl_info = Lib.info impl_lib in
@@ -580,7 +580,7 @@ let _discover_vlib_impl_source_artifacts sctx ctx ~impl_local_lib ~vlib:_ ~prefi
 let discover_local_lib_artifacts sctx ctx ~lib_name ~local_lib ~prefix
   : Odoc_artifact.t list Memo.t
   =
-  let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib in
+  let* all_modules = Dir_contents.modules_of_local_lib sctx local_lib ~for_:Compilation_mode.Ocaml in
   let modules = Modules.fold all_modules ~init:[] ~f:(fun m acc -> m :: acc) in
   let info = Lib.Local.info local_lib in
   let pkg = Lib_info.package info in
@@ -778,7 +778,7 @@ let create_lib_index_artifact
       ~prefix
   =
   let target = Odoc_target.Pkg pkg in
-  let lib_index_name = sp "%s/index" (Lib_name.to_string lib_name) in
+  let lib_index_name = sprintf "%s/index" (Lib_name.to_string lib_name) in
   let output_path = Odoc_paths.lib_index_mld ctx ?prefix pkg lib_name in
   let page = { Odoc_target.name = lib_index_name; pkg_libs } in
   let kind = Odoc_artifact.Page (page, target) in
@@ -834,11 +834,10 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib ~prefix
   : Odoc_artifact.t list Memo.t
   =
   Log.info
-    [ Pp.textf
-        "discover_installed_lib_artifacts: pkg=%s lib=%s"
-        (Package.Name.to_string pkg)
-        (Lib_name.to_string lib_name)
-    ];
+    (sprintf "discover_installed_lib_artifacts: pkg=%s lib=%s"
+       (Package.Name.to_string pkg)
+       (Lib_name.to_string lib_name))
+    [];
   let pkg_name_str = Package.Name.to_string pkg in
   let lib_name_str = Lib_name.to_string lib_name in
   let info = Lib.info lib in
@@ -846,11 +845,10 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib ~prefix
   if List.is_empty archive_names
   then (
     Log.info
-      [ Pp.textf
-          "odoc v3: No archives found for installed library %s/%s, skipping"
-          pkg_name_str
-          lib_name_str
-      ];
+      (sprintf "odoc v3: No archives found for installed library %s/%s, skipping"
+         pkg_name_str
+         lib_name_str)
+      [];
     Memo.return [])
   else (
     (* Read and parse classify file to get module names *)
@@ -860,12 +858,11 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib ~prefix
     let* classify_content = Build_system.read_file (Path.build classify_path) in
     let all_module_names = parse_classify_output ~archive_names classify_content in
     Log.info
-      [ Pp.textf
-          "odoc v3: Found %d modules for installed library %s/%s via odoc classify"
-          (List.length all_module_names)
-          pkg_name_str
-          lib_name_str
-      ];
+      (sprintf "odoc v3: Found %d modules for installed library %s/%s via odoc classify"
+         (List.length all_module_names)
+         pkg_name_str
+         lib_name_str)
+      [];
     if List.is_empty all_module_names
     then Memo.return []
     else
@@ -885,7 +882,7 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib ~prefix
           | Some src_path ->
             let mod_ =
               { Odoc_target.visible = not (String.contains_double_underscore module_name)
-              ; module_name = Module_name.of_string module_name
+              ; module_name = Module_name.of_checked_string module_name
               }
             in
             let module_artifact =
@@ -905,19 +902,19 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib ~prefix
               | Some cmt_path, Some ml_path ->
                 let src_id =
                   let base =
-                    sp "%s/src/%s/%s"
+                    sprintf "%s/src/%s/%s"
                       pkg_name_str
                       lib_name_str
                       (Path.basename ml_path)
                   in
                   match prefix with
-                  | Some p -> sp "%s/%s" p base
+                  | Some p -> sprintf "%s/%s" p base
                   | None -> base
                 in
                 let impl =
                   { Odoc_target.src_id
                   ; src_path = ml_path
-                  ; module_name = Module_name.of_string module_name
+                  ; module_name = Module_name.of_checked_string module_name
                   }
                 in
                 Some
@@ -932,12 +929,11 @@ let discover_installed_lib_artifacts _sctx ctx ~pkg ~lib_name ~lib ~prefix
             Memo.return (Some (module_artifact, impl_artifact))
           | None ->
             Log.info
-              [ Pp.textf
-                  "odoc v3: Could not find source file for module %s in %s/%s"
-                  module_name
-                  pkg_name_str
-                  lib_name_str
-              ];
+              (sprintf "odoc v3: Could not find source file for module %s in %s/%s"
+                 module_name
+                 pkg_name_str
+                 lib_name_str)
+              [];
             Memo.return None)
       in
       List.filter_map all_module_artifacts ~f:Fun.id
@@ -1061,7 +1057,7 @@ let discover_pkg_artifacts_common
     else
       List.filter_map lib_artifacts ~f:(fun (lib, artifacts) ->
         let lib_name = Lib.name lib in
-        let lib_index_name = sp "%s/index" (Lib_name.to_string lib_name) in
+        let lib_index_name = sprintf "%s/index" (Lib_name.to_string lib_name) in
         let has_source_lib_index =
           List.exists mld_infos ~f:(fun (_, name) -> String.equal name lib_index_name)
         in
@@ -1183,10 +1179,9 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg ~prefix
   : (Odoc_artifact.t list * string list) Memo.t
   =
   Log.info
-    [ Pp.textf
-        "discover_installed_pkg_artifacts: pkg=%s"
-        (Package.Name.to_string pkg)
-    ];
+    (sprintf "discover_installed_pkg_artifacts: pkg=%s"
+       (Package.Name.to_string pkg))
+    [];
   let* pkg_discovery = Package_discovery.create ~context:ctx in
   let all_libs = Package_discovery.libraries_of_package pkg_discovery pkg in
   (* Filter out implementations of virtual libraries - they provide the same API
@@ -1196,11 +1191,10 @@ let discover_installed_pkg_artifacts sctx ctx ~pkg ~prefix
       Option.is_none (Lib_info.implements (Lib.info lib)))
   in
   Log.info
-    [ Pp.textf
-        "discover_installed_pkg_artifacts(%s): got %d libs"
-        (Package.Name.to_string pkg)
-        (List.length libs)
-    ];
+    (sprintf "discover_installed_pkg_artifacts(%s): got %d libs"
+       (Package.Name.to_string pkg)
+       (List.length libs))
+    [];
   (* Lazy computation of odoc-config deps - avoids reading odoc-config.sexp
      for installed packages when not needed (e.g., in Local_only mode) *)
   let config_lazy =
@@ -1265,11 +1259,11 @@ let discover_package_artifacts sctx ctx ~pkg_or_lib_unique_name ~prefix
       Memo.return (Package.Name.Map.mem packages pkg)
     in
     Log.info
-      [ Pp.textf
-          "discover_package_artifacts(%s): is_project_pkg=%b"
-          pkg_or_lib_unique_name
-          is_project_pkg
-      ];
+      (sprintf
+         "discover_package_artifacts(%s): is_project_pkg=%b"
+         pkg_or_lib_unique_name
+         is_project_pkg)
+      [];
     if is_project_pkg
     then discover_local_pkg_artifacts sctx ctx ~pkg ~prefix
     else discover_installed_pkg_artifacts sctx ctx ~pkg ~prefix

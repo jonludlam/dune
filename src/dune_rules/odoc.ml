@@ -571,7 +571,7 @@ let compute_artifact_library_deps ctx ~artifact ~package_lib_names =
       let libs_to_close =
         if is_stdlib_artifact then [ lib ] else lib :: Option.to_list stdlib_opt
       in
-      Lib.closure libs_to_close ~linking:false
+      Lib.closure libs_to_close ~linking:false ~for_:Compilation_mode.Ocaml
     | None -> Memo.return (Resolve.return [])
     (* Package-level and toplevel artifacts have no library dependencies *)
   in
@@ -639,7 +639,7 @@ let compute_intra_library_module_deps sctx ~ctx ~artifact ~lib_artifacts_by_modu
        let dep_modules =
          List.filter_map lines ~f:(fun line ->
            match String.split ~on:' ' line with
-           | [ m; _hash ] -> Some (Module_name.of_string m)
+           | [ m; _hash ] -> Some (Module_name.of_checked_string m)
            | _ -> None)
        in
        (* Find .odoc files for dependencies in the same library using the prebuilt map *)
@@ -1352,7 +1352,7 @@ let compute_link_requires sctx ~artifact =
     | Module (_, Lib (pkg, lib))
     | Impl (_, Lib (pkg, lib)) ->
       let* closure =
-        Lib.closure [ lib ] ~linking:false
+        Lib.closure [ lib ] ~linking:false ~for_:Compilation_mode.Ocaml
       in
       let* pkg_libs =
         Odoc_discovery.libs_of_pkg ctx ~pkg
@@ -1375,7 +1375,7 @@ let compute_link_requires sctx ~artifact =
     | Module (_, Private_lib (_, lib))
     | Impl (_, Private_lib (_, lib)) ->
       let* closure =
-        Lib.closure [ lib ] ~linking:false
+        Lib.closure [ lib ] ~linking:false ~for_:Compilation_mode.Ocaml
       in
       Memo.return
         (Resolve.bind closure ~f:(fun libs ->
@@ -1386,7 +1386,7 @@ let compute_link_requires sctx ~artifact =
       if List.is_empty pkg_libs
       then Memo.return (Resolve.return [])
       else
-        let* closure = Lib.closure pkg_libs ~linking:false in
+        let* closure = Lib.closure pkg_libs ~linking:false ~for_:Compilation_mode.Ocaml in
         Memo.return
           (Resolve.bind closure ~f:(fun closure_libs ->
              (* Combine pkg_libs + their deps, deduplicated *)
@@ -2147,22 +2147,22 @@ let with_package_artifacts sctx ~dir ~pkg_or_lib_name ~f =
 ;;
 
 let handle_odoc_artifacts sctx ~dir ~pkg_or_lib_name =
-  Log.info [ Pp.textf "handle_odoc_artifacts: %s" pkg_or_lib_name ];
+  Log.info (sprintf "handle_odoc_artifacts: %s" pkg_or_lib_name) [];
   with_package_artifacts
     sctx
     ~dir
     ~pkg_or_lib_name
     ~f:(fun ~ctx ~scope_id ~all_artifacts ~all_lib_names ~prefix ->
       Log.info
-        [ Pp.textf
-            "handle_odoc_artifacts(%s): %d artifacts, %d libs: %s"
-            pkg_or_lib_name
-            (List.length all_artifacts)
-            (Lib_name.Set.cardinal all_lib_names)
-            (Lib_name.Set.to_list all_lib_names
-             |> List.map ~f:Lib_name.to_string
-             |> String.concat ~sep:", ")
-        ];
+        (sprintf
+           "handle_odoc_artifacts(%s): %d artifacts, %d libs: %s"
+           pkg_or_lib_name
+           (List.length all_artifacts)
+           (Lib_name.Set.cardinal all_lib_names)
+           (Lib_name.Set.to_list all_lib_names
+            |> List.map ~f:Lib_name.to_string
+            |> String.concat ~sep:", "))
+        [];
       Memo.return
         (Rules.collect_unit (fun () ->
            (* Build map from module name to odoc path once for all artifacts. *)

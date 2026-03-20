@@ -17,7 +17,7 @@ let extract_package_from_pkg_path path =
     let rec find_pattern pos =
       if pos + pattern_len > String.length path_str
       then None
-      else if String.is_prefix (String.drop path_str pos) ~prefix:pattern
+      else if String.starts_with ~prefix:pattern (String.drop path_str pos)
       then Some pos
       else find_pattern (pos + 1)
     in
@@ -259,7 +259,7 @@ let build_package_maps packages_with_files ~opam_prefix =
           match String.split file_str ~on:'/' with
           | "doc" :: pkg :: "odoc-pages" :: _ :: _ when String.equal pkg pkg_str ->
             (* Non-.mld files in odoc-pages are assets *)
-            if String.is_suffix file_str ~suffix:".mld"
+            if String.ends_with ~suffix:".mld" file_str
             then None
             else Some (Path.relative opam_prefix file_str)
           | "doc" :: pkg :: "odoc-assets" :: _ :: _ when String.equal pkg pkg_str ->
@@ -305,16 +305,14 @@ let create_impl_pkg_mode context =
   let* all_libs_set = Lib.DB.all installed_libs in
   let all_libs = Lib.Set.to_list all_libs_set in
   Log.info
-    [ Pp.textf
-        "Package_discovery.create_impl_pkg_mode: processing %d libs"
-        (List.length all_libs)
-    ];
+    (sprintf "Package_discovery.create_impl_pkg_mode: processing %d libs" (List.length all_libs))
+    [];
   let lib_mappings = build_mappings_from_pkg_paths all_libs in
   Log.info
-    [ Pp.textf
-        "Package_discovery (pkg mode): mapped %d libs to packages"
-        (Lib_name.Map.cardinal lib_mappings.package_of_lib)
-    ];
+    (sprintf
+       "Package_discovery (pkg mode): mapped %d libs to packages"
+       (Lib_name.Map.cardinal lib_mappings.package_of_lib))
+    [];
   (* TODO: Add mld and config discovery for pkg mode if needed *)
   Memo.return lib_mappings
 ;;
@@ -330,10 +328,10 @@ let create_impl_opam_mode context ~opam_prefix =
   let* all_libs_set = Lib.DB.all installed_libs in
   let all_libs = Lib.Set.to_list all_libs_set in
   Log.info
-    [ Pp.textf
-        "Package_discovery.create_impl_opam_mode: processing %d libs"
-        (List.length all_libs)
-    ];
+    (sprintf
+       "Package_discovery.create_impl_opam_mode: processing %d libs"
+       (List.length all_libs))
+    [];
   let lib_mappings =
     build_mappings_from_changes_data ~file_to_package_map:file_to_package all_libs
   in
@@ -343,10 +341,10 @@ let create_impl_opam_mode context ~opam_prefix =
       (Package.Name.of_string "ocaml-base-compiler")
   in
   Log.info
-    [ Pp.textf
-        "Package_discovery: ocaml-base-compiler has %d libs"
-        (Option.value ~default:[] obc_libs |> List.length)
-    ];
+    (sprintf
+       "Package_discovery: ocaml-base-compiler has %d libs"
+       (Option.value ~default:[] obc_libs |> List.length))
+    [];
   Memo.return
     { lib_mappings with
       mlds_of_package = mlds_map
@@ -421,7 +419,7 @@ let module_installed_file t ~lib ~module_name ~extensions =
       let lib_prefix =
         String.uncapitalize_ascii (Lib_name.to_string (Lib.name lib)) ^ "__"
       in
-      if String.is_prefix module_name_lower ~prefix:lib_prefix
+      if String.starts_with ~prefix:lib_prefix module_name_lower
       then [ String.uncapitalize_ascii (String.drop module_name_lower (String.length lib_prefix)) ]
       else []
     in
