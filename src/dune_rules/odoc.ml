@@ -272,7 +272,7 @@ module Flags = struct
     { warnings = Nonfatal
     ; sidebar = Global
     ; support = Root
-    ; source_rendering = Enabled
+    ; source_rendering = Disabled
     ; prefix = None
     }
 
