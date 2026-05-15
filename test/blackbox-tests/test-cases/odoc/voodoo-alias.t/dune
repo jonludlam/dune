@@ -1,0 +1,4 @@
+(library
+ (name myapp)
+ (public_name myapp)
+ (libraries cmdliner))
