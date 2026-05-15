@@ -416,6 +416,13 @@ let odoc_include_flags ctx pkg requires =
           [ Command.Args.A "-I"; Path dir ])))
 ;;
 
+(* Emit "-P pkg:<dir>" and "-L libname:<dir>" for each switch dep
+   voodoo's markers tell us about. Only used at link time; "odoc
+   compile" doesn't accept these flags. *)
+let voodoo_link_flags ctx =
+  Command.Args.Dyn (Odoc_voodoo.lp_flags ctx)
+;;
+
 let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
   let ctx = Super_context.context sctx in
   let deps = Dep.deps ctx pkg requires in
@@ -428,6 +435,7 @@ let link_odoc_rules sctx (odoc_file : odoc_artefact) ~pkg ~requires =
       ~quiet:false
       ~flags_for:(Some odoc_file.odoc_file)
       [ odoc_include_flags ctx pkg requires
+      ; voodoo_link_flags ctx
       ; A "-o"
       ; Target odoc_file.odocl_file
       ; Dep (Path.build odoc_file.odoc_file)
@@ -478,7 +486,7 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   >>= Dep.setup_deps ctx (Lib local_lib)
 ;;
 
-let setup_generate sctx ~search_db odoc_file out =
+let setup_generate sctx ~search_db ?(remap_args = Command.Args.empty) odoc_file out =
   let ctx = Super_context.context sctx in
   let odoc_support_path = Paths.odoc_support ctx in
   let command, output_dir, args =
@@ -501,6 +509,7 @@ let setup_generate sctx ~search_db odoc_file out =
       ( "html-generate"
       , Paths.html_root ctx
       , [ search_args
+        ; remap_args
         ; Command.Args.A "-o"
         ; Command.Args.Path (Path.build (Paths.html_root ctx))
         ; Command.Args.A "--support-uri"
@@ -518,9 +527,9 @@ let setup_generate sctx ~search_db odoc_file out =
   add_rule sctx run_odoc
 ;;
 
-let setup_generate_html_and_json sctx ~search_db odoc_file =
-  let* () = setup_generate sctx ~search_db:(Some search_db) odoc_file Html in
-  setup_generate sctx ~search_db:(Some search_db) odoc_file Json
+let setup_generate_html_and_json sctx ~search_db ?remap_args odoc_file =
+  let* () = setup_generate sctx ~search_db:(Some search_db) ?remap_args odoc_file Html in
+  setup_generate sctx ~search_db:(Some search_db) ?remap_args odoc_file Json
 ;;
 
 let setup_generate_markdown sctx odoc_file =
@@ -951,12 +960,12 @@ let search_db_for_lib sctx lib =
   Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
 ;;
 
-let setup_lib_html_rules sctx ~search_db lib =
+let setup_lib_html_rules sctx ~search_db ?remap_args lib =
   let target = Lib lib in
   let* odocs = odoc_artefacts sctx target in
   let* () =
     Memo.parallel_iter odocs ~f:(fun odoc ->
-      setup_generate_html_and_json sctx ~search_db odoc)
+      setup_generate_html_and_json sctx ~search_db ?remap_args odoc)
   in
   Memo.With_implicit_output.exec setup_lib_html_rules_def (sctx, lib)
 ;;
@@ -975,9 +984,14 @@ let setup_pkg_html_rules_def =
       let odocls = List.map all_odocs ~f:(fun artefact -> artefact.odocl_file) in
       Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
     in
-    let* () = Memo.parallel_iter libs ~f:(setup_lib_html_rules sctx ~search_db) in
+    let remap_args = Command.Args.Dyn (Odoc_voodoo.remap_args ctx) in
     let* () =
-      Memo.parallel_iter pkg_odocs ~f:(setup_generate_html_and_json ~search_db sctx)
+      Memo.parallel_iter libs ~f:(setup_lib_html_rules sctx ~search_db ~remap_args)
+    in
+    let* () =
+      Memo.parallel_iter
+        pkg_odocs
+        ~f:(setup_generate_html_and_json ~search_db ~remap_args sctx)
     in
     let* () = add_format_alias_deps ctx Html (Pkg pkg) all_odocs in
     add_format_alias_deps ctx Json (Pkg pkg) all_odocs
@@ -1320,5 +1334,13 @@ let gen_rules sctx ~dir rest =
            setup_pkg_html_rules sctx ~pkg:name ~for_
        in
        ())
+  | [ "_voodoo" ] | [ "_voodoo"; "_odoc" ] | [ "_voodoo"; "_odoc"; "p" ] ->
+    Memo.return
+      (Build_config.Gen_rules.make
+         ~build_dir_only_sub_dirs:
+           (Build_config.Gen_rules.Build_only_sub_dirs.singleton ~dir Subdir_set.all)
+         (Memo.return Rules.empty))
+  | [ "_voodoo"; "_odoc"; "p"; pkg_name ] ->
+    Odoc_voodoo.gen_rules sctx ~dir ~pkg_name
   | _ -> Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
 ;;
