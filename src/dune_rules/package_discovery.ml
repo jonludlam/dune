@@ -87,7 +87,16 @@ let parse_changes_file ~changes_file_path contents =
       OpamStd.String.Map.fold
         (fun file track acc ->
            match track with
-           | OpamDirTrack.Added _ | OpamDirTrack.Contents_changed _ -> file :: acc
+           | OpamDirTrack.Added d | OpamDirTrack.Contents_changed d ->
+             (* opam tracks directories as well as files; a tracked
+                subdirectory (e.g. odoc-pages/deprecated) carries the literal
+                digest "D". Skip those — otherwise the asset filter below sees
+                a non-.mld path under odoc-pages and misclassifies the
+                directory as an asset, which odoc then rejects with
+                "ERROR: Is a directory". *)
+             if String.equal (OpamDirTrack.string_of_digest d) "D"
+             then acc
+             else file :: acc
            | _ -> acc)
         changed
         []
