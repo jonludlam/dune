@@ -142,10 +142,10 @@ module Index = struct
       let info = Lib.Local.info lib in
       Lib_info.package info
     with
-    | None -> [ Private_lib (Odoc.lib_unique_name (lib :> Lib.t)) ]
+    | None -> [ Private_lib (Odoc_scope.lib_unique_name (lib :> Lib.t)) ]
     | Some _pkg ->
       (match Lib_name.analyze (Lib.name (lib :> Lib.t)) with
-       | Private (_, _) -> [ Private_lib (Odoc.lib_unique_name (lib :> Lib.t)) ]
+       | Private (_, _) -> [ Private_lib (Odoc_scope.lib_unique_name (lib :> Lib.t)) ]
        | Public (pkg, rest) ->
          List.fold_left
            ~f:(fun acc s -> Sub_dir s :: acc)
