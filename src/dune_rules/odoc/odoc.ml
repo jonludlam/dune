@@ -176,17 +176,44 @@ let run_odoc sctx ~dir command ~quiet ~flags_for args =
         [ A command; Dyn base_flags; S args ]
 ;;
 
-let module_deps (m : Module.t) ~obj_dir ~(dep_graphs : Dep_graph.Ml_kind.t) =
-  Action_builder.dyn_paths_unit
-    (let open Action_builder.O in
-     let+ deps =
-       if Module.has m ~ml_kind:Intf
-       then Dep_graph.deps_of dep_graphs.intf m
-       else
-         (* When a module has no .mli, use the dependencies for the .ml *)
-         Dep_graph.deps_of dep_graphs.impl m
-     in
-     List.map deps ~f:(fun m -> Path.build (Obj_dir.Module.odoc obj_dir m)))
+let parse_odoc_deps lines =
+  List.filter_map lines ~f:(fun line ->
+    match String.split ~on:' ' line with
+    | [ m; _hash ] -> Some (Module_name.of_checked_string m)
+    | _ -> None)
+;;
+
+(* [odoc_file_by_module] maps a module name to the path of that module's
+   compiled .odoc file. It is used to translate the module names reported by
+   [odoc compile-deps] into the .odoc files they refer to, so those files can
+   be declared as build dependencies of the module being compiled. *)
+let module_deps sctx (m : Module.t) ~cmti ~obj_dir ~odoc_file_by_module =
+  let ctx = Super_context.context sctx in
+  let self = Module_name.Unique.to_name (Module.obj_name m) ~loc:Loc.none in
+  let deps_output =
+    let open Action_builder.O in
+    (let* odoc = odoc_program sctx (Context.build_dir ctx) in
+     Command.run'
+       odoc
+       ~sandbox:Sandbox_config.needs_sandboxing
+       ~dir:(Path.build (Obj_dir.odoc_dir obj_dir))
+       [ A "compile-deps"; Dep (Path.build cmti) ])
+    |> Super_context.execute_action_stdout
+         sctx
+         ~loc:Loc.none
+         ~dir:(Obj_dir.odoc_dir obj_dir)
+    |> Action_builder.of_memo
+  in
+  let open Action_builder.O in
+  let* lines = deps_output >>| String.split_lines in
+  let deps =
+    parse_odoc_deps lines
+    |> List.filter_map ~f:(fun dep_mod ->
+      if Module_name.equal dep_mod self
+      then None
+      else Module_name.Map.find odoc_file_by_module dep_mod)
+  in
+  Dune_engine.Dep.Set.of_files deps |> Action_builder.deps
 ;;
 
 let compile_module
@@ -194,11 +221,20 @@ let compile_module
       ~obj_dir
       (m : Module.t)
       ~includes:(file_deps, iflags)
-      ~dep_graphs
+      ~odoc_file_by_module
       ~pkg_or_lnu
       ~mode
   =
   let odoc_file = Obj_dir.Module.odoc obj_dir m in
+  let cmti =
+    Obj_dir.Module.cmti_file
+      ~cm_kind:
+        (match mode with
+         | Compilation_mode.Ocaml -> Ocaml Cmi
+         | Melange -> Melange Cmi)
+      obj_dir
+      m
+  in
   let+ () =
     let action_with_targets =
       let doc_dir = Path.build (Obj_dir.odoc_dir obj_dir) in
@@ -215,20 +251,13 @@ let compile_module
           ; As [ "--pkg"; pkg_or_lnu ]
           ; A "-o"
           ; Target odoc_file
-          ; Dep
-              (Path.build
-                 (Obj_dir.Module.cmti_file
-                    ~cm_kind:
-                      (match mode with
-                       | Compilation_mode.Ocaml -> Ocaml Cmi
-                       | Melange -> Melange Cmi)
-                    obj_dir
-                    m))
+          ; Dep (Path.build cmti)
           ]
       in
       let open Action_builder.With_targets.O in
       Action_builder.with_no_targets file_deps
-      >>> Action_builder.with_no_targets (module_deps m ~obj_dir ~dep_graphs)
+      >>> Action_builder.with_no_targets
+            (module_deps sctx m ~cmti ~obj_dir ~odoc_file_by_module)
       >>> run_odoc
     in
     add_rule sctx action_with_targets
@@ -320,19 +349,18 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
     in
     Dep.deps ctx package requires, odoc_include_flags
   in
+  let odoc_file_by_module =
+    Modules.With_vlib.drop_vlib modules
+    |> Modules.fold ~init:Module_name.Map.empty ~f:(fun m acc ->
+      let name = Module_name.Unique.to_name (Module.obj_name m) ~loc:Loc.none in
+      Module_name.Map.set acc name (Path.build (Obj_dir.Module.odoc obj_dir m)))
+  in
   modules
   |> Modules.With_vlib.drop_vlib
   |> Modules.fold ~init:[] ~f:(fun m acc ->
     let compiled =
       let for_ = Compilation_context.for_ cctx in
-      compile_module
-        sctx
-        ~includes
-        ~dep_graphs:(Compilation_context.dep_graphs cctx)
-        ~obj_dir
-        ~pkg_or_lnu
-        ~mode:for_
-        m
+      compile_module sctx ~includes ~obj_dir ~odoc_file_by_module ~pkg_or_lnu ~mode:for_ m
     in
     compiled :: acc)
   |> Memo.all_concurrently
