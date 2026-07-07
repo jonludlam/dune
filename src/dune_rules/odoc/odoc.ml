@@ -1,14 +1,11 @@
 open Import
 open Memo.O
 open Odoc_scope
+open Odoc_target
 module Gen_rules = Build_config.Gen_rules
 
 let ( ++ ) = Path.Build.relative
 let mld_ext = Filename.Extension.of_string_exn ".mld"
-
-type target =
-  | Lib of Lib.Local.t
-  | Pkg of Package.Name.t
 
 let add_rule sctx =
   let dir = Super_context.context sctx |> Context.build_dir in
