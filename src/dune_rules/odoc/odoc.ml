@@ -273,24 +273,16 @@ let compile_page sctx artifact ~includes =
   odoc_file
 ;;
 
-let odoc_include_flags ctx pkg requires =
+let odoc_include_flags ctx requires =
   Resolve.args
     (let open Resolve.O in
      let+ paths =
        let+ libs = requires in
-       let paths =
-         List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
-           match Lib.Local.of_lib lib with
-           | None -> paths
-           | Some lib ->
-             Path.Set.add paths (Path.build (Paths.odocs ctx (lib_target lib))))
-       in
-       let paths =
-         match pkg with
-         | Some p -> Path.Set.add paths (Path.build (Paths.odocs ctx (Pkg p)))
+       List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
+         match Lib.Local.of_lib lib with
          | None -> paths
-       in
-       Path.Set.to_list paths
+         | Some lib -> Path.Set.add paths (Path.build (Paths.odocs ctx (lib_target lib))))
+       |> Path.Set.to_list
      in
      Command.Args.S
        (List.concat_map paths ~f:(fun dir -> [ Command.Args.A "-I"; Path dir ])))
@@ -344,7 +336,7 @@ let setup_library_odoc_rules_def =
         let* dep_odocs = Action_builder.of_memo (lib_odoc_files sctx dep_libs) in
         Action_builder.deps (Dune_engine.Dep.Set.of_files dep_odocs)
       in
-      Memo.return (file_deps, Command.Args.memo (odoc_include_flags ctx None include_libs))
+      Memo.return (file_deps, Command.Args.memo (odoc_include_flags ctx include_libs))
     in
     let odoc_file_by_module =
       List.fold_left module_artifacts ~init:Module_name.Map.empty ~f:(fun acc a ->
@@ -553,11 +545,51 @@ let odoc_artefacts : type a. _ -> a Odoc_target.t -> _ =
   | Private_lib (_, lib) -> module_artifacts target lib
 ;;
 
+(* Include flags for [odoc link]. Unlike compile (which uses a flat -I search
+   path), link uses odoc's driver flags: -L <library>:<dir> for each dependency
+   library and -P <package>:<dir> for the package. These carry the library /
+   package identity, so a reference like {!/<lib>/M} resolves within that
+   library -- disambiguating modules with the same name across sibling
+   libraries. --custom-layout disables odoc's "paths must be disjoint" check,
+   which is needed while libraries in a package still share one _odoc/<pkg>
+   directory (they get their own directory once the hierarchy is flipped). *)
+let link_include_flags ctx pkg requires =
+  Resolve.args
+    (let open Resolve.O in
+     let+ libs = requires in
+     let lib_args =
+       List.concat_map libs ~f:(fun lib ->
+         match Lib.Local.of_lib lib with
+         | None -> []
+         | Some local ->
+           [ Command.Args.A "-L"
+           ; Command.Args.Concat
+               ( ":"
+               , [ Command.Args.A (Lib_name.to_string (Lib.name lib))
+                 ; Command.Args.Path (Path.build (Paths.odocs ctx (lib_target local)))
+                 ] )
+           ])
+     in
+     let pkg_args =
+       match pkg with
+       | None -> []
+       | Some p ->
+         [ Command.Args.A "-P"
+         ; Command.Args.Concat
+             ( ":"
+             , [ Command.Args.A (Package.Name.to_string p)
+               ; Command.Args.Path (Path.build (Paths.odocs ctx (Pkg p)))
+               ] )
+         ]
+     in
+     Command.Args.S ((Command.Args.A "--custom-layout" :: lib_args) @ pkg_args))
+;;
+
 let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
   let ctx = Super_context.context sctx in
   (* Link resolves all references, so depend on every dependency library's .odoc
-     files (and the package pages) explicitly, so they are materialised for -I
-     under sandboxing. *)
+     files (and the package pages) explicitly, so they are materialised for the
+     -L/-P search paths under sandboxing. *)
   let deps =
     let open Action_builder.O in
     let* libs = Resolve.read requires in
@@ -580,7 +612,7 @@ let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
       "link"
       ~quiet:false
       ~flags_for:(Some (Odoc_artifact.odoc_file ctx odoc_file))
-      [ odoc_include_flags ctx pkg requires
+      [ link_include_flags ctx pkg requires
       ; A "-o"
       ; Target (Odoc_artifact.odocl_file ctx odoc_file)
       ; Dep (Path.build (Odoc_artifact.odoc_file ctx odoc_file))
@@ -656,17 +688,24 @@ let setup_pkg_odocl_rules_def =
     let* libs =
       Super_context.context sctx |> Context.name |> Odoc_discovery.libs_of_pkg ~pkg
     in
-    let* requires =
+    let* pkg_requires =
       let libs = (libs :> Lib.t list) in
       Lib.closure libs ~linking:false ~for_
     in
-    let* () = Memo.parallel_iter libs ~f:(setup_lib_odocl_rules sctx ~requires)
+    let* () =
+      (* Link each library against its own closure, not the whole package's:
+         a library that does not depend on a sibling must not have the sibling's
+         _odoc directory on -I, otherwise same-named modules across sibling
+         libraries become ambiguous (see conflicting-modules #1645). *)
+      Memo.parallel_iter libs ~f:(fun lib ->
+        let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false ~for_ in
+        setup_lib_odocl_rules sctx lib ~requires)
     and* _ =
       let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
       let pkg = Some pkg in
       let+ () =
         Memo.parallel_iter pkg_odocs ~f:(fun odoc ->
-          link_odoc_rules sctx ~pkg ~requires odoc)
+          link_odoc_rules sctx ~pkg ~requires:pkg_requires odoc)
       in
       pkg_odocs
     and* _ =
@@ -881,15 +920,23 @@ let default_index ~pkg entry_modules =
     Lib_name.compare (name x) (name y))
   |> List.iter ~f:(fun (lib, modules) ->
     let lib = Lib.Local.to_lib lib in
-    Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string (Lib.name lib));
+    let lib_name = Lib_name.to_string (Lib.name lib) in
+    (* References are rooted at the library ([{!/<lib>/M}]) so they resolve via
+       the [-L <lib>:<dir>] flags passed at link time, disambiguating modules
+       with the same name in sibling libraries. *)
+    Printf.bprintf b "{1 Library %s}\n" lib_name;
     Buffer.add_string
       b
       (match modules with
        | [ x ] ->
          sprintf
-           "The entry point of this library is the module:\n{!module-%s}.\n"
+           "The entry point of this library is the module:\n{!/%s/module-%s}.\n"
+           lib_name
            (Module_name.to_string (Module.name x))
        | _ ->
+         (* [{!modules:...}] only accepts bare module names, not library-rooted
+            paths, so it is left unqualified; it resolves as long as the listed
+            modules are not also defined in a sibling library. *)
          sprintf
            "This library exposes the following toplevel modules:\n{!modules:%s}\n"
            (modules

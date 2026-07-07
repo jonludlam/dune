@@ -54,11 +54,11 @@ This test if `.odocl` files are generated
   {!modules:Foo Foo2}
   {1 Library foo.byte}
   The entry point of this library is the module:
-  {!module-Foo_byte}.
+  {!/foo.byte/module-Foo_byte}.
 
   $ PATH=$(realpath ./_path) dune build @bar-mld
   {0 bar index}
   {1 Library bar}
   The entry point of this library is the module:
-  {!module-Bar}.
+  {!/bar/module-Bar}.
 
