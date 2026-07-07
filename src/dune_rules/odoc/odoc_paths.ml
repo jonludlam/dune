@@ -19,9 +19,8 @@ module Paths = struct
 
   let odocs : type a. Context.t -> a Odoc_target.t -> Path.Build.t =
     fun ctx -> function
-    | Lib (_, lib) | Private_lib (_, lib) ->
-      let obj_dir = Lib.Local.obj_dir lib in
-      Obj_dir.odoc_dir obj_dir
+    | Lib (pkg, _) -> root ctx ++ "_odoc" ++ Package.Name.to_string pkg
+    | Private_lib (lib_unique_name, _) -> root ctx ++ "_odoc" ++ lib_unique_name
     | Pkg pkg -> root ctx ++ "_odoc" ++ "pkg" ++ Package.Name.to_string pkg
   ;;
 
