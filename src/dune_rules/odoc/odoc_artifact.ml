@@ -26,6 +26,12 @@ let make : type a. source:Path.Build.t -> a -> a Odoc_target.t -> t =
 let get_kind t = t.kind
 let source_file t = t.source
 
+let visible t =
+  match t.kind with
+  | Module (mod_, _) -> mod_.Odoc_target.visible
+  | Page _ -> true
+;;
+
 (* The basename of a module's artifacts is that of its source (the mangled
    object name, e.g. [foo__Bar]); a page's comes from its page name, which may
    differ from its source file name. *)

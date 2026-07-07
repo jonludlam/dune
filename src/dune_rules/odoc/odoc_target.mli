@@ -1,7 +1,14 @@
 open Import
 
 type page = { name : string }
-type mod_ = { module_name : Module_name.t }
+
+(** [visible] is true for a library's entry modules: the modules to link and
+    render. The remaining modules (e.g. the mangled modules of a wrapped
+    library) are only compiled, for odoc to resolve references through them. *)
+type mod_ =
+  { module_name : Module_name.t
+  ; visible : bool
+  }
 
 (** A documentation target: the scope a set of documentation artifacts belongs
     to. Public libraries are identified by their package and library; private

@@ -17,6 +17,12 @@ val make : source:Path.Build.t -> 'a -> 'a Odoc_target.t -> t
 
 val get_kind : t -> kind
 val source_file : t -> Path.Build.t
+
+(** Whether the artifact should be linked and rendered. Modules that are not
+    entry modules of their library are compiled but never linked; pages are
+    always visible. *)
+val visible : t -> bool
+
 val odoc_dir : Context.t -> t -> Path.Build.t
 val odoc_file : Context.t -> t -> Path.Build.t
 val odocl_file : Context.t -> t -> Path.Build.t
