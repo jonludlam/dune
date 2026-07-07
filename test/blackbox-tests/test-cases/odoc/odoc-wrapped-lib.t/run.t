@@ -7,7 +7,7 @@ This test generates documentation for non-hidden modules only for a library:
   _build/default/_doc/_odoc/foo/foo.odoc
   _build/default/_doc/_odoc/foo/foo__.odoc
   _build/default/_doc/_odoc/foo/foo__Bar.odoc
-  _build/default/_doc/_odoc/pkg/foo/page-index.odoc
+  _build/default/_doc/_odoc/foo/page-index.odoc
 
  Hidden modules should not be linked
   $ find _build/default -name '*.odocl' | sort -n

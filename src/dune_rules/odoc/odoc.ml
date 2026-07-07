@@ -243,21 +243,29 @@ let compile_module
   odoc_file
 ;;
 
-let compile_page sctx artifact ~includes ~pkg =
+let compile_page sctx artifact ~includes =
   let ctx = Super_context.context sctx in
   let odoc_file = Odoc_artifact.odoc_file ctx artifact in
   let odoc_input = Odoc_artifact.source_file artifact in
+  let odoc_root = Paths.odoc_root ctx in
+  let parent_id =
+    Path.reach
+      (Path.build (Odoc_artifact.odoc_dir ctx artifact))
+      ~from:(Path.build odoc_root)
+  in
   let run_odoc =
     run_odoc
       sctx
-      ~dir:(Path.build (Odoc_artifact.odoc_dir ctx artifact))
+      ~dir:(Path.build odoc_root)
       "compile"
       ~quiet:false
       ~flags_for:(Some odoc_input)
       [ Command.Args.dyn includes
-      ; As [ "--pkg"; Package.Name.to_string pkg ]
-      ; A "-o"
-      ; Target odoc_file
+      ; A "--output-dir"
+      ; Path (Path.build odoc_root)
+      ; A "--parent-id"
+      ; A parent_id
+      ; Hidden_targets [ odoc_file ]
       ; Dep (Path.build odoc_input)
       ]
   in
@@ -317,7 +325,6 @@ let setup_library_odoc_rules_def =
     let mode = mode_of_lib local_lib in
     let* module_artifacts = lib_module_artifacts sctx local_lib in
     let lib = Lib.Local.to_lib local_lib in
-    let package = Lib_info.package info in
     let* includes =
       let* closure = Lib.closure [ lib ] ~linking:false ~for_:mode in
       let not_self l = not (Lib.equal l lib) in
@@ -331,14 +338,13 @@ let setup_library_odoc_rules_def =
          dependency libraries' .odoc files. Intra-library edges come from
          [module_deps] (compile-deps) below. No directory glob is used, so this
          is correct under sandboxing and never depends on this library's own
-         .odoc -- even now that libraries share the package's _odoc directory. *)
+         .odoc -- even though libraries share the package's _odoc directory. *)
       let file_deps =
         let open Action_builder.O in
         let* dep_odocs = Action_builder.of_memo (lib_odoc_files sctx dep_libs) in
         Action_builder.deps (Dune_engine.Dep.Set.of_files dep_odocs)
       in
-      Memo.return
-        (file_deps, Command.Args.memo (odoc_include_flags ctx package include_libs))
+      Memo.return (file_deps, Command.Args.memo (odoc_include_flags ctx None include_libs))
     in
     let odoc_file_by_module =
       List.fold_left module_artifacts ~init:Module_name.Map.empty ~f:(fun acc a ->
@@ -531,7 +537,18 @@ let odoc_artefacts : type a. _ -> a Odoc_target.t -> _ =
         | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld", "index")
         | Some _ as s -> s)
     in
-    String.Map.to_list_map mlds ~f:(fun _ (path, name) -> page_artifact pkg ~path ~name)
+    String.Map.to_list_map mlds ~f:(fun _ (path, name) ->
+      (* Pages renamed with [as] are staged under their page name (see
+         [package_mlds]); point the artifact at the staged source. *)
+      let stem =
+        Path.Build.basename path |> Filename.remove_extension |> Filename.to_string
+      in
+      let path =
+        if String.equal stem name
+        then path
+        else Paths.gen_mld_dir ctx pkg ++ (name ^ ".mld")
+      in
+      page_artifact pkg ~path ~name)
   | Lib (_, lib) -> module_artifacts target lib
   | Private_lib (_, lib) -> module_artifacts target lib
 ;;
@@ -898,6 +915,27 @@ let package_mlds =
                Path.to_string_maybe_quoted (Path.build p))
            in
            let ctx = Super_context.context sctx in
+           (* odoc derives a page's output name from its input file name, so a
+              page whose name differs from its file (renamed with [as] in the
+              documentation stanza) is first staged under its page name. *)
+           let* mlds =
+             String.Map.to_list mlds
+             |> Memo.List.map ~f:(fun (key, (path, name)) ->
+               let stem =
+                 Path.Build.basename path
+                 |> Filename.remove_extension
+                 |> Filename.to_string
+               in
+               if String.equal stem name
+               then Memo.return (key, (path, name))
+               else (
+                 let staged = Paths.gen_mld_dir ctx pkg ++ (name ^ ".mld") in
+                 let+ () =
+                   add_rule sctx (Action_builder.copy ~src:(Path.build path) ~dst:staged)
+                 in
+                 key, (staged, name)))
+             >>| String.Map.of_list_exn
+           in
            if String.Map.mem mlds "index"
            then Memo.return mlds
            else (
@@ -923,7 +961,6 @@ let setup_package_odoc_rules sctx ~pkg =
       compile_page
         sctx
         (page_artifact pkg ~path ~name)
-        ~pkg
         ~includes:(Action_builder.return []))
   in
   ()
@@ -1019,10 +1056,6 @@ let gen_rules sctx ~dir rest =
       let pkg = Package.name pkg in
       let* _mlds, rules = package_mlds sctx ~pkg in
       Rules.produce rules)
-  | [ "_odoc"; "pkg"; pkg ] ->
-    with_package pkg ~f:(fun pkg ->
-      let pkg = Package.name pkg in
-      setup_package_odoc_rules sctx ~pkg)
   | [ "_odoc"; lib_unique_name_or_pkg ] ->
     has_rules
       (let ctx = Super_context.context sctx in
@@ -1032,10 +1065,12 @@ let gen_rules sctx ~dir rest =
          let* packages = Dune_load.packages () in
          (match Package.Name.Map.find packages pkg_name with
           | Some pkg ->
-            let* libs =
-              Context.name ctx |> Odoc_discovery.libs_of_pkg ~pkg:(Package.name pkg)
+            let pkg_name = Package.name pkg in
+            let* () =
+              let* libs = Context.name ctx |> Odoc_discovery.libs_of_pkg ~pkg:pkg_name in
+              Memo.parallel_iter libs ~f:(fun lib -> setup_library_odoc_rules sctx lib)
             in
-            Memo.parallel_iter libs ~f:(fun lib -> setup_library_odoc_rules sctx lib)
+            setup_package_odoc_rules sctx ~pkg:pkg_name
           | None -> Memo.return ())
        | Scope_id.Private_lib { lib_name; project; _ } ->
          let* lib_db =

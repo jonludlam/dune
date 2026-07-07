@@ -27,7 +27,7 @@ Bar is compiled
   $ find _build/default -name '*.odoc' | sort -n
   _build/default/_doc/_odoc/l/l.odoc
   _build/default/_doc/_odoc/l/l__Bar.odoc
-  _build/default/_doc/_odoc/pkg/l/page-index.odoc
+  _build/default/_doc/_odoc/l/page-index.odoc
 
 Bar is not linked
   $ find _build/default -name '*.odocl' | sort -n
