@@ -81,9 +81,3 @@ let lib_unique_name lib =
   | Public _ -> Lib_name.to_string name
   | Private (project, _) -> Scope_key.to_string name project
 ;;
-
-let pkg_or_lnu lib =
-  match Lib_info.package (Lib.info lib) with
-  | Some p -> Package.Name.to_string p
-  | None -> lib_unique_name lib
-;;

@@ -205,27 +205,30 @@ let compile_module
       artifact
       ~includes:(file_deps, iflags)
       ~odoc_file_by_module
-      ~pkg_or_lnu
   =
   let ctx = Super_context.context sctx in
   let odoc_file = Odoc_artifact.odoc_file ctx artifact in
   let cmti = Odoc_artifact.source_file artifact in
+  let odoc_dir = Odoc_artifact.odoc_dir ctx artifact in
+  let odoc_root = Paths.odoc_root ctx in
+  let parent_id = Path.reach (Path.build odoc_dir) ~from:(Path.build odoc_root) in
   let+ () =
     let action_with_targets =
-      let doc_dir = Path.build (Odoc_artifact.odoc_dir ctx artifact) in
       let run_odoc =
         run_odoc
           sctx
-          ~dir:doc_dir
+          ~dir:(Path.build odoc_root)
           "compile"
           ~quiet:false
           ~flags_for:(Some cmti)
           [ A "-I"
-          ; Path doc_dir
+          ; Path (Path.build odoc_dir)
           ; iflags
-          ; As [ "--pkg"; pkg_or_lnu ]
-          ; A "-o"
-          ; Target odoc_file
+          ; A "--output-dir"
+          ; Path (Path.build odoc_root)
+          ; A "--parent-id"
+          ; A parent_id
+          ; Hidden_targets [ odoc_file ]
           ; Dep (Path.build cmti)
           ]
       in
@@ -308,7 +311,6 @@ let setup_library_odoc_rules_def =
   end
   in
   let f (sctx, local_lib) =
-    let pkg_or_lnu = pkg_or_lnu (Lib.Local.to_lib local_lib) in
     let ctx = Super_context.context sctx in
     let info = Lib.Local.info local_lib in
     let obj_dir = Lib_info.obj_dir info in
@@ -350,7 +352,7 @@ let setup_library_odoc_rules_def =
     in
     module_artifacts
     |> List.map ~f:(fun artifact ->
-      compile_module sctx ~includes ~obj_dir artifact ~odoc_file_by_module ~pkg_or_lnu)
+      compile_module sctx ~includes ~obj_dir artifact ~odoc_file_by_module)
     |> Memo.all_concurrently
     >>| (ignore : Path.Build.t list -> unit)
   in

@@ -16,6 +16,7 @@ module Paths = struct
 
   let odoc_support_dirname = "odoc.support"
   let root (context : Context.t) = Path.Build.relative (Context.build_dir context) "_doc"
+  let odoc_root ctx = root ctx ++ "_odoc"
 
   let odocs : type a. Context.t -> a Odoc_target.t -> Path.Build.t =
     fun ctx -> function

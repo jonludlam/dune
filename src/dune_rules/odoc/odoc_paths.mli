@@ -8,6 +8,7 @@ module Paths : sig
 
   val odoc_support_dirname : string
   val root : Context.t -> Path.Build.t
+  val odoc_root : Context.t -> Path.Build.t
   val odocs : Context.t -> 'a Odoc_target.t -> Path.Build.t
   val output_root : Context.t -> output_format -> Path.Build.t
   val html_root : Context.t -> Path.Build.t

@@ -30,6 +30,6 @@ In release mode, no error:
   (cd _build/.sandbox/$DIGEST1/default/_doc/_odoc/pkg/foo_doc && odoc compile --pkg foo_doc -o page-foo.odoc ../../../../foo_doc/foo.mld)
   File "../../../../foo_doc/foo.mld", line 4, characters 0-0:
   Warning: End of text is not allowed in '[...]' (code).
-  (cd _build/.sandbox/$DIGEST2/default/_doc/_odoc/foo_lib && odoc compile -I . -I ../pkg/foo_lib --pkg foo_lib -o foo.odoc ../../../foo_lib/.foo.objs/byte/foo.cmti)
+  (cd _build/.sandbox/$DIGEST2/default/_doc/_odoc && odoc compile -I foo_lib -I pkg/foo_lib --output-dir . --parent-id foo_lib ../../foo_lib/.foo.objs/byte/foo.cmti)
   File "foo_lib/foo.mli", line 1, characters 7-7:
   Warning: End of text is not allowed in '[...]' (code).

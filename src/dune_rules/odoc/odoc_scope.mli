@@ -25,4 +25,3 @@ module Scope_key : sig
 end
 
 val lib_unique_name : Lib.t -> string
-val pkg_or_lnu : Lib.t -> string
