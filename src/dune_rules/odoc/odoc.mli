@@ -3,7 +3,6 @@
 open Import
 
 val odoc_program : Super_context.t -> Path.Build.t -> Action.Prog.t Action_builder.t
-val odoc_files_in_dirs : Path.t list -> _ Command.Args.t
 
 val run_odoc
   :  Super_context.t

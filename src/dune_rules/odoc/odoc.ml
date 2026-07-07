@@ -16,60 +16,11 @@ module Dep : sig
   (** [format_alias output ctx target] returns the alias that depends on all
       targets produced by odoc for [target] in output format [output]. *)
   val format_alias : Output_format.t -> Context.t -> target -> Alias.t
-
-  (** [deps ctx pkg libraries] returns all odoc dependencies of [libraries]. If
-      [libraries] are all part of a package [pkg], then the odoc dependencies of
-      the package are also returned*)
-  val deps
-    :  Context.t
-    -> Package.Name.t option
-    -> Lib.t list Resolve.t
-    -> unit Action_builder.t
-
-  (*** [setup_deps ctx target odocs] Adds [odocs] as dependencies for [target].
-    These dependencies may be used using the [deps] function *)
-  val setup_deps : Context.t -> target -> Path.Set.t -> unit Memo.t
 end = struct
   let format_alias f ctx m = Output_format.alias f ~dir:(output_dir_for_format ctx f m)
-  let alias = Alias.make (Alias.Name.of_string ".odoc-all")
-
-  let deps ctx pkg requires =
-    let open Action_builder.O in
-    let* libs = Resolve.read requires in
-    Action_builder.deps
-      (let init =
-         match pkg with
-         | Some p -> Dep.Set.singleton (Dep.alias (alias ~dir:(Paths.odocs ctx (Pkg p))))
-         | None -> Dep.Set.empty
-       in
-       List.fold_left libs ~init ~f:(fun acc (lib : Lib.t) ->
-         match Lib.Local.of_lib lib with
-         | None -> acc
-         | Some lib ->
-           let dir = Paths.odocs ctx (Lib lib) in
-           let alias = alias ~dir in
-           Dep.Set.add acc (Dep.alias alias)))
-  ;;
-
-  let alias ctx m = alias ~dir:(Paths.odocs ctx m)
-
-  let setup_deps ctx m files =
-    Rules.Produce.Alias.add_deps (alias ctx m) (Action_builder.path_set files)
-  ;;
 end
 
 let odoc_ext = ".odoc"
-
-let odoc_files_in_dirs dirs =
-  let predicate =
-    Glob.matching_extensions [ Filename.Extension.odoc ] |> Predicate_lang.Glob.of_glob
-  in
-  Command.Args.Hidden_deps
-    (List.fold_left dirs ~init:Dune_engine.Dep.Set.empty ~f:(fun deps dir ->
-       File_selector.of_predicate_lang ~dir predicate
-       |> Dune_engine.Dep.file_selector
-       |> Dune_engine.Dep.Set.add deps))
-;;
 
 module Mld : sig
   type t
@@ -305,31 +256,24 @@ let odoc_include_flags ctx pkg requires =
        Path.Set.to_list paths
      in
      Command.Args.S
-       (odoc_files_in_dirs paths
-        :: List.concat_map paths ~f:(fun dir -> [ Command.Args.A "-I"; Path dir ])))
+       (List.concat_map paths ~f:(fun dir -> [ Command.Args.A "-I"; Path dir ])))
 ;;
 
-let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
-  let ctx = Super_context.context sctx in
-  let deps = Dep.deps ctx pkg requires in
-  let dir = Path.build (Path.Build.parent_exn (Odoc_artifact.odocl_file ctx odoc_file)) in
-  let run_odoc =
-    run_odoc
-      sctx
-      ~dir
-      "link"
-      ~quiet:false
-      ~flags_for:(Some (Odoc_artifact.odoc_file odoc_file))
-      [ odoc_include_flags ctx pkg requires
-      ; A "-o"
-      ; Target (Odoc_artifact.odocl_file ctx odoc_file)
-      ; Dep (Path.build (Odoc_artifact.odoc_file odoc_file))
-      ]
-  in
-  add_rule
-    sctx
-    (let open Action_builder.With_targets.O in
-     Action_builder.with_no_targets deps >>> run_odoc)
+(* All module .odoc files of the given local libraries. Declared as explicit
+   file dependencies (rather than a directory glob) so that odoc can resolve
+   references under sandboxing while never depending on the compiling library's
+   own directory contents. *)
+let lib_odoc_files sctx libs =
+  Memo.List.concat_map libs ~f:(fun lib ->
+    let obj_dir = Lib.Local.obj_dir lib in
+    let for_ =
+      Lib_info.modes (Lib.Local.info lib)
+      |> Compilation_mode.Set.of_lib_mode_set
+      |> Compilation_mode.Set.for_merlin
+    in
+    let+ modules = Dir_contents.modules_of_local_lib sctx lib ~for_ in
+    Modules.fold modules ~init:[] ~f:(fun m acc ->
+      Path.build (Obj_dir.Module.odoc obj_dir m) :: acc))
 ;;
 
 let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
@@ -342,12 +286,23 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let obj_dir = Compilation_context.obj_dir cctx in
   let modules = Compilation_context.modules cctx in
   let* includes =
-    let+ requires = Compilation_context.requires_compile cctx in
+    let* requires = Compilation_context.requires_compile cctx in
     let package = Lib_info.package info in
-    let odoc_include_flags =
-      Command.Args.memo (odoc_include_flags ctx package requires)
+    let* dep_libs =
+      let+ libs = Resolve.read_memo requires in
+      List.filter_map libs ~f:Lib.Local.of_lib
+      |> List.filter ~f:(fun l -> not (Lib.Local.equal l local_lib))
     in
-    Dep.deps ctx package requires, odoc_include_flags
+    (* Cross-library edges are resolved via -I plus explicit file deps on the
+       dependency libraries' .odoc files. Intra-library edges come from
+       [module_deps] (compile-deps) below. No directory glob is used, so this is
+       correct under sandboxing and never depends on this library's own .odoc. *)
+    let file_deps =
+      let open Action_builder.O in
+      let* dep_odocs = Action_builder.of_memo (lib_odoc_files sctx dep_libs) in
+      Action_builder.deps (Dune_engine.Dep.Set.of_files dep_odocs)
+    in
+    Memo.return (file_deps, Command.Args.memo (odoc_include_flags ctx package requires))
   in
   let odoc_file_by_module =
     Modules.With_vlib.drop_vlib modules
@@ -364,8 +319,7 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
     in
     compiled :: acc)
   |> Memo.all_concurrently
-  >>| Path.Set.of_list_map ~f:(fun (_, p) -> Path.build p)
-  >>= Dep.setup_deps ctx (Lib local_lib)
+  >>| (ignore : (Module.t * Path.Build.t) list -> unit)
 ;;
 
 let odoc_output_targets sctx odoc_file (out : Output_format.t) ~output_dir =
@@ -534,6 +488,45 @@ let odoc_artefacts sctx target =
     let+ modules = Odoc_discovery.entry_modules_by_lib sctx lib in
     List.map modules ~f:(fun m ->
       Obj_dir.Module.odoc obj_dir m |> Odoc_artifact.make ~target)
+;;
+
+let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
+  let ctx = Super_context.context sctx in
+  (* Link resolves all references, so depend on every dependency library's .odoc
+     files (and the package pages) explicitly, so they are materialised for -I
+     under sandboxing. *)
+  let deps =
+    let open Action_builder.O in
+    let* libs = Resolve.read requires in
+    let local_libs = List.filter_map libs ~f:Lib.Local.of_lib in
+    let* lib_files = Action_builder.of_memo (lib_odoc_files sctx local_libs) in
+    let* pkg_files =
+      match pkg with
+      | None -> Action_builder.return []
+      | Some p ->
+        let+ arts = Action_builder.of_memo (odoc_artefacts sctx (Pkg p)) in
+        List.map arts ~f:(fun a -> Path.build (Odoc_artifact.odoc_file a))
+    in
+    Action_builder.deps (Dune_engine.Dep.Set.of_files (lib_files @ pkg_files))
+  in
+  let dir = Path.build (Path.Build.parent_exn (Odoc_artifact.odocl_file ctx odoc_file)) in
+  let run_odoc =
+    run_odoc
+      sctx
+      ~dir
+      "link"
+      ~quiet:false
+      ~flags_for:(Some (Odoc_artifact.odoc_file odoc_file))
+      [ odoc_include_flags ctx pkg requires
+      ; A "-o"
+      ; Target (Odoc_artifact.odocl_file ctx odoc_file)
+      ; Dep (Path.build (Odoc_artifact.odoc_file odoc_file))
+      ]
+  in
+  add_rule
+    sctx
+    (let open Action_builder.With_targets.O in
+     Action_builder.with_no_targets deps >>> run_odoc)
 ;;
 
 let setup_lib_odocl_rules_def =
@@ -878,7 +871,7 @@ let setup_package_odoc_rules sctx ~pkg =
   let ctx = Super_context.context sctx in
   (* CR-someday jeremiedimino: it is weird that we drop the [Package.t] and go
      back to a package name here. Need to try and change that one day. *)
-  let* odocs =
+  let+ (_ : Path.Build.t list) =
     String.Map.values mlds
     |> Memo.parallel_map ~f:(fun (path, name) ->
       compile_mld
@@ -888,7 +881,7 @@ let setup_package_odoc_rules sctx ~pkg =
         ~doc_dir:(Paths.odocs ctx (Pkg pkg))
         ~includes:(Action_builder.return []))
   in
-  Path.Set.of_list_map ~f:Path.build odocs |> Dep.setup_deps ctx (Pkg pkg)
+  ()
 ;;
 
 let gen_project_rules sctx project =

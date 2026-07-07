@@ -814,6 +814,17 @@ let parent_args parent_opt =
     ]
 ;;
 
+let odoc_files_in_dirs dirs =
+  let predicate =
+    Glob.matching_extensions [ Filename.Extension.odoc ] |> Predicate_lang.Glob.of_glob
+  in
+  Command.Args.Hidden_deps
+    (List.fold_left dirs ~init:Dune_engine.Dep.Set.empty ~f:(fun deps dir ->
+       File_selector.of_predicate_lang ~dir predicate
+       |> Dune_engine.Dep.file_selector
+       |> Dune_engine.Dep.Set.add deps))
+;;
+
 (* Given a list of dependency libraries, construct the command line options
    to odoc to use them. *)
 let odoc_include_flags ctx all maps pkg requires indices =
@@ -845,7 +856,7 @@ let odoc_include_flags ctx all maps pkg requires indices =
   in
   let paths = Path.Set.to_list paths in
   Command.Args.S
-    (Odoc.odoc_files_in_dirs paths
+    (odoc_files_in_dirs paths
      :: List.concat_map paths ~f:(fun dir -> [ Command.Args.A "-I"; Path dir ]))
 ;;
 
