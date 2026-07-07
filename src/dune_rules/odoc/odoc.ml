@@ -6,7 +6,6 @@ open Odoc_paths
 module Gen_rules = Build_config.Gen_rules
 
 let ( ++ ) = Path.Build.relative
-let mld_ext = Filename.Extension.of_string_exn ".mld"
 
 let add_rule sctx =
   let dir = Super_context.context sctx |> Context.build_dir in
@@ -475,195 +474,13 @@ let setup_css_rule sctx =
   add_rule sctx run_odoc
 ;;
 
-let sp = Printf.sprintf
-
-module Toplevel_index = struct
-  type item =
-    { name : string
-    ; version : Package_version.t option
-    ; link : string
-    }
-
-  let of_packages packages output_format =
-    Package.Name.Map.to_list_map packages ~f:(fun name package ->
-      let name = Package.Name.to_string name in
-      let extension =
-        match (output_format : Output_format.t) with
-        | Markdown -> "md"
-        | Html | Json -> "html"
-      in
-      { name; version = Package.version package; link = sp "%s/index.%s" name extension })
-  ;;
-
-  let html_list_items t =
-    List.map t ~f:(fun { name; version; link } ->
-      let link = sp {|<a href="%s">%s</a>|} link name in
-      let version_suffix =
-        match version with
-        | None -> ""
-        | Some v -> sp {| <span class="version">%s</span>|} (Package_version.to_string v)
-      in
-      sp "<li>%s%s</li>" link version_suffix)
-    |> String.concat ~sep:"\n      "
-  ;;
-
-  let html t =
-    sp
-      {|<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
-  <head>
-    <title>index</title>
-    <link rel="stylesheet" href="./%s/odoc.css"/>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  </head>
-  <body>
-    <main class="content">
-      <div class="by-name">
-      <h2>OCaml package documentation</h2>
-      <ol>
-      %s
-      </ol>
-      </div>
-    </main>
-  </body>
-</html>|}
-      Paths.odoc_support_dirname
-      (html_list_items t)
-  ;;
-
-  let string_to_json s = `String s
-  let list_to_json ~f l = `List (List.map ~f l)
-
-  let option_to_json ~f = function
-    | None -> `Null
-    | Some x -> f x
-  ;;
-
-  let item_to_json { name; version; link } =
-    `Assoc
-      [ "name", string_to_json name
-      ; ( "version"
-        , Option.map ~f:Package_version.to_string version
-          |> option_to_json ~f:string_to_json )
-      ; "link", string_to_json link
-      ]
-  ;;
-
-  (** This format is public API. *)
-  let to_json items = `Assoc [ "packages", list_to_json items ~f:item_to_json ]
-
-  let json t = Json.to_string (to_json t)
-
-  let markdown t =
-    let b = Buffer.create 256 in
-    Buffer.add_string b "# OCaml Package Documentation\n\n";
-    List.iter t ~f:(fun { name; version; link } ->
-      Buffer.add_string b (sp "- [%s](%s)" name link);
-      (match version with
-       | None -> ()
-       | Some v -> Buffer.add_string b (sp " (version %s)" (Package_version.to_string v)));
-      Buffer.add_char b '\n');
-    Buffer.contents b
-  ;;
-
-  let content (output : Output_format.t) t =
-    match output with
-    | Html -> html t
-    | Json -> json t
-    | Markdown -> markdown t
-  ;;
-end
-
 let setup_toplevel_index_rule sctx output =
   let* packages = Dune_load.packages () in
-  let index = Toplevel_index.of_packages packages output in
-  let content = Toplevel_index.content output index in
+  let index = Odoc_discovery.Toplevel_index.of_packages packages output in
+  let content = Odoc_discovery.Toplevel_index.content output index in
   let ctx = Super_context.context sctx in
   let path = Output_format.toplevel_index_path output ctx in
   add_rule sctx (Action_builder.write_file path content)
-;;
-
-let libs_of_pkg ctx ~pkg =
-  let+ { Scope.DB.Lib_entry.Set.libraries; _ } =
-    Scope.DB.lib_entries_of_package ctx pkg
-  in
-  (* Filter out all implementations of virtual libraries *)
-  List.filter_map libraries ~f:(fun lib ->
-    match Lib.Local.to_lib lib |> Lib.info |> Lib_info.implements with
-    | None -> Some lib
-    | Some _ -> None)
-;;
-
-let entry_modules_by_lib sctx lib =
-  let info = Lib.Local.info lib in
-  let for_merlin =
-    Compilation_mode.Set.of_lib_mode_set (Lib_info.modes info)
-    |> Compilation_mode.Set.for_merlin
-  in
-  Dir_contents.modules_of_local_lib sctx lib ~for_:for_merlin >>| Modules.entry_modules
-;;
-
-let entry_modules sctx ~pkg =
-  let* l =
-    Super_context.context sctx
-    |> Context.name
-    |> libs_of_pkg ~pkg
-    >>| List.filter ~f:(fun lib ->
-      Lib.Local.info lib |> Lib_info.status |> Lib_info.Status.is_private |> not)
-  in
-  let+ l =
-    Memo.parallel_map l ~f:(fun l ->
-      let+ m = entry_modules_by_lib sctx l in
-      l, m)
-  in
-  Lib.Local.Map.of_list_exn l
-;;
-
-let check_mlds_no_dupes ~pkg ~mlds ~path_to_string =
-  match
-    List.rev_map mlds ~f:(fun ((_path, mld_name) as mld) -> mld_name, mld)
-    |> String.Map.of_list
-  with
-  | Ok m -> m
-  | Error (_, (p1, _name1), (p2, _name2)) ->
-    User_error.raise
-      [ Pp.textf
-          "Package %s has two mld's with the same basename %s, %s"
-          (Package.Name.to_string pkg)
-          (path_to_string p1)
-          (path_to_string p2)
-      ]
-;;
-
-let report_warnings warnings =
-  match warnings with
-  | [] -> ()
-  | _ :: _ ->
-    let l =
-      warnings
-      |> List.map ~f:(fun (mld : Doc_sources.mld) -> Path.Local.to_string mld.in_doc)
-      |> List.sort ~compare:String.compare
-      |> String.concat ~sep:", "
-    in
-    User_warning.emit
-      [ Pp.textf
-          "Dune does not yet support building documentation for assets, and mlds in a \
-           non-flat hierarchy. Ignoring %s."
-          l
-      ]
-;;
-
-let mlds sctx pkg =
-  let+ mlds = Packages.mlds sctx pkg in
-  List.partition_map mlds ~f:(fun (mld : Doc_sources.mld) ->
-    match Path.Local.explode mld.in_doc with
-    | [ name ] ->
-      let ext = Filename.extension name in
-      if Filename.Extension.Or_empty.check ext mld_ext
-      then Left (mld.path, Filename.remove_extension name |> Filename.to_string)
-      else Right mld
-    | _ -> Right mld)
 ;;
 
 let odoc_artefacts sctx target =
@@ -672,9 +489,9 @@ let odoc_artefacts sctx target =
   match target with
   | Pkg pkg ->
     let+ mlds =
-      let+ mlds, _ = mlds sctx pkg in
+      let+ mlds, _ = Odoc_discovery.mlds sctx pkg in
       let mlds =
-        check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
+        Odoc_discovery.check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
           Path.to_string_maybe_quoted (Path.build p))
       in
       String.Map.update mlds "index" ~f:(function
@@ -686,7 +503,7 @@ let odoc_artefacts sctx target =
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
-    let+ modules = entry_modules_by_lib sctx lib in
+    let+ modules = Odoc_discovery.entry_modules_by_lib sctx lib in
     List.map modules ~f:(fun m ->
       Obj_dir.Module.odoc obj_dir m |> Odoc_artifact.make ~target)
 ;;
@@ -752,7 +569,9 @@ let setup_pkg_rules_def memo_name f =
 
 let setup_pkg_odocl_rules_def =
   let f (sctx, pkg, for_) =
-    let* libs = Super_context.context sctx |> Context.name |> libs_of_pkg ~pkg in
+    let* libs =
+      Super_context.context sctx |> Context.name |> Odoc_discovery.libs_of_pkg ~pkg
+    in
     let* requires =
       let libs = (libs :> Lib.t list) in
       Lib.closure libs ~linking:false ~for_
@@ -852,7 +671,7 @@ let setup_lib_html_rules sctx ~search_db lib =
 let setup_pkg_html_rules_def =
   let f (sctx, pkg, _for_) =
     let ctx = Super_context.context sctx in
-    let* libs = Context.name ctx |> libs_of_pkg ~pkg in
+    let* libs = Context.name ctx |> Odoc_discovery.libs_of_pkg ~pkg in
     let dir = Paths.html ctx (Pkg pkg) in
     let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
     let* lib_odocs =
@@ -892,7 +711,7 @@ let setup_lib_markdown_rules sctx lib =
 
 let setup_pkg_markdown_rules sctx ~pkg =
   let ctx = Super_context.context sctx in
-  let* libs = Context.name ctx |> libs_of_pkg ~pkg in
+  let* libs = Context.name ctx |> Odoc_discovery.libs_of_pkg ~pkg in
   let* all_odocs =
     let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
     let+ lib_odocs =
@@ -951,7 +770,9 @@ let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.
     Rules.Produce.Alias.add_deps alias deps
   | Html | Json ->
     let* libs =
-      Context.name ctx |> libs_of_pkg ~pkg:name >>| List.map ~f:(fun lib -> Lib lib)
+      Context.name ctx
+      |> Odoc_discovery.libs_of_pkg ~pkg:name
+      >>| List.map ~f:(fun lib -> Lib lib)
     in
     let deps =
       Pkg name :: libs
@@ -1002,10 +823,10 @@ let package_mlds =
       ~input:(module Super_context.As_memo_key.And_package_name)
       (fun (sctx, pkg) ->
          Rules.collect (fun () ->
-           let* mlds, warnings = mlds sctx pkg in
-           report_warnings warnings;
+           let* mlds, warnings = Odoc_discovery.mlds sctx pkg in
+           Odoc_discovery.report_warnings warnings;
            let mlds =
-             check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
+             Odoc_discovery.check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
                Path.to_string_maybe_quoted (Path.build p))
            in
            let ctx = Super_context.context sctx in
@@ -1013,7 +834,7 @@ let package_mlds =
            then Memo.return mlds
            else (
              let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-             let* entry_modules = entry_modules sctx ~pkg in
+             let* entry_modules = Odoc_discovery.entry_modules sctx ~pkg in
              let+ () =
                add_rule
                  sctx

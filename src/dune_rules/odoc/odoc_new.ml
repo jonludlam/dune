@@ -1292,8 +1292,8 @@ let pkg_mlds sctx pkg =
   let* pkgs = Dune_load.packages () in
   if Package.Name.Map.mem pkgs pkg
   then
-    let+ res, warnings = Odoc.mlds sctx pkg in
-    let () = Odoc.report_warnings warnings in
+    let+ res, warnings = Odoc_discovery.mlds sctx pkg in
+    let () = Odoc_discovery.report_warnings warnings in
     List.map ~f:(fun (p, name) -> Path.build p, name) res
   else (
     let ctx = Super_context.context sctx in
@@ -1304,7 +1304,10 @@ let pkg_artifacts sctx index pkg =
   let ctx = Super_context.context sctx in
   let+ mlds_map =
     let+ mlds = pkg_mlds sctx pkg in
-    Odoc.check_mlds_no_dupes ~pkg ~mlds ~path_to_string:Path.to_string_maybe_quoted
+    Odoc_discovery.check_mlds_no_dupes
+      ~pkg
+      ~mlds
+      ~path_to_string:Path.to_string_maybe_quoted
   in
   let artifacts =
     let mlds_noindex =
