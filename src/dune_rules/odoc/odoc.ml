@@ -33,6 +33,23 @@ let asset_artifact pkg ~path ~name =
   Odoc_artifact.asset ~source:path { Odoc_target.asset_name = name } (Pkg pkg)
 ;;
 
+(* Tag each compiled unit with the package (or private-library marker) it
+   belongs to, so that link can restrict the warnings it reports to units of
+   the workspace's packages via --warnings-tags. *)
+let warnings_tag_args artifact =
+  match Odoc_artifact.get_kind artifact with
+  | Module (_, Lib (pkg, _)) | Page (_, Pkg pkg) ->
+    Command.Args.As [ "--warnings-tag"; Package.Name.to_string pkg ]
+  | Module (_, Private_lib _) -> Command.Args.As [ "--warnings-tag"; "__private_lib__" ]
+  | Asset _ -> Command.Args.S []
+;;
+
+let get_workspace_packages () =
+  let* packages = Dune_load.packages () in
+  let+ mask = Dune_load.mask () in
+  Package.Name.Map.keys packages |> List.filter ~f:(Only_packages.mem mask)
+;;
+
 module Flags = struct
   type warnings = Dune_env.Odoc.warnings =
     | Fatal
@@ -238,6 +255,7 @@ let compile_module
           ; Path (Path.build odoc_root)
           ; A "--parent-id"
           ; A parent_id
+          ; warnings_tag_args artifact
           ; Hidden_targets [ odoc_file ]
           ; Dep (Path.build cmti)
           ]
@@ -275,6 +293,7 @@ let compile_page sctx artifact ~includes =
       ; Path (Path.build odoc_root)
       ; A "--parent-id"
       ; A parent_id
+      ; warnings_tag_args artifact
       ; Hidden_targets [ odoc_file ]
       ; Dep (Path.build odoc_input)
       ]
@@ -804,6 +823,15 @@ let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
     Action_builder.deps (Dune_engine.Dep.Set.of_files (lib_files @ pkg_files))
   in
   let dir = Path.build (Path.Build.parent_exn (Odoc_artifact.odocl_file ctx odoc_file)) in
+  (* Only report link-time warnings originating in units of the workspace's
+     own packages (and private libraries); see [warnings_tag_args]. *)
+  let* warnings_tags_args =
+    let+ workspace_pkgs = get_workspace_packages () in
+    Command.Args.S
+      (List.concat_map
+         ("__private_lib__" :: List.map workspace_pkgs ~f:Package.Name.to_string)
+         ~f:(fun tag -> [ Command.Args.A "--warnings-tags"; A tag ]))
+  in
   let run_odoc =
     run_odoc
       sctx
@@ -812,6 +840,7 @@ let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
       ~quiet:false
       ~flags_for:(Some (Odoc_artifact.odoc_file ctx odoc_file))
       [ link_include_flags ctx pkg requires
+      ; warnings_tags_args
       ; A "-o"
       ; Target (Odoc_artifact.odocl_file ctx odoc_file)
       ; Dep (Path.build (Odoc_artifact.odoc_file ctx odoc_file))
