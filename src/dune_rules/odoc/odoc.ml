@@ -13,44 +13,6 @@ let add_rule sctx =
   Super_context.add_rule sctx ~dir
 ;;
 
-module Artifact = struct
-  type t =
-    { odoc_file : Path.Build.t
-    ; target : target
-    }
-
-  let make ~target odoc_file = { odoc_file; target }
-  let odoc_file t = t.odoc_file
-
-  let basename t =
-    Path.Build.basename t.odoc_file |> Filename.remove_extension |> Filename.to_string
-  ;;
-
-  let odocl_file ctx t = Paths.odocl ctx t.target ++ (basename t ^ ".odocl")
-
-  let output_file ctx (output : Output_format.t) t =
-    let basename = basename t in
-    let suffix = Filename.of_string_exn (Output_format.extension output) in
-    match t.target with
-    | Lib _ ->
-      (match output with
-       | Html | Json ->
-         Paths.html ctx t.target ++ Stdune.String.capitalize basename ++ "index"
-         |> Path.Build.extend_basename ~suffix
-       | Markdown ->
-         Paths.markdown ctx t.target ++ Stdune.String.capitalize basename
-         |> Path.Build.extend_basename ~suffix)
-    | Pkg _ ->
-      let base =
-        match output with
-        | Markdown -> Paths.markdown ctx t.target
-        | Html | Json -> Paths.html ctx t.target
-      in
-      base ++ (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
-      |> Path.Build.extend_basename ~suffix
-  ;;
-end
-
 module Dep : sig
   (** [format_alias output ctx target] returns the alias that depends on all
       targets produced by odoc for [target] in output format [output]. *)
@@ -319,21 +281,21 @@ let odoc_include_flags ctx pkg requires =
         :: List.concat_map paths ~f:(fun dir -> [ Command.Args.A "-I"; Path dir ])))
 ;;
 
-let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
+let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
   let ctx = Super_context.context sctx in
   let deps = Dep.deps ctx pkg requires in
-  let dir = Path.build (Path.Build.parent_exn (Artifact.odocl_file ctx odoc_file)) in
+  let dir = Path.build (Path.Build.parent_exn (Odoc_artifact.odocl_file ctx odoc_file)) in
   let run_odoc =
     run_odoc
       sctx
       ~dir
       "link"
       ~quiet:false
-      ~flags_for:(Some (Artifact.odoc_file odoc_file))
+      ~flags_for:(Some (Odoc_artifact.odoc_file odoc_file))
       [ odoc_include_flags ctx pkg requires
       ; A "-o"
-      ; Target (Artifact.odocl_file ctx odoc_file)
-      ; Dep (Path.build (Artifact.odoc_file odoc_file))
+      ; Target (Odoc_artifact.odocl_file ctx odoc_file)
+      ; Dep (Path.build (Odoc_artifact.odoc_file odoc_file))
       ]
   in
   add_rule
@@ -396,7 +358,7 @@ let odoc_output_targets sctx odoc_file (out : Output_format.t) ~output_dir =
       [ Command.Args.A command
       ; A "-o"
       ; Path (Path.build output_dir)
-      ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
+      ; Dep (Path.build (Odoc_artifact.odocl_file ctx odoc_file))
       ; Output_format.args out
       ]
   in
@@ -421,7 +383,7 @@ let html_generate_args sctx ~search_db ~html_root ~odoc_support_path odoc_file o
   ; Path (Path.build odoc_support_path)
   ; A "--theme-uri"
   ; Path (Path.build odoc_support_path)
-  ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
+  ; Dep (Path.build (Odoc_artifact.odocl_file ctx odoc_file))
   ; Output_format.args out
   ]
 ;;
@@ -436,7 +398,7 @@ let setup_generate sctx ~search_db odoc_file out =
       , Paths.markdown_root ctx
       , [ Command.Args.A "-o"
         ; Path (Path.build (Paths.markdown_root ctx))
-        ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
+        ; Dep (Path.build (Odoc_artifact.odocl_file ctx odoc_file))
         ] )
     | Html | Json ->
       let html_root = Paths.html_root ctx in
@@ -447,7 +409,7 @@ let setup_generate sctx ~search_db odoc_file out =
   let* targets =
     match out with
     | Markdown -> odoc_output_targets sctx odoc_file out ~output_dir
-    | Html | Json -> Memo.return [ Artifact.output_file ctx out odoc_file ]
+    | Html | Json -> Memo.return [ Odoc_artifact.output_file ctx out odoc_file ]
   in
   let run_odoc =
     run_odoc sctx ~dir:(Path.build output_dir) command ~quiet:false ~flags_for:None args
@@ -475,7 +437,7 @@ let setup_generate_module_html_and_json sctx ~search_db odoc_file =
          odoc_file
          out)
   in
-  let dir = Artifact.output_file ctx Html odoc_file |> Path.Build.parent_exn in
+  let dir = Odoc_artifact.output_file ctx Html odoc_file |> Path.Build.parent_exn in
   let rule =
     Action_builder.progn [ run_odoc Html; run_odoc Json ]
     |> Action_builder.With_targets.add_directories ~directory_targets:[ dir ]
@@ -484,7 +446,7 @@ let setup_generate_module_html_and_json sctx ~search_db odoc_file =
 ;;
 
 let setup_generate_html_and_json sctx ~search_db odoc_file =
-  match odoc_file.Artifact.target with
+  match Odoc_artifact.target odoc_file with
   | Lib _ -> setup_generate_module_html_and_json sctx ~search_db odoc_file
   | Pkg _ ->
     let* () = setup_generate sctx ~search_db:(Some search_db) odoc_file Html in
@@ -720,12 +682,13 @@ let odoc_artefacts sctx target =
         | Some _ as s -> s)
     in
     String.Map.to_list_map mlds ~f:(fun _ (path, name) ->
-      Mld.create ~path ~name |> Mld.odoc_file ~doc_dir:dir |> Artifact.make ~target)
+      Mld.create ~path ~name |> Mld.odoc_file ~doc_dir:dir |> Odoc_artifact.make ~target)
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
     let+ modules = entry_modules_by_lib sctx lib in
-    List.map modules ~f:(fun m -> Obj_dir.Module.odoc obj_dir m |> Artifact.make ~target)
+    List.map modules ~f:(fun m ->
+      Obj_dir.Module.odoc obj_dir m |> Odoc_artifact.make ~target)
 ;;
 
 let setup_lib_odocl_rules_def =
@@ -813,7 +776,9 @@ let setup_pkg_odocl_rules sctx ~pkg ~for_ : unit Memo.t =
   Memo.With_implicit_output.exec setup_pkg_odocl_rules_def (sctx, pkg, for_)
 ;;
 
-let out_file ctx (output : Output_format.t) odoc = Artifact.output_file ctx output odoc
+let out_file ctx (output : Output_format.t) odoc =
+  Odoc_artifact.output_file ctx output odoc
+;;
 
 let out_files ctx (output : Output_format.t) odocs =
   let extra_files =
@@ -870,7 +835,7 @@ let search_db_for_lib sctx lib =
   let ctx = Super_context.context sctx in
   let dir = Paths.html ctx target in
   let* odocs = odoc_artefacts sctx target in
-  let odocls = List.map odocs ~f:(Artifact.odocl_file ctx) in
+  let odocls = List.map odocs ~f:(Odoc_artifact.odocl_file ctx) in
   Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
 ;;
 
@@ -895,7 +860,7 @@ let setup_pkg_html_rules_def =
     in
     let all_odocs = pkg_odocs @ lib_odocs in
     let* search_db =
-      let odocls = List.map all_odocs ~f:(Artifact.odocl_file ctx) in
+      let odocls = List.map all_odocs ~f:(Odoc_artifact.odocl_file ctx) in
       Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
     in
     let* () = Memo.parallel_iter libs ~f:(setup_lib_html_rules sctx ~search_db) in
@@ -951,7 +916,7 @@ let setup_pkg_markdown_rules sctx ~pkg =
             ~flags_for:None
             [ Command.Args.A "-o"
             ; Command.Args.Path (Path.build markdown_root)
-            ; Command.Args.Dep (Path.build (Artifact.odocl_file ctx odoc))
+            ; Command.Args.Dep (Path.build (Odoc_artifact.odocl_file ctx odoc))
             ])
       in
       let rule =
