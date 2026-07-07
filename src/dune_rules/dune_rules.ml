@@ -53,6 +53,7 @@ module Command = Command
 module Clflags = Clflags
 module Private_context = Private_context
 module Odoc = Odoc
+module Odoc_paths = Odoc_paths
 module Library = Library
 module Melange = Melange
 module Executables = Executables

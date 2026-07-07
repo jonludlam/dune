@@ -33,7 +33,7 @@ let term =
       let toplevel_index_path =
         let is_default ctx = ctx |> Context.name |> Dune_engine.Context_name.is_default in
         let doc_ctx = List.find_exn setup.contexts ~f:is_default in
-        Dune_rules.Odoc.Paths.toplevel_index doc_ctx
+        Dune_rules.Odoc_paths.Paths.toplevel_index doc_ctx
       in
       Path.(toplevel_index_path |> build |> to_string_maybe_quoted)
     in
