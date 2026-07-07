@@ -18,11 +18,15 @@ module Paths = struct
   let root (context : Context.t) = Path.Build.relative (Context.build_dir context) "_doc"
   let odoc_root ctx = root ctx ++ "_odoc"
 
-  (* Outputs are keyed by the package for public libraries and package pages,
-     and by the unique name for private libraries. *)
+  (* Public libraries nest under their package: <root>/<pkg>/<lib>. Private
+     libraries use their own <root>/<lnu>; package pages live at
+     <root>/<pkg>. *)
   let target_subdir : type a. Path.Build.t -> a Odoc_target.t -> Path.Build.t =
     fun base -> function
-    | Lib (pkg, _) -> base ++ Package.Name.to_string pkg
+    | Lib (pkg, lib) ->
+      base
+      ++ Package.Name.to_string pkg
+      ++ Lib_name.to_string (Lib.name (Lib.Local.to_lib lib))
     | Private_lib (lib_unique_name, _) -> base ++ lib_unique_name
     | Pkg pkg -> base ++ Package.Name.to_string pkg
   ;;

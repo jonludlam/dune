@@ -330,7 +330,7 @@ let setup_library_odoc_rules_def =
          dependency libraries' .odoc files. Intra-library edges come from
          [module_deps] (compile-deps) below. No directory glob is used, so this
          is correct under sandboxing and never depends on this library's own
-         .odoc -- even though libraries share the package's _odoc directory. *)
+         directory contents. *)
       let file_deps =
         let open Action_builder.O in
         let* dep_odocs = Action_builder.of_memo (lib_odoc_files sctx dep_libs) in
@@ -550,9 +550,7 @@ let odoc_artefacts : type a. _ -> a Odoc_target.t -> _ =
    library and -P <package>:<dir> for the package. These carry the library /
    package identity, so a reference like {!/<lib>/M} resolves within that
    library -- disambiguating modules with the same name across sibling
-   libraries. --custom-layout disables odoc's "paths must be disjoint" check,
-   which is needed while libraries in a package still share one _odoc/<pkg>
-   directory (they get their own directory once the hierarchy is flipped). *)
+   libraries. *)
 let link_include_flags ctx pkg requires =
   Resolve.args
     (let open Resolve.O in
@@ -582,7 +580,7 @@ let link_include_flags ctx pkg requires =
                ] )
          ]
      in
-     Command.Args.S ((Command.Args.A "--custom-layout" :: lib_args) @ pkg_args))
+     Command.Args.S (lib_args @ pkg_args))
 ;;
 
 let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =

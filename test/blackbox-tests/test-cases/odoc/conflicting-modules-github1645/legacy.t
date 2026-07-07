@@ -24,8 +24,10 @@ built. See #1645.
 
   $ dune build @install
   $ dune build @doc
-  Error: Multiple rules generated for _build/default/_doc/_html/l/Module:
-  - <internal location>
-  - <internal location>
-  -> required by alias doc
-  [1]
+
+Both same-named modules get their own documentation page:
+
+  $ find _build/default/_doc/_html/l -name 'index.html' | sort
+  _build/default/_doc/_html/l/index.html
+  _build/default/_doc/_html/l/l.one/Module/index.html
+  _build/default/_doc/_html/l/l.two/Module/index.html
