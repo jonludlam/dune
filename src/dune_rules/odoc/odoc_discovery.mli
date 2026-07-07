@@ -31,7 +31,12 @@ val check_mlds_no_dupes
 
 val report_warnings : Doc_sources.mld list -> unit
 
+(** The doc files attached to a package's documentation stanzas, partitioned
+    into flat mld pages [(path, page name)], flat assets
+    [(path, file name)], and files in a non-flat hierarchy (unsupported,
+    to be reported via [report_warnings]). *)
 val mlds
   :  Super_context.t
   -> Dune_lang.Package_name.t
-  -> ((Path.Build.t * string) list * Doc_sources.mld list) Memo.t
+  -> ((Path.Build.t * string) list * (Path.Build.t * string) list * Doc_sources.mld list)
+       Memo.t

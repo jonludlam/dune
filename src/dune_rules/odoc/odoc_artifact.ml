@@ -4,6 +4,7 @@ open Odoc_paths
 type kind =
   | Module : Odoc_target.mod_ * Odoc_target.mod_ Odoc_target.t -> kind
   | Page : Odoc_target.page * Odoc_target.page Odoc_target.t -> kind
+  | Asset : Odoc_target.asset * Odoc_target.page Odoc_target.t -> kind
 
 type t =
   { kind : kind
@@ -23,13 +24,14 @@ let make : type a. source:Path.Build.t -> a -> a Odoc_target.t -> t =
   { kind; source }
 ;;
 
+let asset ~source payload target = { kind = Asset (payload, target); source }
 let get_kind t = t.kind
 let source_file t = t.source
 
 let visible t =
   match t.kind with
   | Module (mod_, _) -> mod_.Odoc_target.visible
-  | Page _ -> true
+  | Page _ | Asset _ -> true
 ;;
 
 (* The basename of a module's artifacts is that of its source (the mangled
@@ -40,12 +42,14 @@ let basename t =
   | Module (_, _) ->
     Path.Build.basename t.source |> Filename.remove_extension |> Filename.to_string
   | Page (page, _) -> page.name
+  | Asset (asset, _) -> asset.asset_name
 ;;
 
 let odoc_dir ctx t =
   match t.kind with
   | Module (_, target) -> Paths.odocs ctx target
   | Page (_, target) -> Paths.odocs ctx target
+  | Asset (_, target) -> Paths.odocs ctx target
 ;;
 
 let odoc_file ctx t =
@@ -53,6 +57,7 @@ let odoc_file ctx t =
   match t.kind with
   | Module (_, target) -> Paths.odocs ctx target ++ (basename ^ ".odoc")
   | Page (_, target) -> Paths.odocs ctx target ++ ("page-" ^ basename ^ ".odoc")
+  | Asset (_, target) -> Paths.odocs ctx target ++ ("asset-" ^ basename ^ ".odoc")
 ;;
 
 let odocl_file ctx t =
@@ -60,6 +65,7 @@ let odocl_file ctx t =
   match t.kind with
   | Module (_, target) -> Paths.odocl ctx target ++ (basename ^ ".odocl")
   | Page (_, target) -> Paths.odocl ctx target ++ ("page-" ^ basename ^ ".odocl")
+  | Asset (_, target) -> Paths.odocl ctx target ++ ("asset-" ^ basename ^ ".odocl")
 ;;
 
 let output_file ctx (output : Output_format.t) t =
@@ -76,4 +82,5 @@ let output_file ctx (output : Output_format.t) t =
        base ++ Stdune.String.capitalize basename |> Path.Build.extend_basename ~suffix)
   | Page (_, target) ->
     Paths.output ctx output target ++ basename |> Path.Build.extend_basename ~suffix
+  | Asset (_, target) -> Paths.output ctx output target ++ basename
 ;;

@@ -29,6 +29,10 @@ let page_artifact pkg ~path ~name =
   Odoc_artifact.make ~source:path { Odoc_target.name } (Pkg pkg)
 ;;
 
+let asset_artifact pkg ~path ~name =
+  Odoc_artifact.asset ~source:path { Odoc_target.asset_name = name } (Pkg pkg)
+;;
+
 module Flags = struct
   type warnings = Dune_env.Odoc.warnings =
     | Fatal
@@ -176,6 +180,7 @@ let module_deps sctx artifact ~obj_dir ~odoc_file_by_module =
     match Odoc_artifact.get_kind artifact with
     | Module (mod_, _) -> mod_.Odoc_target.module_name
     | Page _ -> Code_error.raise "Odoc.module_deps: not a module artifact" []
+    | Asset _ -> Code_error.raise "Odoc.module_deps: not a module artifact" []
   in
   let cmti = Odoc_artifact.source_file artifact in
   let deps_output =
@@ -278,6 +283,39 @@ let compile_page sctx artifact ~includes =
   odoc_file
 ;;
 
+let compile_asset sctx artifact =
+  let ctx = Super_context.context sctx in
+  let odoc_file = Odoc_artifact.odoc_file ctx artifact in
+  let name =
+    match Odoc_artifact.get_kind artifact with
+    | Asset (asset, _) -> asset.Odoc_target.asset_name
+    | Module _ | Page _ -> Code_error.raise "Odoc.compile_asset: not an asset artifact" []
+  in
+  let odoc_root = Paths.odoc_root ctx in
+  let parent_id =
+    Path.reach
+      (Path.build (Odoc_artifact.odoc_dir ctx artifact))
+      ~from:(Path.build odoc_root)
+  in
+  let run_odoc =
+    run_odoc
+      sctx
+      ~dir:(Path.build odoc_root)
+      "compile-asset"
+      ~quiet:false
+      ~flags_for:None
+      [ A "--output-dir"
+      ; Path (Path.build odoc_root)
+      ; A "--parent-id"
+      ; A parent_id
+      ; A "--name"
+      ; A name
+      ; Hidden_targets [ odoc_file ]
+      ]
+  in
+  add_rule sctx run_odoc
+;;
+
 let odoc_include_flags ctx requires =
   Resolve.args
     (let open Resolve.O in
@@ -351,7 +389,8 @@ let lib_compile_env sctx local_lib ~module_artifacts =
           acc
           mod_.Odoc_target.module_name
           (Path.build (Odoc_artifact.odoc_file ctx a))
-      | Page _ -> acc)
+      | Page _ -> acc
+      | Asset _ -> acc)
   in
   { obj_dir; file_deps; include_flags; odoc_file_by_module }
 ;;
@@ -460,12 +499,40 @@ let setup_generate_module_html_and_json sctx ~search_db odoc_file =
   add_rule sctx rule
 ;;
 
+(* Copy an asset into the html tree via odoc, recording it against its asset
+   unit. Json output shares the html tree here, so this single rule provides
+   the asset for both formats. *)
+let setup_generate_asset sctx artifact =
+  let ctx = Super_context.context sctx in
+  let source = Odoc_artifact.source_file artifact in
+  let odocl = Odoc_artifact.odocl_file ctx artifact in
+  let output = Odoc_artifact.output_file ctx Html artifact in
+  let html_root = Paths.html_root ctx in
+  let run_odoc =
+    run_odoc
+      sctx
+      ~dir:(Path.build html_root)
+      "html-generate-asset"
+      ~quiet:false
+      ~flags_for:None
+      [ A "-o"
+      ; Path (Path.build html_root)
+      ; A "--asset-unit"
+      ; Dep (Path.build odocl)
+      ; Dep (Path.build source)
+      ]
+    |> Action_builder.With_targets.add ~file_targets:[ output ]
+  in
+  add_rule sctx run_odoc
+;;
+
 let setup_generate_html_and_json sctx ~search_db odoc_file =
   match Odoc_artifact.get_kind odoc_file with
   | Module _ -> setup_generate_module_html_and_json sctx ~search_db odoc_file
   | Page _ ->
     let* () = setup_generate sctx ~search_db:(Some search_db) odoc_file Html in
     setup_generate sctx ~search_db:(Some search_db) odoc_file Json
+  | Asset _ -> setup_generate_asset sctx odoc_file
 ;;
 
 let setup_css_rule sctx =
@@ -539,7 +606,7 @@ let package_mlds =
       ~input:(module Super_context.As_memo_key.And_package_name)
       (fun (sctx, pkg) ->
          Rules.collect (fun () ->
-           let* mlds, warnings = Odoc_discovery.mlds sctx pkg in
+           let* mlds, _assets, warnings = Odoc_discovery.mlds sctx pkg in
            Odoc_discovery.report_warnings warnings;
            let mlds =
              Odoc_discovery.check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
@@ -582,11 +649,16 @@ let package_mlds =
   fun sctx ~pkg -> Memo.exec memo (sctx, pkg)
 ;;
 
-(* The page artifacts of a package: the pages of its documentation stanzas as
-   staged by [package_mlds] (with a generated index if none is written). *)
-let package_page_artifacts sctx pkg =
-  let+ mlds = package_mlds sctx ~pkg >>| fst in
-  String.Map.to_list_map mlds ~f:(fun _ (path, name) -> page_artifact pkg ~path ~name)
+(* The page and asset artifacts of a package: the pages of its documentation
+   stanzas as staged by [package_mlds] (with a generated index if none is
+   written), and its assets. *)
+let package_page_and_asset_artifacts sctx pkg =
+  let* mlds = package_mlds sctx ~pkg >>| fst in
+  let+ _mlds, assets, _warnings = Odoc_discovery.mlds sctx pkg in
+  let pages =
+    String.Map.to_list_map mlds ~f:(fun _ (path, name) -> page_artifact pkg ~path ~name)
+  in
+  pages @ List.map assets ~f:(fun (path, name) -> asset_artifact pkg ~path ~name)
 ;;
 
 let find_private_lib sctx ~lib_name ~project =
@@ -602,7 +674,7 @@ let find_private_lib sctx ~lib_name ~project =
 (* All documentation artifacts of a scope, together with the scope's
    libraries, discovered once: the rule handlers below each iterate this
    list, dispatching on artifact kind. For a package the artifacts are its
-   pages plus every module of each of its libraries; only the
+   pages and assets plus every module of each of its libraries; only the
    visible artifacts are linked and rendered. An unknown package or library
    yields nothing. *)
 let discover_scope_artifacts sctx (scope_id : Scope_id.t) =
@@ -614,7 +686,7 @@ let discover_scope_artifacts sctx (scope_id : Scope_id.t) =
      | None -> Memo.return ([], [])
      | Some _ ->
        let* libs = Context.name ctx |> Odoc_discovery.libs_of_pkg ~pkg in
-       let+ pages = package_page_artifacts sctx pkg
+       let+ pages = package_page_and_asset_artifacts sctx pkg
        and+ module_artifacts = Memo.List.concat_map libs ~f:(lib_module_artifacts sctx) in
        libs, pages @ module_artifacts)
   | Scope_id.Private_lib { lib_name; project; _ } ->
@@ -636,7 +708,7 @@ let module_artifacts_by_lib libs artifacts =
     | Module (_, (Lib (_, lib) | Private_lib (_, lib))) ->
       Lib.Local.Map.update acc lib ~f:(fun artifacts ->
         Some (artifact :: Option.value artifacts ~default:[]))
-    | Page _ -> acc)
+    | Page _ | Asset _ -> acc)
 ;;
 
 (* Set up the compile rule of every artifact of the scope, dispatching on
@@ -653,6 +725,7 @@ let handle_odoc_artifacts sctx scope_id =
   in
   Memo.parallel_iter artifacts ~f:(fun artifact ->
     match Odoc_artifact.get_kind artifact with
+    | Asset _ -> compile_asset sctx artifact
     | Page _ ->
       let+ (_ : Path.Build.t) =
         compile_page sctx artifact ~includes:(Action_builder.return [])
@@ -725,7 +798,7 @@ let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
       match pkg with
       | None -> Action_builder.return []
       | Some p ->
-        let+ arts = Action_builder.of_memo (package_page_artifacts sctx p) in
+        let+ arts = Action_builder.of_memo (package_page_and_asset_artifacts sctx p) in
         List.map arts ~f:(fun a -> Path.build (Odoc_artifact.odoc_file ctx a))
     in
     Action_builder.deps (Dune_engine.Dep.Set.of_files (lib_files @ pkg_files))
@@ -756,9 +829,10 @@ let link_odoc_rules sctx (odoc_file : Odoc_artifact.t) ~pkg ~requires =
    depend on a sibling must not have the sibling's directory on the search
    path, otherwise same-named modules across sibling libraries become
    ambiguous (see conflicting-modules #1645). Pages may reference any of the
-   package's libraries. *)
+   package's libraries; assets contain no references. *)
 let compute_link_requires sctx artifact =
   match Odoc_artifact.get_kind artifact with
+  | Asset _ -> Memo.return (Resolve.return [])
   | Module (_, (Lib (_, lib) | Private_lib (_, lib))) ->
     Lib.closure [ Lib.Local.to_lib lib ] ~linking:false ~for_:(mode_of_lib lib)
   | Page (_, Pkg pkg) ->
@@ -770,7 +844,7 @@ let compute_link_requires sctx artifact =
 
 let artifact_pkg artifact =
   match Odoc_artifact.get_kind artifact with
-  | Module (_, Lib (pkg, _)) | Page (_, Pkg pkg) -> Some pkg
+  | Module (_, Lib (pkg, _)) | Page (_, Pkg pkg) | Asset (_, Pkg pkg) -> Some pkg
   | Module (_, Private_lib _) -> None
 ;;
 
@@ -822,7 +896,12 @@ let add_format_alias_deps ctx format target odocs =
 let output_rules sctx ~libs ~visible_artifacts ~search_db_dir =
   let ctx = Super_context.context sctx in
   let* search_db =
-    let odocls = List.map visible_artifacts ~f:(Odoc_artifact.odocl_file ctx) in
+    let odocls =
+      List.filter_map visible_artifacts ~f:(fun artifact ->
+        match Odoc_artifact.get_kind artifact with
+        | Asset _ -> None
+        | Module _ | Page _ -> Some (Odoc_artifact.odocl_file ctx artifact))
+    in
     Sherlodoc.search_db sctx ~dir:search_db_dir ~external_odocls:[] odocls
   in
   let* () =
@@ -867,7 +946,14 @@ let setup_pkg_markdown_rules sctx ~pkg =
   let* (_ : Lib.Local.t list), artifacts =
     discover_scope_artifacts sctx (Scope_id.Package pkg)
   in
-  let markdown_odocs = List.filter artifacts ~f:Odoc_artifact.visible in
+  let markdown_odocs =
+    List.filter artifacts ~f:(fun artifact ->
+      Odoc_artifact.visible artifact
+      &&
+      match Odoc_artifact.get_kind artifact with
+      | Asset _ -> false
+      | Module _ | Page _ -> true)
+  in
   if List.is_empty markdown_odocs
   then Memo.return ()
   else (

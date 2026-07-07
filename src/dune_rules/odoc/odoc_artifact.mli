@@ -8,6 +8,7 @@ open Import
 type kind =
   | Module : Odoc_target.mod_ * Odoc_target.mod_ Odoc_target.t -> kind
   | Page : Odoc_target.page * Odoc_target.page Odoc_target.t -> kind
+  | Asset : Odoc_target.asset * Odoc_target.page Odoc_target.t -> kind
 
 type t
 
@@ -15,12 +16,20 @@ type t
     [.cmti]/[.cmt] or a page's [.mld]) within [target]. *)
 val make : source:Path.Build.t -> 'a -> 'a Odoc_target.t -> t
 
+(** [asset ~source payload target] creates the artifact for an asset file
+    [source] (an image, css file, ...) within [target]. *)
+val asset
+  :  source:Path.Build.t
+  -> Odoc_target.asset
+  -> Odoc_target.page Odoc_target.t
+  -> t
+
 val get_kind : t -> kind
 val source_file : t -> Path.Build.t
 
 (** Whether the artifact should be linked and rendered. Modules that are not
-    entry modules of their library are compiled but never linked; pages are
-    always visible. *)
+    entry modules of their library are compiled but never linked; pages and
+    assets are always visible. *)
 val visible : t -> bool
 
 val odoc_dir : Context.t -> t -> Path.Build.t

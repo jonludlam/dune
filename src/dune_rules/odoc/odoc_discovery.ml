@@ -167,20 +167,29 @@ let report_warnings warnings =
     in
     User_warning.emit
       [ Pp.textf
-          "Dune does not yet support building documentation for assets, and mlds in a \
-           non-flat hierarchy. Ignoring %s."
+          "Dune does not yet support building documentation for files in a non-flat \
+           hierarchy. Ignoring %s."
           l
       ]
 ;;
 
 let mlds sctx pkg =
-  let+ mlds = Packages.mlds sctx pkg in
-  List.partition_map mlds ~f:(fun (mld : Doc_sources.mld) ->
-    match Path.Local.explode mld.in_doc with
-    | [ name ] ->
-      let ext = Filename.extension name in
-      if Filename.Extension.Or_empty.check ext mld_ext
-      then Left (mld.path, Filename.remove_extension name |> Filename.to_string)
-      else Right mld
-    | _ -> Right mld)
+  let+ files = Packages.mlds sctx pkg in
+  let mlds, assets, warnings =
+    List.fold_left
+      files
+      ~init:([], [], [])
+      ~f:(fun (mlds, assets, warnings) (mld : Doc_sources.mld) ->
+        match Path.Local.explode mld.in_doc with
+        | [ name ] ->
+          let ext = Filename.extension name in
+          if Filename.Extension.Or_empty.check ext mld_ext
+          then
+            ( (mld.path, Filename.remove_extension name |> Filename.to_string) :: mlds
+            , assets
+            , warnings )
+          else mlds, (mld.path, Filename.to_string name) :: assets, warnings
+        | _ -> mlds, assets, mld :: warnings)
+  in
+  List.rev mlds, List.rev assets, List.rev warnings
 ;;

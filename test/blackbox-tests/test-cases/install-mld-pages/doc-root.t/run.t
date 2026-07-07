@@ -61,8 +61,8 @@ resist building the doc to check what happens: currently, only top-level mld
 files are included in the doc generation.
 
   $ dune build @doc
-  Warning: Dune does not yet support building documentation for assets, and
-  mlds in a non-flat hierarchy. Ignoring examples/example1/index.mld,
+  Warning: Dune does not yet support building documentation for files in a
+  non-flat hierarchy. Ignoring examples/example1/index.mld,
   examples/example2/index.mld, examples/index.mld, examples/summary.mld,
   tutorial/tuto1.mld.
   $ ls _build/default/_doc/_html/testing_mld

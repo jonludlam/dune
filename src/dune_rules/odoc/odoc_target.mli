@@ -1,6 +1,7 @@
 open Import
 
 type page = { name : string }
+type asset = { asset_name : string }
 
 (** [visible] is true for a library's entry modules: the modules to link and
     render. The remaining modules (e.g. the mangled modules of a wrapped

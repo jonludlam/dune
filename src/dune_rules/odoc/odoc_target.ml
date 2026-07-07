@@ -1,6 +1,7 @@
 open Import
 
 type page = { name : string }
+type asset = { asset_name : string }
 
 type mod_ =
   { module_name : Module_name.t
