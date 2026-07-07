@@ -1,35 +1,47 @@
 open Import
-open Odoc_scope
 open Odoc_target
 
 let ( ++ ) = Path.Build.relative
 
 module Paths = struct
+  type output_format =
+    | Html
+    | Json
+    | Markdown
+
+  let output_subdir = function
+    | Html | Json -> "_html"
+    | Markdown -> "_markdown"
+  ;;
+
   let odoc_support_dirname = "odoc.support"
   let root (context : Context.t) = Path.Build.relative (Context.build_dir context) "_doc"
 
-  let odocs ctx = function
-    | Lib lib ->
+  let odocs : type a. Context.t -> a Odoc_target.t -> Path.Build.t =
+    fun ctx -> function
+    | Lib (_, lib) | Private_lib (_, lib) ->
       let obj_dir = Lib.Local.obj_dir lib in
       Obj_dir.odoc_dir obj_dir
-    | Pkg pkg -> root ctx ++ sprintf "_odoc/pkg/%s" (Package.Name.to_string pkg)
+    | Pkg pkg -> root ctx ++ "_odoc" ++ "pkg" ++ Package.Name.to_string pkg
   ;;
 
-  let html_root ctx = root ctx ++ "_html"
-  let markdown_root ctx = root ctx ++ "_markdown"
+  (* Outputs are keyed by the package for public libraries and package pages,
+     and by the unique name for private libraries. *)
+  let target_subdir : type a. Path.Build.t -> a Odoc_target.t -> Path.Build.t =
+    fun base -> function
+    | Lib (pkg, _) -> base ++ Package.Name.to_string pkg
+    | Private_lib (lib_unique_name, _) -> base ++ lib_unique_name
+    | Pkg pkg -> base ++ Package.Name.to_string pkg
+  ;;
+
+  let output_root ctx format = root ctx ++ output_subdir format
+  let html_root ctx = output_root ctx Html
+  let markdown_root ctx = output_root ctx Markdown
   let odocl_root ctx = root ctx ++ "_odocls"
-
-  let add_pkg_lnu base m =
-    base
-    ++
-    match m with
-    | Pkg pkg -> Package.Name.to_string pkg
-    | Lib lib -> pkg_or_lnu (Lib.Local.to_lib lib)
-  ;;
-
-  let html ctx m = add_pkg_lnu (html_root ctx) m
-  let markdown ctx m = add_pkg_lnu (markdown_root ctx) m
-  let odocl ctx m = add_pkg_lnu (odocl_root ctx) m
+  let output ctx format target = target_subdir (output_root ctx format) target
+  let html ctx m = target_subdir (html_root ctx) m
+  let markdown ctx m = target_subdir (markdown_root ctx) m
+  let odocl ctx m = target_subdir (odocl_root ctx) m
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
   let odoc_support ctx = html_root ctx ++ odoc_support_dirname
   let toplevel_index ctx = html_root ctx ++ "index.html"
@@ -37,7 +49,7 @@ module Paths = struct
 end
 
 module Output_format = struct
-  type t =
+  type t = Paths.output_format =
     | Html
     | Json
     | Markdown
@@ -72,9 +84,3 @@ module Output_format = struct
     | Markdown -> Paths.markdown_index ctx
   ;;
 end
-
-let output_dir_for_format ctx format target =
-  match (format : Output_format.t) with
-  | Html | Json -> Paths.html ctx target
-  | Markdown -> Paths.markdown ctx target
-;;
