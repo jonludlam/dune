@@ -1024,21 +1024,24 @@ let gen_rules sctx ~dir rest =
   | [ "_odoc"; lib_unique_name_or_pkg ] ->
     has_rules
       (let ctx = Super_context.context sctx in
-       let* packages = Dune_load.packages () in
-       match
-         Package.Name.Map.find packages (Package.Name.of_string lib_unique_name_or_pkg)
-       with
-       | Some pkg ->
-         let* libs =
-           Context.name ctx |> Odoc_discovery.libs_of_pkg ~pkg:(Package.name pkg)
-         in
-         Memo.parallel_iter libs ~f:(fun lib -> setup_library_odoc_rules sctx lib)
-       | None ->
-         let* lib, lib_db =
-           Scope_key.of_string (Context.name ctx) lib_unique_name_or_pkg
+       let* scope_id = Scope_id.of_string lib_unique_name_or_pkg in
+       match scope_id with
+       | Scope_id.Package pkg_name ->
+         let* packages = Dune_load.packages () in
+         (match Package.Name.Map.find packages pkg_name with
+          | Some pkg ->
+            let* libs =
+              Context.name ctx |> Odoc_discovery.libs_of_pkg ~pkg:(Package.name pkg)
+            in
+            Memo.parallel_iter libs ~f:(fun lib -> setup_library_odoc_rules sctx lib)
+          | None -> Memo.return ())
+       | Scope_id.Private_lib { lib_name; project; _ } ->
+         let* lib_db =
+           let+ scope = Scope.DB.find_by_project (Context.name ctx) project in
+           Scope.libs scope
          in
          let* lib =
-           let+ lib = Lib.DB.find lib_db lib in
+           let+ lib = Lib.DB.find lib_db lib_name in
            Option.bind ~f:Lib.Local.of_lib lib
          in
          (match lib with
