@@ -1,0 +1,3 @@
+(library
+ (public_name leak_dep)
+ (name leak_dep))

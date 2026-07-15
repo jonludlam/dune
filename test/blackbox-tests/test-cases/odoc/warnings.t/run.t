@@ -27,9 +27,9 @@ These packages are in a nested env, the option is disabled, should success with 
 In release mode, no error:
 
   $ dune build -p foo_doc,foo_lib @doc 2>&1 | censor | sed "s%$(ocamlc -where)%\$STDLIB%g"
-  (cd _build/.sandbox/$DIGEST1/default/_doc/_odoc/pkg/foo_doc && odoc compile --parent-id foo_doc -o page-foo.odoc ../../../../foo_doc/foo.mld)
+  (cd _build/.sandbox/$DIGEST1/default/_doc/_odoc/pkg/foo_doc && odoc compile --parent-id foo_doc --warnings-tag foo_doc -o page-foo.odoc ../../../../foo_doc/foo.mld)
   File "../../../../foo_doc/foo.mld", line 4, characters 0-0:
   Warning: End of text is not allowed in '[...]' (code).
-  (cd _build/.sandbox/$DIGEST2/default/foo_lib/.foo.objs/byte && odoc compile -I . -I $STDLIB -I ../../../_doc/_odoc/pkg/foo_lib --parent-id foo_lib/foo_lib -o foo.odoc foo.cmti)
+  (cd _build/.sandbox/$DIGEST2/default/foo_lib/.foo.objs/byte && odoc compile -I . -I $STDLIB -I ../../../_doc/_odoc/pkg/foo_lib --parent-id foo_lib/foo_lib --warnings-tag foo_lib -o foo.odoc foo.cmti)
   File "foo_lib/foo.mli", line 1, characters 7-7:
   Warning: End of text is not allowed in '[...]' (code).

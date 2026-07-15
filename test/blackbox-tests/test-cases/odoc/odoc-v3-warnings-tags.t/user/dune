@@ -1,0 +1,4 @@
+(library
+ (public_name user)
+ (name user)
+ (libraries dep))

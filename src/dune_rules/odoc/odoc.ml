@@ -83,6 +83,20 @@ let target_parent_id = function
      | None -> lib_unique_name lib)
 ;;
 
+(* The odoc warnings tag for a target: the package name, so that a
+   package's own documentation warnings are shown while warnings that
+   bubble up from a dependency's units (tagged with the dependency's
+   package) are filtered. A packageless (private) library is tagged with
+   its plain library name. *)
+let warnings_tag = function
+  | Pkg pkg -> Package.Name.to_string pkg
+  | Lib lib ->
+    let lib = Lib.Local.to_lib lib in
+    (match Lib_info.package (Lib.info lib) with
+     | Some pkg -> Package.Name.to_string pkg
+     | None -> Lib_name.to_string (Lib.name lib))
+;;
+
 let add_rule sctx =
   let dir = Super_context.context sctx |> Context.build_dir in
   Super_context.add_rule sctx ~dir
@@ -403,6 +417,7 @@ let compile_module
       ~includes:(file_deps, iflags)
       ~dep_graphs
       ~parent_id
+      ~warnings_tag
       ~mode
   =
   let odoc_file = Obj_dir.Module.odoc obj_dir m in
@@ -420,6 +435,7 @@ let compile_module
           ; Path doc_dir
           ; iflags
           ; As [ "--parent-id"; parent_id ]
+          ; As [ "--warnings-tag"; warnings_tag ]
           ; A "-o"
           ; Target odoc_file
           ; Dep
@@ -455,6 +471,7 @@ let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
       ~flags_for:(Some odoc_input)
       [ Command.Args.dyn includes
       ; As [ "--parent-id"; Package.Name.to_string pkg ]
+      ; As [ "--warnings-tag"; Package.Name.to_string pkg ]
       ; A "-o"
       ; Target odoc_file
       ; Dep (Path.build odoc_input)
@@ -541,7 +558,8 @@ let link_tree_args ctx ~for_ (scope_libs : Lib.t list) =
        [ Command.Args.A "-P"; Concat (":", [ A name; Path dir ]) ]))
 ;;
 
-let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires ~tree_args =
+let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires ~tree_args ~warnings_tags
+  =
   let ctx = Super_context.context sctx in
   let* stdlib_dir = stdlib_dir ctx in
   let deps = Dep.deps ctx pkg requires in
@@ -556,6 +574,9 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires ~tree_args =
       [ A "--custom-layout"
       ; odoc_include_flags ctx ~stdlib_dir pkg requires
       ; tree_args
+      ; S
+          (List.concat_map warnings_tags ~f:(fun t ->
+             [ Command.Args.A "--warnings-tags"; A t ]))
       ; A "-o"
       ; Target (Artifact.odocl_file ctx odoc_file)
       ; Dep (Path.build (Artifact.odoc_file odoc_file))
@@ -569,6 +590,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires ~tree_args =
 
 let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let parent_id = target_parent_id (Lib local_lib) in
+  let warnings_tag = warnings_tag (Lib local_lib) in
   let sctx = Compilation_context.super_context cctx in
   let ctx = Super_context.context sctx in
   let info = Lib.Local.info local_lib in
@@ -594,6 +616,7 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
         ~dep_graphs:(Compilation_context.dep_graphs cctx)
         ~obj_dir
         ~parent_id
+        ~warnings_tag
         ~mode:for_
         m
     in
@@ -973,6 +996,7 @@ let setup_lib_odocl_rules_def =
     let ctx = Super_context.context sctx in
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let pkg = Lib_info.package (Lib.Local.info lib) in
+    let warnings_tags = [ warnings_tag (Lib lib) ] in
     let for_ =
       Lib_info.modes (Lib.Local.info lib)
       |> Compilation_mode.Set.of_lib_mode_set
@@ -981,7 +1005,7 @@ let setup_lib_odocl_rules_def =
     let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false ~for_ in
     let* tree_args = link_tree_args ctx ~for_ scope_libs in
     Memo.parallel_iter odocs ~f:(fun odoc ->
-      link_odoc_rules sctx ~pkg ~requires ~tree_args odoc)
+      link_odoc_rules sctx ~pkg ~requires ~tree_args ~warnings_tags odoc)
   in
   Memo.With_implicit_output.create
     "setup_library_odocls_rules"
@@ -1028,10 +1052,11 @@ let setup_pkg_odocl_rules_def =
     and* _ =
       let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
       let* tree_args = link_tree_args ctx ~for_ libs_as_libs in
+      let warnings_tags = [ Package.Name.to_string pkg ] in
       let pkg = Some pkg in
       let+ () =
         Memo.parallel_iter pkg_odocs ~f:(fun odoc ->
-          link_odoc_rules sctx ~pkg ~requires ~tree_args odoc)
+          link_odoc_rules sctx ~pkg ~requires ~tree_args ~warnings_tags odoc)
       in
       pkg_odocs
     and* _ = Memo.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib)) in
