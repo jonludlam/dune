@@ -67,15 +67,21 @@ let lib_unique_name lib =
   | Private (project, _) -> Scope_key.to_string name project
 ;;
 
-let pkg_or_lnu lib =
-  match Lib_info.package (Lib.info lib) with
-  | Some p -> Package.Name.to_string p
-  | None -> lib_unique_name lib
-;;
-
 type target =
   | Lib of Lib.Local.t
   | Pkg of Package.Name.t
+
+(* The odoc v3 parent-id of a target, per odoc's driver.mld convention:
+   [<pkg>], [<pkg>/<libname>], or the library unique name if packageless. *)
+let target_parent_id = function
+  | Pkg pkg -> Package.Name.to_string pkg
+  | Lib lib ->
+    let lib = Lib.Local.to_lib lib in
+    (match Lib_info.package (Lib.info lib) with
+     | Some pkg ->
+       sprintf "%s/%s" (Package.Name.to_string pkg) (Lib_name.to_string (Lib.name lib))
+     | None -> lib_unique_name lib)
+;;
 
 let add_rule sctx =
   let dir = Super_context.context sctx |> Context.build_dir in
@@ -96,18 +102,10 @@ module Paths = struct
   let html_root ctx = root ctx ++ "_html"
   let markdown_root ctx = root ctx ++ "_markdown"
   let odocl_root ctx = root ctx ++ "_odocls"
-
-  let add_pkg_lnu base m =
-    base
-    ++
-    match m with
-    | Pkg pkg -> Package.Name.to_string pkg
-    | Lib lib -> pkg_or_lnu (Lib.Local.to_lib lib)
-  ;;
-
-  let html ctx m = add_pkg_lnu (html_root ctx) m
-  let markdown ctx m = add_pkg_lnu (markdown_root ctx) m
-  let odocl ctx m = add_pkg_lnu (odocl_root ctx) m
+  let add_parent_id base m = base ++ target_parent_id m
+  let html ctx m = add_parent_id (html_root ctx) m
+  let markdown ctx m = add_parent_id (markdown_root ctx) m
+  let odocl ctx m = add_parent_id (odocl_root ctx) m
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
   let odoc_support ctx = html_root ctx ++ odoc_support_dirname
   let toplevel_index ctx = html_root ctx ++ "index.html"
@@ -378,7 +376,7 @@ let compile_module
       (m : Module.t)
       ~includes:(file_deps, iflags)
       ~dep_graphs
-      ~pkg_or_lnu
+      ~parent_id
       ~mode
   =
   let odoc_file = Obj_dir.Module.odoc obj_dir m in
@@ -395,7 +393,7 @@ let compile_module
           [ A "-I"
           ; Path doc_dir
           ; iflags
-          ; As [ "--pkg"; pkg_or_lnu ]
+          ; As [ "--parent-id"; parent_id ]
           ; A "-o"
           ; Target odoc_file
           ; Dep
@@ -430,7 +428,7 @@ let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
       ~quiet:false
       ~flags_for:(Some odoc_input)
       [ Command.Args.dyn includes
-      ; As [ "--pkg"; Package.Name.to_string pkg ]
+      ; As [ "--parent-id"; Package.Name.to_string pkg ]
       ; A "-o"
       ; Target odoc_file
       ; Dep (Path.build odoc_input)
@@ -487,9 +485,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
 ;;
 
 let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
-  (* Using the proper package name doesn't actually work since odoc assumes that
-     a package contains only 1 library *)
-  let pkg_or_lnu = pkg_or_lnu (Lib.Local.to_lib local_lib) in
+  let parent_id = target_parent_id (Lib local_lib) in
   let sctx = Compilation_context.super_context cctx in
   let ctx = Super_context.context sctx in
   let info = Lib.Local.info local_lib in
@@ -513,7 +509,7 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
         ~includes
         ~dep_graphs:(Compilation_context.dep_graphs cctx)
         ~obj_dir
-        ~pkg_or_lnu
+        ~parent_id
         ~mode:for_
         m
     in
