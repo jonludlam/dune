@@ -48,9 +48,16 @@ module Odoc = struct
     | Fatal
     | Nonfatal
 
-  type t = { warnings : warnings option }
+  type source_rendering =
+    | Enabled
+    | Disabled
 
-  let empty = { warnings = None }
+  type t =
+    { warnings : warnings option
+    ; source_rendering : source_rendering option
+    }
+
+  let empty = { warnings = None; source_rendering = None }
 
   let warnings_equal x y =
     match x, y with
@@ -58,13 +65,25 @@ module Odoc = struct
     | (Fatal | Nonfatal), _ -> false
   ;;
 
-  let equal x y = Option.equal warnings_equal x.warnings y.warnings
+  let source_rendering_equal x y =
+    match x, y with
+    | Enabled, Enabled | Disabled, Disabled -> true
+    | (Enabled | Disabled), _ -> false
+  ;;
+
+  let equal x y =
+    Option.equal warnings_equal x.warnings y.warnings
+    && Option.equal source_rendering_equal x.source_rendering y.source_rendering
+  ;;
+
   let warnings_decode = enum [ "fatal", Fatal; "nonfatal", Nonfatal ]
+  let source_rendering_decode = enum [ "enabled", Enabled; "disabled", Disabled ]
 
   let decode =
     fields
-    @@ let+ warnings = field_o "warnings" warnings_decode in
-       { warnings }
+    @@ let+ warnings = field_o "warnings" warnings_decode
+       and+ source_rendering = field_o "source_rendering" source_rendering_decode in
+       { warnings; source_rendering }
   ;;
 end
 

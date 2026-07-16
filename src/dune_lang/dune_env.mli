@@ -15,7 +15,14 @@ module Odoc : sig
     | Fatal
     | Nonfatal
 
-  type t = { warnings : warnings option }
+  type source_rendering =
+    | Enabled
+    | Disabled
+
+  type t =
+    { warnings : warnings option
+    ; source_rendering : source_rendering option
+    }
 
   val decode : t Decoder.t
 end

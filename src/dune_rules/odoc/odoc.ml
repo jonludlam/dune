@@ -83,11 +83,26 @@ let target_parent_id = function
      | None -> lib_unique_name lib)
 ;;
 
-(* The odoc warnings tag for a target: the package name, so that a
-   package's own documentation warnings are shown while warnings that
-   bubble up from a dependency's units (tagged with the dependency's
-   package) are filtered. A packageless (private) library is tagged with
-   its plain library name. *)
+(* Like [target_parent_id] but with a [src] segment before the library
+   name, per odd's [src_lib_dir] convention. Source rendering is
+   library-scoped, so this is never called with a [Pkg] target. *)
+let target_parent_id_src = function
+  | Pkg _ ->
+    Code_error.raise "target_parent_id_src: source rendering targets a package" []
+  | Lib lib ->
+    let lib = Lib.Local.to_lib lib in
+    (match Lib_info.package (Lib.info lib) with
+     | Some pkg ->
+       sprintf
+         "%s/src/%s"
+         (Package.Name.to_string pkg)
+         (Lib_name.to_string (Lib.name lib))
+     | None -> sprintf "%s/src" (lib_unique_name lib))
+;;
+
+(* The odoc warnings tag for a target: its package name, so a package's
+   own warnings are shown while warnings bubbling up from a dependency's
+   units are filtered out. Packageless libraries use their plain name. *)
 let warnings_tag = function
   | Pkg pkg -> Package.Name.to_string pkg
   | Lib lib ->
@@ -165,6 +180,7 @@ module Paths = struct
   let odocl_root ctx = root ctx ++ "_odocls"
   let add_parent_id base m = base ++ target_parent_id m
   let html ctx m = add_parent_id (html_root ctx) m
+  let html_src ctx m = html_root ctx ++ target_parent_id_src m
   let markdown ctx m = add_parent_id (markdown_root ctx) m
   let odocl ctx m = add_parent_id (odocl_root ctx) m
   let gen_mld_dir ctx pkg = root ctx ++ "_mlds" ++ Package.Name.to_string pkg
@@ -237,6 +253,10 @@ module Artifact = struct
   (* Asset odocs are named [asset-<name>.odoc] by odoc's [compile-asset],
      following the convention documented in odoc's driver.mld. *)
   let is_asset t = String.starts_with (basename t) ~prefix:"asset-"
+
+  (* Impl (source rendering) odocs are named [impl-<mod>.odoc], mirroring
+     [is_asset] above and the [impl-] prefix odoc's [compile-impl] expects. *)
+  let is_impl t = String.starts_with (basename t) ~prefix:"impl-"
   let odocl_file ctx t = Paths.odocl ctx t.target ++ (basename t ^ ".odocl")
 
   let output_file ctx (output : Output_format.t) t =
@@ -252,6 +272,23 @@ module Artifact = struct
         ++ (basename |> String.drop_prefix ~prefix:"asset-" |> Option.value_exn)
       | Lib _ ->
         Code_error.raise "Artifact.output_file: asset artifact targets a library" [])
+    else if is_impl t
+    then (
+      match t.target with
+      | Pkg _ ->
+        Code_error.raise "Artifact.output_file: impl artifact targets a package" []
+      | Lib _ ->
+        (* [html-generate-source]'s output path is keyed by source-id, not
+           parent-id (see [Paths.html_src]); only html is ever produced
+           for source rendering (see [setup_generate_source]). *)
+        let source =
+          match t.source with
+          | Some source -> source
+          | None ->
+            Code_error.raise "Artifact.output_file: impl artifact has no source" []
+        in
+        Paths.html_src ctx t.target
+        ++ (Filename.to_string (Path.basename source) ^ ".html"))
     else (
       let suffix = Filename.of_string_exn (Output_format.extension output) in
       match t.target with
@@ -363,17 +400,36 @@ module Flags = struct
     | Fatal
     | Nonfatal
 
-  type t = { warnings : warnings }
+  type source_rendering = Dune_env.Odoc.source_rendering =
+    | Enabled
+    | Disabled
 
-  let default = { warnings = Nonfatal }
+  type t =
+    { warnings : warnings
+    ; source_rendering : source_rendering
+    }
 
-  let get ~dir =
-    Env_stanza_db.value ~default ~dir ~f:(fun config ->
-      match config.odoc.warnings with
-      | None -> Memo.return None
-      | Some warnings -> Memo.return (Some { warnings }))
-    |> Action_builder.of_memo
+  let default = { warnings = Nonfatal; source_rendering = Disabled }
+
+  let warnings_memo ~dir =
+    Env_stanza_db.value ~default:default.warnings ~dir ~f:(fun config ->
+      Memo.return config.odoc.warnings)
   ;;
+
+  let source_rendering_memo ~dir =
+    Env_stanza_db.value ~default:default.source_rendering ~dir ~f:(fun config ->
+      Memo.return config.odoc.source_rendering)
+  ;;
+
+  (* A plain [Memo.t], not wrapped like [get] below: this gates rule
+     generation itself, so it can't be read lazily at action-execution time. *)
+  let get_memo ~dir =
+    let+ warnings = warnings_memo ~dir
+    and+ source_rendering = source_rendering_memo ~dir in
+    { warnings; source_rendering }
+  ;;
+
+  let get ~dir = get_memo ~dir |> Action_builder.of_memo
 end
 
 let odoc_base_flags quiet build_dir =
@@ -498,6 +554,83 @@ let compile_module
     add_rule sctx action_with_targets
   in
   m, odoc_file
+;;
+
+(* Unlike [module_deps], source rendering always processes the .ml, so
+   this needs the .ml's own deps, matching what [compile-impl] consumes. *)
+let impl_deps (m : Module.t) ~obj_dir ~(dep_graphs : Dep_graph.Ml_kind.t) =
+  Action_builder.dyn_paths_unit
+    (let open Action_builder.O in
+     let+ deps = Dep_graph.deps_of dep_graphs.impl m in
+     List.map deps ~f:(fun m -> Path.build (Obj_dir.Module.odoc obj_dir m)))
+;;
+
+(* The [impl-<mod>.odoc] file for a module's source-rendering unit, next
+   to the module's own odoc, per odoc's [compile-impl] naming convention
+   (driver.mld). [<mod>] is unique per obj_dir, so no collisions. *)
+let impl_odoc_file obj_dir m =
+  let name = Module_name.Unique.to_string (Module.obj_name m) in
+  Obj_dir.odoc_dir obj_dir ++ ("impl-" ^ name ^ odoc_ext)
+;;
+
+(* The [--source-id] of a module's implementation (driver.mld, "The
+   [--source-id] arguments"): [<pkg>/src/<lib>/<file>.ml], or
+   [<lnu>/src/<file>.ml] for a private library (odd's [src_lib_dir]). *)
+let impl_source_id target src_path =
+  sprintf
+    "%s/%s"
+    (target_parent_id_src target)
+    (Filename.to_string (Path.basename src_path))
+;;
+
+let compile_impl
+      sctx
+      ~obj_dir
+      (m : Module.t)
+      ~src_path
+      ~includes:(file_deps, iflags)
+      ~dep_graphs
+      ~parent_id
+      ~warnings_tag
+      ~target
+  =
+  let odoc_file = impl_odoc_file obj_dir m in
+  let source_id = impl_source_id target src_path in
+  let+ () =
+    let action_with_targets =
+      let doc_dir = Path.build (Obj_dir.odoc_dir obj_dir) in
+      let cmt_file =
+        match Obj_dir.Module.cmt_file obj_dir m ~ml_kind:Impl ~cm_kind:(Ocaml Cmi) with
+        | Some f -> f
+        | None ->
+          Code_error.raise "compile_impl: module has no .ml" [ "m", Module.to_dyn m ]
+      in
+      let run_odoc =
+        run_odoc
+          sctx
+          ~dir:doc_dir
+          "compile-impl"
+          ~quiet:false
+          ~flags_for:(Some odoc_file)
+          [ A "-I"
+          ; Path doc_dir
+          ; iflags
+          ; As [ "--parent-id"; parent_id ]
+          ; As [ "--source-id"; source_id ]
+          ; As [ "--warnings-tag"; warnings_tag ]
+          ; A "-o"
+          ; Target odoc_file
+          ; Dep (Path.build cmt_file)
+          ]
+      in
+      let open Action_builder.With_targets.O in
+      Action_builder.with_no_targets file_deps
+      >>> Action_builder.with_no_targets (impl_deps m ~obj_dir ~dep_graphs)
+      >>> run_odoc
+    in
+    add_rule sctx action_with_targets
+  in
+  odoc_file
 ;;
 
 let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
@@ -701,7 +834,8 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let ctx = Super_context.context sctx in
   let info = Lib.Local.info local_lib in
   let obj_dir = Compilation_context.obj_dir cctx in
-  let modules = Compilation_context.modules cctx in
+  let modules = Compilation_context.modules cctx |> Modules.With_vlib.drop_vlib in
+  let dep_graphs = Compilation_context.dep_graphs cctx in
   let* includes =
     let* stdlib_dir = stdlib_dir ctx in
     let+ requires = Compilation_context.requires_compile cctx in
@@ -711,25 +845,52 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
     in
     Dep.deps ctx package requires, odoc_include_flags
   in
-  modules
-  |> Modules.With_vlib.drop_vlib
-  |> Modules.fold ~init:[] ~f:(fun m acc ->
-    let compiled =
-      let for_ = Compilation_context.for_ cctx in
-      compile_module
-        sctx
-        ~includes
-        ~dep_graphs:(Compilation_context.dep_graphs cctx)
-        ~obj_dir
-        ~parent_id
-        ~warnings_tag
-        ~mode:for_
-        m
+  let* module_odocs =
+    modules
+    |> Modules.fold ~init:[] ~f:(fun m acc ->
+      let compiled =
+        let for_ = Compilation_context.for_ cctx in
+        compile_module
+          sctx
+          ~includes
+          ~dep_graphs
+          ~obj_dir
+          ~parent_id
+          ~warnings_tag
+          ~mode:for_
+          m
+      in
+      compiled :: acc)
+    |> Memo.all_concurrently
+    >>| List.map ~f:(fun (_, p) -> Path.build p)
+  in
+  let* impl_odocs =
+    let* { Flags.source_rendering; _ } =
+      Flags.get_memo ~dir:(Compilation_context.dir cctx)
     in
-    compiled :: acc)
-  |> Memo.all_concurrently
-  >>| Path.Set.of_list_map ~f:(fun (_, p) -> Path.build p)
-  >>= Dep.setup_deps ctx (Lib local_lib)
+    match source_rendering with
+    | Disabled -> Memo.return []
+    | Enabled ->
+      modules
+      |> Modules.fold ~init:[] ~f:(fun m acc ->
+        if Module.has m ~ml_kind:Impl then m :: acc else acc)
+      |> Memo.parallel_map ~f:(fun m ->
+        let src_path = Option.value_exn (Module.file m ~ml_kind:Impl) in
+        let+ odoc_file =
+          compile_impl
+            sctx
+            ~obj_dir
+            m
+            ~src_path
+            ~includes
+            ~dep_graphs
+            ~parent_id
+            ~warnings_tag
+            ~target:(Lib local_lib)
+        in
+        Path.build odoc_file)
+  in
+  Path.Set.of_list (module_odocs @ impl_odocs) |> Dep.setup_deps ctx (Lib local_lib)
 ;;
 
 let odoc_output_targets sctx odoc_file (out : Output_format.t) ~output_dir =
@@ -872,6 +1033,45 @@ let setup_generate_asset sctx (odoc_file : Artifact.t) =
       [ A "-o"
       ; Path (Path.build html_root)
       ; A "--asset-unit"
+      ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
+      ; Dep source_file
+      ]
+    |> Action_builder.With_targets.add ~file_targets:[ output_file ]
+  in
+  add_rule sctx run_odoc
+;;
+
+(* Render an impl artifact's hyperlinked source using
+   [odoc html-generate-source]. Its output path is derived from the
+   source-id given at [compile-impl] time, not the parent-id (see
+   [Artifact.output_file]'s impl branch), so, unlike modules, there is
+   nothing else to generate: no JSON or markdown variant exists for
+   source rendering. *)
+let setup_generate_source sctx (odoc_file : Artifact.t) =
+  let ctx = Super_context.context sctx in
+  let html_root = Paths.html_root ctx in
+  let odoc_support_path = Paths.odoc_support ctx in
+  let source_file =
+    match Artifact.source_file odoc_file with
+    | Some source -> source
+    | None -> Code_error.raise "setup_generate_source: impl artifact has no source" []
+  in
+  let output_file = Artifact.output_file ctx Html odoc_file in
+  let run_odoc =
+    run_odoc
+      sctx
+      ~dir:(Path.build html_root)
+      "html-generate-source"
+      ~quiet:false
+      ~flags_for:None
+      [ A "-o"
+      ; Path (Path.build html_root)
+      ; A "--support-uri"
+      ; Path (Path.build odoc_support_path)
+      ; A "--theme-uri"
+      ; Path (Path.build odoc_support_path)
+      ; S [ A "--remap-file"; Dep (Path.build (Paths.remap_file ctx)) ]
+      ; A "--impl"
       ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
       ; Dep source_file
       ]
@@ -1228,8 +1428,34 @@ let odoc_artefacts sctx target =
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
-    let+ modules = entry_modules_by_lib sctx lib in
-    List.map modules ~f:(fun m -> Obj_dir.Module.odoc obj_dir m |> Artifact.make ~target)
+    let* entry_modules = entry_modules_by_lib sctx lib in
+    let module_artefacts =
+      List.map entry_modules ~f:(fun m ->
+        Obj_dir.Module.odoc obj_dir m |> Artifact.make ~target)
+    in
+    let+ impl_artefacts =
+      (* Gate impl artifacts on the same [source_rendering] flag that
+         [setup_library_odoc_rules] reads before compiling them, from the
+         same directory, so the two decisions never diverge. *)
+      let* { Flags.source_rendering; _ } = Flags.get_memo ~dir:(Lib_info.src_dir info) in
+      match source_rendering with
+      | Disabled -> Memo.return []
+      | Enabled ->
+        (* Source rendering covers every compilation unit, not just entry
+           modules, matching what [setup_library_odoc_rules] compiles. *)
+        let for_ =
+          Compilation_mode.Set.of_lib_mode_set (Lib_info.modes info)
+          |> Compilation_mode.Set.for_merlin
+        in
+        let+ all_modules = Dir_contents.modules_of_local_lib sctx lib ~for_ in
+        Modules.fold all_modules ~init:[] ~f:(fun m acc ->
+          if Module.has m ~ml_kind:Impl
+          then (
+            let source = Option.value_exn (Module.file m ~ml_kind:Impl) in
+            Artifact.make ~target ~source (impl_odoc_file obj_dir m) :: acc)
+          else acc)
+    in
+    module_artefacts @ impl_artefacts
 ;;
 
 let setup_lib_odocl_rules_def =
@@ -1376,8 +1602,11 @@ let setup_lib_html_rules_def =
     let ctx = Super_context.context sctx in
     let target = Lib lib in
     let* odocs = odoc_artefacts sctx target in
+    (* Source rendering only produces html (see [setup_generate_source]),
+       so impls are excluded from the Json alias. *)
+    let json_odocs = List.filter odocs ~f:(fun o -> not (Artifact.is_impl o)) in
     let* () = add_format_alias_deps ctx Html target odocs in
-    add_format_alias_deps ctx Json target odocs
+    add_format_alias_deps ctx Json target json_odocs
   in
   Memo.With_implicit_output.create
     "setup-library-html-rules"
@@ -1391,17 +1620,27 @@ let search_db_for_lib sctx lib =
   let ctx = Super_context.context sctx in
   let dir = Paths.html ctx target in
   let* odocs = odoc_artefacts sctx target in
-  let odocls = List.map odocs ~f:(Artifact.odocl_file ctx) in
+  (* Impls carry no searchable content, and odoc's indexer only accepts
+     pages and modules as input (see the similar filter in
+     [setup_pkg_html_rules_def], which also excludes assets). *)
+  let odocls =
+    List.filter_map odocs ~f:(fun o ->
+      if Artifact.is_impl o then None else Some (Artifact.odocl_file ctx o))
+  in
   Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
 ;;
 
 let setup_lib_html_rules sctx ~search_db lib =
   let target = Lib lib in
   let* odocs = odoc_artefacts sctx target in
+  let impls, modules_ =
+    List.partition_map odocs ~f:(fun o -> if Artifact.is_impl o then Left o else Right o)
+  in
   let* () =
-    Memo.parallel_iter odocs ~f:(fun odoc ->
+    Memo.parallel_iter modules_ ~f:(fun odoc ->
       setup_generate_html_and_json sctx ~search_db odoc)
   in
+  let* () = Memo.parallel_iter impls ~f:(setup_generate_source sctx) in
   Memo.With_implicit_output.exec setup_lib_html_rules_def (sctx, lib)
 ;;
 
@@ -1416,11 +1655,13 @@ let setup_pkg_html_rules_def =
     in
     let all_odocs = pkg_odocs @ lib_odocs in
     let* search_db =
-      (* Assets carry no searchable content, and odoc's indexer only accepts
-         pages and modules as input. *)
+      (* Assets and impls carry no searchable content, and odoc's indexer
+         only accepts pages and modules as input. *)
       let odocls =
         List.filter_map all_odocs ~f:(fun o ->
-          if Artifact.is_asset o then None else Some (Artifact.odocl_file ctx o))
+          if Artifact.is_asset o || Artifact.is_impl o
+          then None
+          else Some (Artifact.odocl_file ctx o))
       in
       Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
     in
@@ -1433,8 +1674,11 @@ let setup_pkg_html_rules_def =
       Memo.parallel_iter pkg_pages ~f:(setup_generate_html_and_json ~search_db sctx)
     in
     let* () = Memo.parallel_iter pkg_assets ~f:(setup_generate_asset sctx) in
+    (* Source rendering only produces html, so impls are excluded from the
+       Json alias (see [setup_lib_html_rules_def]). *)
+    let json_odocs = List.filter all_odocs ~f:(fun o -> not (Artifact.is_impl o)) in
     let* () = add_format_alias_deps ctx Html (Pkg pkg) all_odocs in
-    add_format_alias_deps ctx Json (Pkg pkg) all_odocs
+    add_format_alias_deps ctx Json (Pkg pkg) json_odocs
   in
   setup_pkg_rules_def "setup-package-html-rules" f
 ;;
@@ -1445,15 +1689,20 @@ let setup_pkg_html_rules sctx ~pkg ~for_ : unit Memo.t =
 
 let setup_lib_markdown_rules sctx lib =
   let target = Lib lib in
+  (* Source rendering has no markdown output: odoc's [markdown-generate]
+     only applies to modules and pages (see [setup_pkg_markdown_rules]). *)
+  let no_impls odocs = List.filter odocs ~f:(fun o -> not (Artifact.is_impl o)) in
   let* () =
     match Lib_info.package (Lib.Local.info lib) with
     | Some _ -> Memo.return ()
     | None ->
-      odoc_artefacts sctx target
-      >>= Memo.parallel_iter ~f:(fun odoc -> setup_generate_markdown sctx odoc)
+      let* odocs = odoc_artefacts sctx target in
+      Memo.parallel_iter (no_impls odocs) ~f:(fun odoc ->
+        setup_generate_markdown sctx odoc)
   in
   let ctx = Super_context.context sctx in
-  odoc_artefacts sctx (Lib lib) >>= add_format_alias_deps ctx Markdown target
+  let* odocs = odoc_artefacts sctx (Lib lib) in
+  add_format_alias_deps ctx Markdown target (no_impls odocs)
 ;;
 
 let setup_pkg_markdown_rules sctx ~pkg =
@@ -1466,9 +1715,12 @@ let setup_pkg_markdown_rules sctx ~pkg =
     in
     pkg_odocs @ lib_odocs
   in
-  (* Assets have no markdown rendering: odoc's [markdown-generate] only
-     applies to modules and pages. *)
-  let markdown_odocs = List.filter all_odocs ~f:(fun o -> not (Artifact.is_asset o)) in
+  (* Assets and impls have no markdown rendering: odoc's [markdown-generate]
+     only applies to modules and pages. *)
+  let markdown_odocs =
+    List.filter all_odocs ~f:(fun o ->
+      (not (Artifact.is_asset o)) && not (Artifact.is_impl o))
+  in
   let* () =
     if List.is_empty markdown_odocs
     then Memo.return ()
