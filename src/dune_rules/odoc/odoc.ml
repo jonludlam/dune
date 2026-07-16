@@ -221,37 +221,56 @@ module Artifact = struct
   type t =
     { odoc_file : Path.Build.t
     ; target : target
+    ; source : Path.t option
+      (** The input file of an asset artifact, needed by
+          [html-generate-asset]. [None] for modules and pages. *)
     }
 
-  let make ~target odoc_file = { odoc_file; target }
+  let make ~target ?source odoc_file = { odoc_file; target; source }
   let odoc_file t = t.odoc_file
+  let source_file t = t.source
 
   let basename t =
     Path.Build.basename t.odoc_file |> Filename.remove_extension |> Filename.to_string
   ;;
 
+  (* Asset odocs are named [asset-<name>.odoc] by odoc's [compile-asset],
+     following the convention documented in odoc's driver.mld. *)
+  let is_asset t = String.starts_with (basename t) ~prefix:"asset-"
   let odocl_file ctx t = Paths.odocl ctx t.target ++ (basename t ^ ".odocl")
 
   let output_file ctx (output : Output_format.t) t =
     let basename = basename t in
-    let suffix = Filename.of_string_exn (Output_format.extension output) in
-    match t.target with
-    | Lib _ ->
-      (match output with
-       | Html | Json ->
-         Paths.html ctx t.target ++ Stdune.String.capitalize basename ++ "index"
-         |> Path.Build.extend_basename ~suffix
-       | Markdown ->
-         Paths.markdown ctx t.target ++ Stdune.String.capitalize basename
-         |> Path.Build.extend_basename ~suffix)
-    | Pkg _ ->
-      let base =
-        match output with
-        | Markdown -> Paths.markdown ctx t.target
-        | Html | Json -> Paths.html ctx t.target
-      in
-      base ++ (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
-      |> Path.Build.extend_basename ~suffix
+    if is_asset t
+    then (
+      match t.target with
+      | Pkg _ ->
+        (* An asset's html output is the raw file, copied verbatim: no
+           extension is added, and the same path serves both the Html and
+           Json aliases (see [setup_generate_asset]). *)
+        Paths.html ctx t.target
+        ++ (basename |> String.drop_prefix ~prefix:"asset-" |> Option.value_exn)
+      | Lib _ ->
+        Code_error.raise "Artifact.output_file: asset artifact targets a library" [])
+    else (
+      let suffix = Filename.of_string_exn (Output_format.extension output) in
+      match t.target with
+      | Lib _ ->
+        (match output with
+         | Html | Json ->
+           Paths.html ctx t.target ++ Stdune.String.capitalize basename ++ "index"
+           |> Path.Build.extend_basename ~suffix
+         | Markdown ->
+           Paths.markdown ctx t.target ++ Stdune.String.capitalize basename
+           |> Path.Build.extend_basename ~suffix)
+      | Pkg _ ->
+        let base =
+          match output with
+          | Markdown -> Paths.markdown ctx t.target
+          | Html | Json -> Paths.html ctx t.target
+        in
+        base ++ (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
+        |> Path.Build.extend_basename ~suffix)
   ;;
 end
 
@@ -498,6 +517,32 @@ let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
       ; Target odoc_file
       ; Dep (Path.build odoc_input)
       ]
+  in
+  let+ () = add_rule sctx run_odoc in
+  odoc_file
+;;
+
+(* Compile an asset (a non-.mld file listed in a package's [(documentation
+   (files ...))] stanza) using [odoc compile-asset]. This produces a
+   placeholder [.odoc] file used for odoc's id resolution; the asset's
+   content itself is only consulted later, at [html-generate-asset] time
+   (see [setup_generate_asset]). *)
+let compile_asset sctx ~pkg ~doc_dir ~name =
+  let odoc_file = doc_dir ++ ("asset-" ^ name ^ ".odoc") in
+  let output_dir = Path.Build.parent_exn doc_dir in
+  let run_odoc =
+    run_odoc
+      sctx
+      ~dir:(Path.build doc_dir)
+      "compile-asset"
+      ~quiet:false
+      ~flags_for:None
+      [ A "--output-dir"
+      ; Path (Path.build output_dir)
+      ; As [ "--parent-id"; Package.Name.to_string pkg ]
+      ; As [ "--name"; name ]
+      ]
+    |> Action_builder.With_targets.add ~file_targets:[ odoc_file ]
   in
   let+ () = add_rule sctx run_odoc in
   odoc_file
@@ -804,6 +849,37 @@ let setup_generate_markdown sctx odoc_file =
   setup_generate sctx ~search_db:None odoc_file Markdown
 ;;
 
+(* Copy an asset artifact's raw file into the package's html output using
+   [odoc html-generate-asset]. This is run once per asset: its single
+   output file ([Artifact.output_file] for an asset ignores the output
+   format) satisfies both the Html and Json aliases. *)
+let setup_generate_asset sctx (odoc_file : Artifact.t) =
+  let ctx = Super_context.context sctx in
+  let html_root = Paths.html_root ctx in
+  let source_file =
+    match Artifact.source_file odoc_file with
+    | Some source -> source
+    | None -> Code_error.raise "setup_generate_asset: asset artifact has no source" []
+  in
+  let output_file = Artifact.output_file ctx Html odoc_file in
+  let run_odoc =
+    run_odoc
+      sctx
+      ~dir:(Path.build html_root)
+      "html-generate-asset"
+      ~quiet:false
+      ~flags_for:None
+      [ A "-o"
+      ; Path (Path.build html_root)
+      ; A "--asset-unit"
+      ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
+      ; Dep source_file
+      ]
+    |> Action_builder.With_targets.add ~file_targets:[ output_file ]
+  in
+  add_rule sctx run_odoc
+;;
+
 let setup_css_rule sctx =
   let ctx = Super_context.context sctx in
   let dir = Paths.odoc_support ctx in
@@ -1044,6 +1120,27 @@ let check_mlds_no_dupes ~pkg ~mlds ~path_to_string =
       ]
 ;;
 
+(* Symmetric to [check_mlds_no_dupes]: two [(files ...)] entries that resolve
+   to the same asset name (e.g. both aliased [as logo.png]) would compile to
+   the same [asset-logo.png.odoc] target. Reject this with a friendly error
+   rather than let the build engine crash on duplicate rules. Returns the
+   asset list unchanged when there is no collision. *)
+let check_assets_no_dupes ~pkg ~assets =
+  match
+    List.rev_map assets ~f:(fun ((_path, name) as asset) -> name, asset)
+    |> String.Map.of_list
+  with
+  | Ok _ -> assets
+  | Error (_, (p1, _name1), (p2, _name2)) ->
+    User_error.raise
+      [ Pp.textf
+          "Package %s has two assets with the same name %s, %s"
+          (Package.Name.to_string pkg)
+          (Path.to_string_maybe_quoted (Path.build p1))
+          (Path.to_string_maybe_quoted (Path.build p2))
+      ]
+;;
+
 let report_warnings warnings =
   match warnings with
   | [] -> ()
@@ -1056,8 +1153,8 @@ let report_warnings warnings =
     in
     User_warning.emit
       [ Pp.textf
-          "Dune does not yet support building documentation for assets, and mlds in a \
-           non-flat hierarchy. Ignoring %s."
+          "Dune does not yet support building documentation for mlds in a non-flat \
+           hierarchy. Ignoring %s."
           l
       ]
 ;;
@@ -1074,23 +1171,60 @@ let mlds sctx pkg =
     | _ -> Right mld)
 ;;
 
+(* Splits a package's raw doc sources into: real [.mld] pages, assets (any
+   other flat file), and warnings (files in a non-flat hierarchy, which
+   dune does not support placing anywhere). Distinct from [mlds] above,
+   which [odoc_new.ml] still relies on and which does not (yet) support
+   assets either. *)
+let mlds_and_assets sctx pkg =
+  let+ raw = Packages.mlds sctx pkg in
+  let flat, warnings =
+    List.partition_map raw ~f:(fun (mld : Doc_sources.mld) ->
+      match Path.Local.explode mld.in_doc with
+      | [ name ] -> Left (mld.path, name)
+      | _ -> Right mld)
+  in
+  let mlds, assets =
+    List.partition_map flat ~f:(fun (path, name) ->
+      let ext = Filename.extension name in
+      if Filename.Extension.Or_empty.check ext mld_ext
+      then Left (path, Filename.remove_extension name |> Filename.to_string)
+      else Right (path, Filename.to_string name))
+  in
+  mlds, assets, warnings
+;;
+
 let odoc_artefacts sctx target =
   let ctx = Super_context.context sctx in
   let dir = Paths.odocs ctx target in
   match target with
   | Pkg pkg ->
-    let+ mlds =
-      let+ mlds, _ = mlds sctx pkg in
+    let+ mlds, assets =
+      let+ mlds, assets, _warnings = mlds_and_assets sctx pkg in
       let mlds =
         check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
           Path.to_string_maybe_quoted (Path.build p))
       in
-      String.Map.update mlds "index" ~f:(function
-        | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld", "index")
-        | Some _ as s -> s)
+      let assets = check_assets_no_dupes ~pkg ~assets in
+      let mlds =
+        String.Map.update mlds "index" ~f:(function
+          | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld", "index")
+          | Some _ as s -> s)
+      in
+      mlds, assets
     in
-    String.Map.to_list_map mlds ~f:(fun _ (path, name) ->
-      Mld.create ~path ~name |> Mld.odoc_file ~doc_dir:dir |> Artifact.make ~target)
+    let mld_artefacts =
+      String.Map.to_list_map mlds ~f:(fun _ (path, name) ->
+        Mld.create ~path ~name |> Mld.odoc_file ~doc_dir:dir |> Artifact.make ~target)
+    in
+    let asset_artefacts =
+      List.map assets ~f:(fun (path, name) ->
+        Artifact.make
+          ~target
+          ~source:(Path.build path)
+          (dir ++ ("asset-" ^ name ^ ".odoc")))
+    in
+    mld_artefacts @ asset_artefacts
   | Lib lib ->
     let info = Lib.Local.info lib in
     let obj_dir = Lib_info.obj_dir info in
@@ -1282,13 +1416,23 @@ let setup_pkg_html_rules_def =
     in
     let all_odocs = pkg_odocs @ lib_odocs in
     let* search_db =
-      let odocls = List.map all_odocs ~f:(Artifact.odocl_file ctx) in
+      (* Assets carry no searchable content, and odoc's indexer only accepts
+         pages and modules as input. *)
+      let odocls =
+        List.filter_map all_odocs ~f:(fun o ->
+          if Artifact.is_asset o then None else Some (Artifact.odocl_file ctx o))
+      in
       Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
     in
     let* () = Memo.parallel_iter libs ~f:(setup_lib_html_rules sctx ~search_db) in
-    let* () =
-      Memo.parallel_iter pkg_odocs ~f:(setup_generate_html_and_json ~search_db sctx)
+    let pkg_assets, pkg_pages =
+      List.partition_map pkg_odocs ~f:(fun o ->
+        if Artifact.is_asset o then Left o else Right o)
     in
+    let* () =
+      Memo.parallel_iter pkg_pages ~f:(setup_generate_html_and_json ~search_db sctx)
+    in
+    let* () = Memo.parallel_iter pkg_assets ~f:(setup_generate_asset sctx) in
     let* () = add_format_alias_deps ctx Html (Pkg pkg) all_odocs in
     add_format_alias_deps ctx Json (Pkg pkg) all_odocs
   in
@@ -1322,14 +1466,17 @@ let setup_pkg_markdown_rules sctx ~pkg =
     in
     pkg_odocs @ lib_odocs
   in
+  (* Assets have no markdown rendering: odoc's [markdown-generate] only
+     applies to modules and pages. *)
+  let markdown_odocs = List.filter all_odocs ~f:(fun o -> not (Artifact.is_asset o)) in
   let* () =
-    if List.is_empty all_odocs
+    if List.is_empty markdown_odocs
     then Memo.return ()
     else (
       let pkg_markdown_dir = Paths.markdown ctx (Pkg pkg) in
       let markdown_root = Paths.markdown_root ctx in
       let actions =
-        List.map all_odocs ~f:(fun odoc ->
+        List.map markdown_odocs ~f:(fun odoc ->
           run_odoc
             sctx
             ~dir:(Path.build markdown_root)
@@ -1349,7 +1496,7 @@ let setup_pkg_markdown_rules sctx ~pkg =
       add_rule sctx rule)
   in
   let* () = Memo.parallel_iter libs ~f:(setup_lib_markdown_rules sctx) in
-  add_format_alias_deps ctx Markdown (Pkg pkg) all_odocs
+  add_format_alias_deps ctx Markdown (Pkg pkg) markdown_odocs
 ;;
 
 let setup_package_aliases_format sctx (pkg : Package.t) (output : Output_format.t) =
@@ -1424,44 +1571,54 @@ let package_mlds =
       ~input:(module Super_context.As_memo_key.And_package_name)
       (fun (sctx, pkg) ->
          Rules.collect (fun () ->
-           let* mlds, warnings = mlds sctx pkg in
+           let* mlds, assets, warnings = mlds_and_assets sctx pkg in
            report_warnings warnings;
            let mlds =
              check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
                Path.to_string_maybe_quoted (Path.build p))
            in
+           let assets = check_assets_no_dupes ~pkg ~assets in
            let ctx = Super_context.context sctx in
-           if String.Map.mem mlds "index"
-           then Memo.return mlds
-           else (
-             let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
-             let* entry_modules = entry_modules sctx ~pkg in
-             let+ () =
-               add_rule
-                 sctx
-                 (Action_builder.write_file gen_mld (default_index ~pkg entry_modules))
-             in
-             String.Map.set mlds "index" (gen_mld, "index"))))
+           let+ mlds =
+             if String.Map.mem mlds "index"
+             then Memo.return mlds
+             else (
+               let gen_mld = Paths.gen_mld_dir ctx pkg ++ "index.mld" in
+               let* entry_modules = entry_modules sctx ~pkg in
+               let+ () =
+                 add_rule
+                   sctx
+                   (Action_builder.write_file gen_mld (default_index ~pkg entry_modules))
+               in
+               String.Map.set mlds "index" (gen_mld, "index"))
+           in
+           mlds, assets))
   in
   fun sctx ~pkg -> Memo.exec memo (sctx, pkg)
 ;;
 
 let setup_package_odoc_rules sctx ~pkg =
-  let* mlds = package_mlds sctx ~pkg >>| fst in
+  let* (mlds, assets), _rules = package_mlds sctx ~pkg in
   let ctx = Super_context.context sctx in
   (* CR-someday jeremiedimino: it is weird that we drop the [Package.t] and go
      back to a package name here. Need to try and change that one day. *)
-  let* odocs =
+  let doc_dir = Paths.odocs ctx (Pkg pkg) in
+  let* mld_odocs =
     String.Map.values mlds
     |> Memo.parallel_map ~f:(fun (path, name) ->
       compile_mld
         sctx
         (Mld.create ~path ~name)
         ~pkg
-        ~doc_dir:(Paths.odocs ctx (Pkg pkg))
+        ~doc_dir
         ~includes:(Action_builder.return []))
   in
-  Path.Set.of_list_map ~f:Path.build odocs |> Dep.setup_deps ctx (Pkg pkg)
+  let* asset_odocs =
+    List.map assets ~f:snd
+    |> Memo.parallel_map ~f:(fun name -> compile_asset sctx ~pkg ~doc_dir ~name)
+  in
+  Path.Set.of_list_map (mld_odocs @ asset_odocs) ~f:Path.build
+  |> Dep.setup_deps ctx (Pkg pkg)
 ;;
 
 let gen_project_rules sctx project =
