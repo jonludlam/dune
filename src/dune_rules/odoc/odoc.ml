@@ -240,9 +240,15 @@ module Artifact = struct
     ; source : Path.t option
       (** The input file of an asset artifact, needed by
           [html-generate-asset]. [None] for modules and pages. *)
+    ; rel_dir : Path.Local.t
+      (** The subdirectory a hierarchical (non-flat) mld page or asset
+          lives under, relative to the target's odoc/odocl/html directory.
+          [Path.Local.root] for a flat mld/asset, a module, or an impl
+          (source rendering nests by source-id instead; see
+          [Paths.html_src]). *)
     }
 
-  let make ~target ?source odoc_file = { odoc_file; target; source }
+  let make ~target ?source ~rel_dir odoc_file = { odoc_file; target; source; rel_dir }
   let odoc_file t = t.odoc_file
   let source_file t = t.source
 
@@ -257,7 +263,10 @@ module Artifact = struct
   (* Impl (source rendering) odocs are named [impl-<mod>.odoc], mirroring
      [is_asset] above and the [impl-] prefix odoc's [compile-impl] expects. *)
   let is_impl t = String.starts_with (basename t) ~prefix:"impl-"
-  let odocl_file ctx t = Paths.odocl ctx t.target ++ (basename t ^ ".odocl")
+
+  let odocl_file ctx t =
+    Path.Build.append_local (Paths.odocl ctx t.target) t.rel_dir ++ (basename t ^ ".odocl")
+  ;;
 
   let output_file ctx (output : Output_format.t) t =
     let basename = basename t in
@@ -265,10 +274,9 @@ module Artifact = struct
     then (
       match t.target with
       | Pkg _ ->
-        (* An asset's html output is the raw file, copied verbatim: no
-           extension is added, and the same path serves both the Html and
-           Json aliases (see [setup_generate_asset]). *)
-        Paths.html ctx t.target
+        (* Asset html output is the raw file, copied verbatim (no
+           extension); the same path serves both the Html and Json aliases. *)
+        Path.Build.append_local (Paths.html ctx t.target) t.rel_dir
         ++ (basename |> String.drop_prefix ~prefix:"asset-" |> Option.value_exn)
       | Lib _ ->
         Code_error.raise "Artifact.output_file: asset artifact targets a library" [])
@@ -306,7 +314,8 @@ module Artifact = struct
           | Markdown -> Paths.markdown ctx t.target
           | Html | Json -> Paths.html ctx t.target
         in
-        base ++ (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
+        Path.Build.append_local base t.rel_dir
+        ++ (basename |> String.drop_prefix ~prefix:"page-" |> Option.value_exn)
         |> Path.Build.extend_basename ~suffix)
   ;;
 end
@@ -633,7 +642,9 @@ let compile_impl
   odoc_file
 ;;
 
-let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
+(* [doc_dir] nests under the package odoc dir by [rel_dir] for a
+   hierarchical page; [parent_id] is [<pkg>] or [<pkg>/<relpath>]. *)
+let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~parent_id ~warnings_tag =
   let odoc_file = Mld.odoc_file m ~doc_dir in
   let odoc_input = Mld.odoc_input m in
   let run_odoc =
@@ -644,8 +655,8 @@ let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
       ~quiet:false
       ~flags_for:(Some odoc_input)
       [ Command.Args.dyn includes
-      ; As [ "--parent-id"; Package.Name.to_string pkg ]
-      ; As [ "--warnings-tag"; Package.Name.to_string pkg ]
+      ; As [ "--parent-id"; parent_id ]
+      ; As [ "--warnings-tag"; warnings_tag ]
       ; A "-o"
       ; Target odoc_file
       ; Dep (Path.build odoc_input)
@@ -655,14 +666,15 @@ let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
   odoc_file
 ;;
 
-(* Compile an asset (a non-.mld file listed in a package's [(documentation
-   (files ...))] stanza) using [odoc compile-asset]. This produces a
-   placeholder [.odoc] file used for odoc's id resolution; the asset's
-   content itself is only consulted later, at [html-generate-asset] time
-   (see [setup_generate_asset]). *)
-let compile_asset sctx ~pkg ~doc_dir ~name =
+(* Compile an asset (a non-.mld file in [(documentation (files ...))]) via
+   [odoc compile-asset]: produces a placeholder [.odoc] for id resolution
+   only; the asset's content is consulted later by [html-generate-asset].
+   [--output-dir] is [pkg_dir]'s parent, so [compile-asset] nests the
+   result under [rel_dir] itself, from [parent_id]. *)
+let compile_asset sctx ~pkg_dir ~rel_dir ~parent_id ~name =
+  let doc_dir = Path.Build.append_local pkg_dir rel_dir in
   let odoc_file = doc_dir ++ ("asset-" ^ name ^ ".odoc") in
-  let output_dir = Path.Build.parent_exn doc_dir in
+  let output_dir = Path.Build.parent_exn pkg_dir in
   let run_odoc =
     run_odoc
       sctx
@@ -672,7 +684,7 @@ let compile_asset sctx ~pkg ~doc_dir ~name =
       ~flags_for:None
       [ A "--output-dir"
       ; Path (Path.build output_dir)
-      ; As [ "--parent-id"; Package.Name.to_string pkg ]
+      ; As [ "--parent-id"; parent_id ]
       ; As [ "--name"; name ]
       ]
     |> Action_builder.With_targets.add ~file_targets:[ odoc_file ]
@@ -681,7 +693,35 @@ let compile_asset sctx ~pkg ~doc_dir ~name =
   odoc_file
 ;;
 
-let odoc_include_flags ctx ~stdlib_dir pkg requires =
+(* Splits a package's raw doc sources into [.mld] pages and assets, each
+   as a [(path, rel_dir, name)] triple ([rel_dir] is [Path.Local.root] for
+   a flat file). Distinct from [mlds] below, which [odoc_new.ml] still
+   relies on and only supports flat files. *)
+let mlds_and_assets sctx pkg =
+  let+ raw = Packages.mlds sctx pkg in
+  List.partition_map raw ~f:(fun (mld : Doc_sources.mld) ->
+    let rel_dir = Path.Local.parent_exn mld.in_doc in
+    let name = Path.Local.basename mld.in_doc in
+    let ext = Filename.extension name in
+    if Filename.Extension.Or_empty.check ext mld_ext
+    then Left (mld.path, rel_dir, Filename.remove_extension name |> Filename.to_string)
+    else Right (mld.path, rel_dir, Filename.to_string name))
+;;
+
+(* Every directory a package's compiled mld/asset odocs may live under:
+   its own dir plus one per distinct [rel_dir] (see [mlds_and_assets]).
+   [odoc_files_in_dirs]'s [-I]/[-P] deps don't recurse, so each nested
+   subdirectory must be listed for a sandboxed odoc invocation to see it. *)
+let pkg_odoc_dirs sctx ctx pkg =
+  let base = Paths.odocs ctx (Pkg pkg) in
+  let+ mlds, assets = mlds_and_assets sctx pkg in
+  base
+  :: (List.map mlds ~f:(fun (_, rel_dir, _) -> rel_dir)
+      @ List.map assets ~f:(fun (_, rel_dir, _) -> rel_dir)
+      |> List.map ~f:(Path.Build.append_local base))
+;;
+
+let odoc_include_flags ctx ~stdlib_dir ~extra_dirs requires =
   Resolve.args
     (let open Resolve.O in
      let+ paths =
@@ -696,11 +736,7 @@ let odoc_include_flags ctx ~stdlib_dir pkg requires =
              Path.Set.add paths (Lib_info.src_dir (Lib.info lib)))
        in
        let paths = Path.Set.add paths stdlib_dir in
-       let paths =
-         match pkg with
-         | Some p -> Path.Set.add paths (Path.build (Paths.odocs ctx (Pkg p)))
-         | None -> paths
-       in
+       let paths = Path.Set.union paths (Path.Set.of_list_map extra_dirs ~f:Path.build) in
        Path.Set.to_list paths
      in
      Command.Args.S
@@ -708,22 +744,24 @@ let odoc_include_flags ctx ~stdlib_dir pkg requires =
         :: List.concat_map paths ~f:(fun dir -> [ Command.Args.A "-I"; Path dir ])))
 ;;
 
-(* -L/-P arguments for the link phase. [-L <libname>:<dir>] for every
-   library in the scope; [-P <pkgname>:<dir>] for every package owning
-   one: local packages point at their page odocs under _odoc/pkg,
-   external packages at their findlib root directory, where odd
-   installs their pages. The stdlib gets no -P: its pages' ids are
-   rooted at the compiler's opam package name, which dune cannot
-   know. *)
-let link_tree_args ctx ~for_ ~with_doc_pkgs (scope_libs : Lib.t list) =
+let extra_pkg_dirs sctx ctx = function
+  | Some p -> pkg_odoc_dirs sctx ctx p
+  | None -> Memo.return []
+;;
+
+(* -L/-P arguments for the link phase: [-L <libname>:<dir>] per library in
+   scope, [-P <pkgname>:<dir>] per owning package (local packages via
+   _odoc/pkg, external via findlib root, where odd installs pages). No -P
+   for the stdlib: its pages root at the compiler's opam package, which
+   dune cannot determine. *)
+let link_tree_args sctx ~for_ ~with_doc_pkgs (scope_libs : Lib.t list) =
+  let ctx = Super_context.context sctx in
   let* base_scope = link_scope ctx ~for_ scope_libs >>= Resolve.read_memo in
   let* public_libs = Scope.DB.public_libs (Context.name ctx) in
   let* packages = Dune_load.packages () in
-  (* A [:with-doc] package contributes its page tree ([-P], below) and a
-     module tree ([-L]) for each library it provides, matching the odoc
-     [(packages ...)] convention as implemented by the reference driver.
-     Local packages resolve through the workspace; external ones through
-     findlib (their libraries' odocs are co-located in the switch). *)
+  (* A [:with-doc] package contributes its page tree ([-P]) and a module
+     tree ([-L]) per library, matching odoc's [(packages ...)] convention.
+     Local packages resolve via the workspace; external via findlib. *)
   let* with_doc_libs =
     let* findlib = Findlib.create (Context.name ctx) in
     Memo.List.concat_map with_doc_pkgs ~f:(fun pkg ->
@@ -767,6 +805,23 @@ let link_tree_args ctx ~for_ ~with_doc_pkgs (scope_libs : Lib.t list) =
             then None
             else Some (Package.Name.to_string root, Lib_info.src_dir (Lib.info root_lib))))
   in
+  let* extra_pkg_dirs =
+    (* Local packages in the [-L]/[-P] tree may have hierarchical
+       pages/assets of their own; [dirs] below must also list those
+       subdirectories (see [pkg_odoc_dirs]). *)
+    let local_pkgs_in_scope =
+      List.filter_map scope ~f:(fun lib ->
+        match Lib.Local.of_lib lib with
+        | Some _ -> Lib_info.package (Lib.info lib)
+        | None -> None)
+    in
+    let local_with_doc_pkgs =
+      List.filter with_doc_pkgs ~f:(fun p -> Package.Name.Map.mem packages p)
+    in
+    Package.Name.Set.of_list (local_pkgs_in_scope @ local_with_doc_pkgs)
+    |> Package.Name.Set.to_list
+    |> Memo.List.concat_map ~f:(pkg_odoc_dirs sctx ctx)
+  in
   let+ with_doc_p =
     Memo.List.filter_map with_doc_pkgs ~f:(fun pkg ->
       let name = Package.Name.to_string pkg in
@@ -783,7 +838,9 @@ let link_tree_args ctx ~for_ ~with_doc_pkgs (scope_libs : Lib.t list) =
     String.Map.of_list_reduce (pkgs @ with_doc_p) ~f:(fun a _ -> a) |> String.Map.to_list
   in
   let dirs =
-    List.map scope ~f:lib_dir @ List.map pkgs ~f:snd
+    List.map scope ~f:lib_dir
+    @ List.map pkgs ~f:snd
+    @ List.map extra_pkg_dirs ~f:Path.build
     |> Path.Set.of_list
     |> Path.Set.to_list
   in
@@ -801,6 +858,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires ~tree_args ~war
   =
   let ctx = Super_context.context sctx in
   let* stdlib_dir = stdlib_dir ctx in
+  let* extra_dirs = extra_pkg_dirs sctx ctx pkg in
   let deps = Dep.deps ctx pkg requires in
   let dir = Path.build (Path.Build.parent_exn (Artifact.odocl_file ctx odoc_file)) in
   let run_odoc =
@@ -811,7 +869,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires ~tree_args ~war
       ~quiet:false
       ~flags_for:(Some (Artifact.odoc_file odoc_file))
       [ A "--custom-layout"
-      ; odoc_include_flags ctx ~stdlib_dir pkg requires
+      ; odoc_include_flags ctx ~stdlib_dir ~extra_dirs requires
       ; tree_args
       ; S
           (List.concat_map warnings_tags ~f:(fun t ->
@@ -838,10 +896,11 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let dep_graphs = Compilation_context.dep_graphs cctx in
   let* includes =
     let* stdlib_dir = stdlib_dir ctx in
-    let+ requires = Compilation_context.requires_compile cctx in
+    let* requires = Compilation_context.requires_compile cctx in
     let package = Lib_info.package info in
+    let+ extra_dirs = extra_pkg_dirs sctx ctx package in
     let odoc_include_flags =
-      Command.Args.memo (odoc_include_flags ctx ~stdlib_dir package requires)
+      Command.Args.memo (odoc_include_flags ctx ~stdlib_dir ~extra_dirs requires)
     in
     Dep.deps ctx package requires, odoc_include_flags
   in
@@ -1320,18 +1379,41 @@ let check_mlds_no_dupes ~pkg ~mlds ~path_to_string =
       ]
 ;;
 
-(* Symmetric to [check_mlds_no_dupes]: two [(files ...)] entries that resolve
-   to the same asset name (e.g. both aliased [as logo.png]) would compile to
-   the same [asset-logo.png.odoc] target. Reject this with a friendly error
-   rather than let the build engine crash on duplicate rules. Returns the
-   asset list unchanged when there is no collision. *)
+(* The full [<relpath>/<name>] path a hierarchical mld/asset resolves to;
+   used as the dedup key so same-basename files in different dirs don't
+   collide. *)
+let hier_full_path (_path, rel_dir, name) =
+  Path.Local.to_string (Path.Local.relative rel_dir name)
+;;
+
+(* Like [check_mlds_no_dupes] but for hierarchical entries, keyed by the
+   full [<relpath>/<name>] path; [check_mlds_no_dupes] itself stays as-is
+   for [odoc_new.ml]'s flat-only usage. *)
+let check_mlds_no_dupes_by_path ~pkg ~mlds =
+  match
+    List.rev_map mlds ~f:(fun mld -> hier_full_path mld, mld) |> String.Map.of_list
+  with
+  | Ok m -> m
+  | Error (_key, (p1, _, _), (p2, _, _)) ->
+    User_error.raise
+      [ Pp.textf
+          "Package %s has two mld's with the same basename %s, %s"
+          (Package.Name.to_string pkg)
+          (Path.to_string_maybe_quoted (Path.build p1))
+          (Path.to_string_maybe_quoted (Path.build p2))
+      ]
+;;
+
+(* Symmetric to [check_mlds_no_dupes_by_path]: two [(files ...)] entries
+   aliased to the same path would compile to the same asset odoc target.
+   Rejects with a friendly error instead of a duplicate-rule crash. *)
 let check_assets_no_dupes ~pkg ~assets =
   match
-    List.rev_map assets ~f:(fun ((_path, name) as asset) -> name, asset)
+    List.rev_map assets ~f:(fun asset -> hier_full_path asset, asset)
     |> String.Map.of_list
   with
   | Ok _ -> assets
-  | Error (_, (p1, _name1), (p2, _name2)) ->
+  | Error (_key, (p1, _, _), (p2, _, _)) ->
     User_error.raise
       [ Pp.textf
           "Package %s has two assets with the same name %s, %s"
@@ -1371,58 +1453,36 @@ let mlds sctx pkg =
     | _ -> Right mld)
 ;;
 
-(* Splits a package's raw doc sources into: real [.mld] pages, assets (any
-   other flat file), and warnings (files in a non-flat hierarchy, which
-   dune does not support placing anywhere). Distinct from [mlds] above,
-   which [odoc_new.ml] still relies on and which does not (yet) support
-   assets either. *)
-let mlds_and_assets sctx pkg =
-  let+ raw = Packages.mlds sctx pkg in
-  let flat, warnings =
-    List.partition_map raw ~f:(fun (mld : Doc_sources.mld) ->
-      match Path.Local.explode mld.in_doc with
-      | [ name ] -> Left (mld.path, name)
-      | _ -> Right mld)
-  in
-  let mlds, assets =
-    List.partition_map flat ~f:(fun (path, name) ->
-      let ext = Filename.extension name in
-      if Filename.Extension.Or_empty.check ext mld_ext
-      then Left (path, Filename.remove_extension name |> Filename.to_string)
-      else Right (path, Filename.to_string name))
-  in
-  mlds, assets, warnings
-;;
-
 let odoc_artefacts sctx target =
   let ctx = Super_context.context sctx in
   let dir = Paths.odocs ctx target in
   match target with
   | Pkg pkg ->
     let+ mlds, assets =
-      let+ mlds, assets, _warnings = mlds_and_assets sctx pkg in
-      let mlds =
-        check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
-          Path.to_string_maybe_quoted (Path.build p))
-      in
+      let+ mlds, assets = mlds_and_assets sctx pkg in
+      let mlds = check_mlds_no_dupes_by_path ~pkg ~mlds in
       let assets = check_assets_no_dupes ~pkg ~assets in
       let mlds =
         String.Map.update mlds "index" ~f:(function
-          | None -> Some (Paths.gen_mld_dir ctx pkg ++ "index.mld", "index")
+          | None ->
+            Some (Paths.gen_mld_dir ctx pkg ++ "index.mld", Path.Local.root, "index")
           | Some _ as s -> s)
       in
       mlds, assets
     in
     let mld_artefacts =
-      String.Map.to_list_map mlds ~f:(fun _ (path, name) ->
-        Mld.create ~path ~name |> Mld.odoc_file ~doc_dir:dir |> Artifact.make ~target)
+      String.Map.to_list_map mlds ~f:(fun _ (path, rel_dir, name) ->
+        let doc_dir = Path.Build.append_local dir rel_dir in
+        Mld.create ~path ~name |> Mld.odoc_file ~doc_dir |> Artifact.make ~target ~rel_dir)
     in
     let asset_artefacts =
-      List.map assets ~f:(fun (path, name) ->
+      List.map assets ~f:(fun (path, rel_dir, name) ->
+        let doc_dir = Path.Build.append_local dir rel_dir in
         Artifact.make
           ~target
           ~source:(Path.build path)
-          (dir ++ ("asset-" ^ name ^ ".odoc")))
+          ~rel_dir
+          (doc_dir ++ ("asset-" ^ name ^ ".odoc")))
     in
     mld_artefacts @ asset_artefacts
   | Lib lib ->
@@ -1431,7 +1491,7 @@ let odoc_artefacts sctx target =
     let* entry_modules = entry_modules_by_lib sctx lib in
     let module_artefacts =
       List.map entry_modules ~f:(fun m ->
-        Obj_dir.Module.odoc obj_dir m |> Artifact.make ~target)
+        Obj_dir.Module.odoc obj_dir m |> Artifact.make ~target ~rel_dir:Path.Local.root)
     in
     let+ impl_artefacts =
       (* Gate impl artifacts on the same [source_rendering] flag that
@@ -1452,7 +1512,12 @@ let odoc_artefacts sctx target =
           if Module.has m ~ml_kind:Impl
           then (
             let source = Option.value_exn (Module.file m ~ml_kind:Impl) in
-            Artifact.make ~target ~source (impl_odoc_file obj_dir m) :: acc)
+            Artifact.make
+              ~target
+              ~source
+              ~rel_dir:Path.Local.root
+              (impl_odoc_file obj_dir m)
+            :: acc)
           else acc)
     in
     module_artefacts @ impl_artefacts
@@ -1476,7 +1541,6 @@ let setup_lib_odocl_rules_def =
   end
   in
   let f (sctx, lib, scope_libs) =
-    let ctx = Super_context.context sctx in
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let pkg = Lib_info.package (Lib.Local.info lib) in
     let warnings_tags = [ warnings_tag (Lib lib) ] in
@@ -1492,7 +1556,7 @@ let setup_lib_odocl_rules_def =
       | Some p -> with_doc_packages packages p
       | None -> []
     in
-    let* tree_args = link_tree_args ctx ~for_ ~with_doc_pkgs scope_libs in
+    let* tree_args = link_tree_args sctx ~for_ ~with_doc_pkgs scope_libs in
     Memo.parallel_iter odocs ~f:(fun odoc ->
       link_odoc_rules sctx ~pkg ~requires ~tree_args ~warnings_tags odoc)
   in
@@ -1542,7 +1606,7 @@ let setup_pkg_odocl_rules_def =
       let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
       let* packages = Dune_load.packages () in
       let with_doc_pkgs = with_doc_packages packages pkg in
-      let* tree_args = link_tree_args ctx ~for_ ~with_doc_pkgs libs_as_libs in
+      let* tree_args = link_tree_args sctx ~for_ ~with_doc_pkgs libs_as_libs in
       let warnings_tags = [ Package.Name.to_string pkg ] in
       let pkg = Some pkg in
       let+ () =
@@ -1823,12 +1887,8 @@ let package_mlds =
       ~input:(module Super_context.As_memo_key.And_package_name)
       (fun (sctx, pkg) ->
          Rules.collect (fun () ->
-           let* mlds, assets, warnings = mlds_and_assets sctx pkg in
-           report_warnings warnings;
-           let mlds =
-             check_mlds_no_dupes ~pkg ~mlds ~path_to_string:(fun p ->
-               Path.to_string_maybe_quoted (Path.build p))
-           in
+           let* mlds, assets = mlds_and_assets sctx pkg in
+           let mlds = check_mlds_no_dupes_by_path ~pkg ~mlds in
            let assets = check_assets_no_dupes ~pkg ~assets in
            let ctx = Super_context.context sctx in
            let+ mlds =
@@ -1842,11 +1902,20 @@ let package_mlds =
                    sctx
                    (Action_builder.write_file gen_mld (default_index ~pkg entry_modules))
                in
-               String.Map.set mlds "index" (gen_mld, "index"))
+               String.Map.set mlds "index" (gen_mld, Path.Local.root, "index"))
            in
            mlds, assets))
   in
   fun sctx ~pkg -> Memo.exec memo (sctx, pkg)
+;;
+
+(* The odoc v3 parent-id of a hierarchical mld/asset, per odoc's
+   driver.mld: [<pkg>], or [<pkg>/<relpath>] when nested under [rel_dir]. *)
+let hier_parent_id pkg rel_dir =
+  let pkg = Package.Name.to_string pkg in
+  match Path.Local.to_string rel_dir with
+  | "." -> pkg
+  | rel -> sprintf "%s/%s" pkg rel
 ;;
 
 let setup_package_odoc_rules sctx ~pkg =
@@ -1854,20 +1923,24 @@ let setup_package_odoc_rules sctx ~pkg =
   let ctx = Super_context.context sctx in
   (* CR-someday jeremiedimino: it is weird that we drop the [Package.t] and go
      back to a package name here. Need to try and change that one day. *)
-  let doc_dir = Paths.odocs ctx (Pkg pkg) in
+  let pkg_dir = Paths.odocs ctx (Pkg pkg) in
+  let warnings_tag = Package.Name.to_string pkg in
   let* mld_odocs =
     String.Map.values mlds
-    |> Memo.parallel_map ~f:(fun (path, name) ->
+    |> Memo.parallel_map ~f:(fun (path, rel_dir, name) ->
+      let doc_dir = Path.Build.append_local pkg_dir rel_dir in
       compile_mld
         sctx
         (Mld.create ~path ~name)
-        ~pkg
         ~doc_dir
+        ~parent_id:(hier_parent_id pkg rel_dir)
+        ~warnings_tag
         ~includes:(Action_builder.return []))
   in
   let* asset_odocs =
-    List.map assets ~f:snd
-    |> Memo.parallel_map ~f:(fun name -> compile_asset sctx ~pkg ~doc_dir ~name)
+    List.map assets ~f:(fun (_path, rel_dir, name) -> rel_dir, name)
+    |> Memo.parallel_map ~f:(fun (rel_dir, name) ->
+      compile_asset sctx ~pkg_dir ~rel_dir ~parent_id:(hier_parent_id pkg rel_dir) ~name)
   in
   Path.Set.of_list_map (mld_odocs @ asset_odocs) ~f:Path.build
   |> Dep.setup_deps ctx (Pkg pkg)
