@@ -885,73 +885,6 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires ~tree_args ~war
      Action_builder.with_no_targets deps >>> run_odoc)
 ;;
 
-let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
-  let parent_id = target_parent_id (Lib local_lib) in
-  let warnings_tag = warnings_tag (Lib local_lib) in
-  let sctx = Compilation_context.super_context cctx in
-  let ctx = Super_context.context sctx in
-  let info = Lib.Local.info local_lib in
-  let obj_dir = Compilation_context.obj_dir cctx in
-  let modules = Compilation_context.modules cctx |> Modules.With_vlib.drop_vlib in
-  let dep_graphs = Compilation_context.dep_graphs cctx in
-  let* includes =
-    let* stdlib_dir = stdlib_dir ctx in
-    let* requires = Compilation_context.requires_compile cctx in
-    let package = Lib_info.package info in
-    let+ extra_dirs = extra_pkg_dirs sctx ctx package in
-    let odoc_include_flags =
-      Command.Args.memo (odoc_include_flags ctx ~stdlib_dir ~extra_dirs requires)
-    in
-    Dep.deps ctx package requires, odoc_include_flags
-  in
-  let* module_odocs =
-    modules
-    |> Modules.fold ~init:[] ~f:(fun m acc ->
-      let compiled =
-        let for_ = Compilation_context.for_ cctx in
-        compile_module
-          sctx
-          ~includes
-          ~dep_graphs
-          ~obj_dir
-          ~parent_id
-          ~warnings_tag
-          ~mode:for_
-          m
-      in
-      compiled :: acc)
-    |> Memo.all_concurrently
-    >>| List.map ~f:(fun (_, p) -> Path.build p)
-  in
-  let* impl_odocs =
-    let* { Flags.source_rendering; _ } =
-      Flags.get_memo ~dir:(Compilation_context.dir cctx)
-    in
-    match source_rendering with
-    | Disabled -> Memo.return []
-    | Enabled ->
-      modules
-      |> Modules.fold ~init:[] ~f:(fun m acc ->
-        if Module.has m ~ml_kind:Impl then m :: acc else acc)
-      |> Memo.parallel_map ~f:(fun m ->
-        let src_path = Option.value_exn (Module.file m ~ml_kind:Impl) in
-        let+ odoc_file =
-          compile_impl
-            sctx
-            ~obj_dir
-            m
-            ~src_path
-            ~includes
-            ~dep_graphs
-            ~parent_id
-            ~warnings_tag
-            ~target:(Lib local_lib)
-        in
-        Path.build odoc_file)
-  in
-  Path.Set.of_list (module_odocs @ impl_odocs) |> Dep.setup_deps ctx (Lib local_lib)
-;;
-
 let odoc_output_targets sctx odoc_file (out : Output_format.t) ~output_dir =
   let action =
     let command =
@@ -979,7 +912,86 @@ let odoc_output_targets sctx odoc_file (out : Output_format.t) ~output_dir =
   >>| List.map ~f:(Path.Build.relative output_dir)
 ;;
 
-let html_generate_args sctx ~search_db ~html_root ~odoc_support_path odoc_file out =
+(* The (pure, rule-free) path of a scope's navigation sidebar; see
+   [setup_index_and_sidebar] for who may add rules that produce it vs.
+   who may only reference it as a [Dep]. *)
+let sidebar_path ctx target = Paths.odocs ctx target ++ "sidebar.odoc-sidebar"
+
+(* Build a scope's navigation sidebar: index its page/module odocls with
+   [odoc compile-index], then turn that into a [.odoc-sidebar] with
+   [odoc sidebar-generate]. Returns the file to pass via [--sidebar] to
+   [html-generate]/[html-generate-source].
+
+   Must be called from within the directory scope that owns
+   [Paths.odocs ctx target] (i.e. while that directory's [gen_rules] is
+   executing) -- for a [Pkg], that's [setup_package_odoc_rules]; for a
+   packageless [Lib], [setup_library_odoc_rules]. Calling it from the
+   sibling [_html] scope raises "[gen_rules] returned rules in a
+   directory that is not a descendant of the directory it was called
+   for"; those call sites reference [sidebar_path] as a [Dep] instead. *)
+let setup_index_and_sidebar sctx ~target ~odocls =
+  let ctx = Super_context.context sctx in
+  let dir = Paths.odocs ctx target in
+  let index_file = dir ++ "index.odoc-index" in
+  let sidebar_file = sidebar_path ctx target in
+  let* () =
+    (* [--root <odocl dir>], not [--file-list]: [--root] reconstructs the
+       page/module tree the sidebar needs, whereas [--file-list] would
+       collapse everything into one flat group. Sandboxing keeps this
+       precise: the action only sees the declared (filtered) odocl deps. *)
+    let root_dir = Paths.odocl ctx target in
+    let run_odoc =
+      run_odoc
+        sctx
+        ~dir:(Path.build dir)
+        "compile-index"
+        ~quiet:false
+        ~flags_for:None
+        [ A "--root"
+        ; Path (Path.build root_dir)
+        ; A "-o"
+        ; Target index_file
+        ; Hidden_deps (Dune_engine.Dep.Set.of_files (List.map odocls ~f:Path.build))
+        ]
+    in
+    add_rule sctx run_odoc
+  in
+  let+ () =
+    let run_odoc =
+      run_odoc
+        sctx
+        ~dir:(Path.build dir)
+        "sidebar-generate"
+        ~quiet:false
+        ~flags_for:None
+        [ A "-o"; Target sidebar_file; Dep (Path.build index_file) ]
+    in
+    add_rule sctx run_odoc
+  in
+  sidebar_file
+;;
+
+(* The odocls a scope's navigation sidebar indexes: pages and modules,
+   excluding assets (an asset has no id of its own to navigate to) and impls
+   (source-rendering units, likewise not part of the navigation tree) -- the
+   same filter used to build the search db (see [search_db_for_lib],
+   [setup_pkg_html_rules_def]). *)
+let sidebar_odocls ctx odocs =
+  List.filter_map odocs ~f:(fun o ->
+    if Artifact.is_asset o || Artifact.is_impl o
+    then None
+    else Some (Artifact.odocl_file ctx o))
+;;
+
+let html_generate_args
+      sctx
+      ~search_db
+      ~sidebar
+      ~html_root
+      ~odoc_support_path
+      odoc_file
+      out
+  =
   let ctx = Super_context.context sctx in
   let search_args =
     match search_db with
@@ -995,12 +1007,15 @@ let html_generate_args sctx ~search_db ~html_root ~odoc_support_path odoc_file o
   ; A "--theme-uri"
   ; Path (Path.build odoc_support_path)
   ; S [ A "--remap-file"; Dep (Path.build (Paths.remap_file ctx)) ]
+  ; (match sidebar with
+     | Some s -> S [ A "--sidebar"; Dep (Path.build s) ]
+     | None -> S [])
   ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
   ; Output_format.args out
   ]
 ;;
 
-let setup_generate sctx ~search_db odoc_file out =
+let setup_generate sctx ~search_db ~sidebar odoc_file out =
   let ctx = Super_context.context sctx in
   let odoc_support_path = Paths.odoc_support ctx in
   let command, output_dir, args =
@@ -1016,7 +1031,14 @@ let setup_generate sctx ~search_db odoc_file out =
       let html_root = Paths.html_root ctx in
       ( "html-generate"
       , html_root
-      , html_generate_args sctx ~search_db ~html_root ~odoc_support_path odoc_file out )
+      , html_generate_args
+          sctx
+          ~search_db
+          ~sidebar
+          ~html_root
+          ~odoc_support_path
+          odoc_file
+          out )
   in
   let* targets =
     match out with
@@ -1030,7 +1052,7 @@ let setup_generate sctx ~search_db odoc_file out =
   add_rule sctx run_odoc
 ;;
 
-let setup_generate_module_html_and_json sctx ~search_db odoc_file =
+let setup_generate_module_html_and_json sctx ~search_db ~sidebar odoc_file =
   let ctx = Super_context.context sctx in
   let odoc_support_path = Paths.odoc_support ctx in
   let html_root = Paths.html_root ctx in
@@ -1044,6 +1066,7 @@ let setup_generate_module_html_and_json sctx ~search_db odoc_file =
       (html_generate_args
          sctx
          ~search_db:(Some search_db)
+         ~sidebar
          ~html_root
          ~odoc_support_path
          odoc_file
@@ -1057,22 +1080,23 @@ let setup_generate_module_html_and_json sctx ~search_db odoc_file =
   add_rule sctx rule
 ;;
 
-let setup_generate_html_and_json sctx ~search_db odoc_file =
+let setup_generate_html_and_json sctx ~search_db ~sidebar odoc_file =
   match odoc_file.Artifact.target with
-  | Lib _ -> setup_generate_module_html_and_json sctx ~search_db odoc_file
+  | Lib _ -> setup_generate_module_html_and_json sctx ~search_db ~sidebar odoc_file
   | Pkg _ ->
-    let* () = setup_generate sctx ~search_db:(Some search_db) odoc_file Html in
-    setup_generate sctx ~search_db:(Some search_db) odoc_file Json
+    let* () = setup_generate sctx ~search_db:(Some search_db) ~sidebar odoc_file Html in
+    setup_generate sctx ~search_db:(Some search_db) ~sidebar odoc_file Json
 ;;
 
 let setup_generate_markdown sctx odoc_file =
-  setup_generate sctx ~search_db:None odoc_file Markdown
+  setup_generate sctx ~search_db:None ~sidebar:None odoc_file Markdown
 ;;
 
-(* Copy an asset artifact's raw file into the package's html output using
-   [odoc html-generate-asset]. This is run once per asset: its single
-   output file ([Artifact.output_file] for an asset ignores the output
-   format) satisfies both the Html and Json aliases. *)
+(* Copy an asset's raw file into html output via [odoc html-generate-asset],
+   once per asset (its single output path satisfies both Html and Json).
+
+   No [--sidebar]: [html-generate-asset] doesn't accept one (fails with
+   "unknown option --sidebar"), matching odd's reference driver. *)
 let setup_generate_asset sctx (odoc_file : Artifact.t) =
   let ctx = Super_context.context sctx in
   let html_root = Paths.html_root ctx in
@@ -1100,13 +1124,11 @@ let setup_generate_asset sctx (odoc_file : Artifact.t) =
   add_rule sctx run_odoc
 ;;
 
-(* Render an impl artifact's hyperlinked source using
-   [odoc html-generate-source]. Its output path is derived from the
-   source-id given at [compile-impl] time, not the parent-id (see
-   [Artifact.output_file]'s impl branch), so, unlike modules, there is
-   nothing else to generate: no JSON or markdown variant exists for
-   source rendering. *)
-let setup_generate_source sctx (odoc_file : Artifact.t) =
+(* Render an impl's hyperlinked source via [odoc html-generate-source].
+   Its output path comes from the source-id, not the parent-id (see
+   [Artifact.output_file]); source rendering has no JSON or markdown
+   variant. *)
+let setup_generate_source sctx ~sidebar (odoc_file : Artifact.t) =
   let ctx = Super_context.context sctx in
   let html_root = Paths.html_root ctx in
   let odoc_support_path = Paths.odoc_support ctx in
@@ -1130,6 +1152,9 @@ let setup_generate_source sctx (odoc_file : Artifact.t) =
       ; A "--theme-uri"
       ; Path (Path.build odoc_support_path)
       ; S [ A "--remap-file"; Dep (Path.build (Paths.remap_file ctx)) ]
+      ; (match sidebar with
+         | Some s -> S [ A "--sidebar"; Dep (Path.build s) ]
+         | None -> S [])
       ; A "--impl"
       ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
       ; Dep source_file
@@ -1523,6 +1548,90 @@ let odoc_artefacts sctx target =
     module_artefacts @ impl_artefacts
 ;;
 
+(* Moved below [odoc_artefacts] so it can call [odoc_artefacts] /
+   [sidebar_odocls] / [setup_index_and_sidebar], defined only past here. *)
+let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
+  let parent_id = target_parent_id (Lib local_lib) in
+  let warnings_tag = warnings_tag (Lib local_lib) in
+  let sctx = Compilation_context.super_context cctx in
+  let ctx = Super_context.context sctx in
+  let info = Lib.Local.info local_lib in
+  let obj_dir = Compilation_context.obj_dir cctx in
+  let modules = Compilation_context.modules cctx |> Modules.With_vlib.drop_vlib in
+  let dep_graphs = Compilation_context.dep_graphs cctx in
+  let* includes =
+    let* stdlib_dir = stdlib_dir ctx in
+    let* requires = Compilation_context.requires_compile cctx in
+    let package = Lib_info.package info in
+    let+ extra_dirs = extra_pkg_dirs sctx ctx package in
+    let odoc_include_flags =
+      Command.Args.memo (odoc_include_flags ctx ~stdlib_dir ~extra_dirs requires)
+    in
+    Dep.deps ctx package requires, odoc_include_flags
+  in
+  let* module_odocs =
+    modules
+    |> Modules.fold ~init:[] ~f:(fun m acc ->
+      let compiled =
+        let for_ = Compilation_context.for_ cctx in
+        compile_module
+          sctx
+          ~includes
+          ~dep_graphs
+          ~obj_dir
+          ~parent_id
+          ~warnings_tag
+          ~mode:for_
+          m
+      in
+      compiled :: acc)
+    |> Memo.all_concurrently
+    >>| List.map ~f:(fun (_, p) -> Path.build p)
+  in
+  let* impl_odocs =
+    let* { Flags.source_rendering; _ } =
+      Flags.get_memo ~dir:(Compilation_context.dir cctx)
+    in
+    match source_rendering with
+    | Disabled -> Memo.return []
+    | Enabled ->
+      modules
+      |> Modules.fold ~init:[] ~f:(fun m acc ->
+        if Module.has m ~ml_kind:Impl then m :: acc else acc)
+      |> Memo.parallel_map ~f:(fun m ->
+        let src_path = Option.value_exn (Module.file m ~ml_kind:Impl) in
+        let+ odoc_file =
+          compile_impl
+            sctx
+            ~obj_dir
+            m
+            ~src_path
+            ~includes
+            ~dep_graphs
+            ~parent_id
+            ~warnings_tag
+            ~target:(Lib local_lib)
+        in
+        Path.build odoc_file)
+  in
+  let* () =
+    Path.Set.of_list (module_odocs @ impl_odocs) |> Dep.setup_deps ctx (Lib local_lib)
+  in
+  (* A packageless library is its own navigation scope, so its sidebar is
+     built here ([_html] doesn't own [Obj_dir.odoc_dir]; see
+     [setup_index_and_sidebar]); a packaged library's sidebar is built
+     once per package, in [setup_package_odoc_rules]. *)
+  match Lib_info.package info with
+  | Some _ -> Memo.return ()
+  | None ->
+    let* odocs = odoc_artefacts sctx (Lib local_lib) in
+    let odocls = sidebar_odocls ctx odocs in
+    let+ (_ : Path.Build.t) =
+      setup_index_and_sidebar sctx ~target:(Lib local_lib) ~odocls
+    in
+    ()
+;;
+
 let setup_lib_odocl_rules_def =
   let module Input = struct
     module Super_context = Super_context.As_memo_key
@@ -1694,7 +1803,7 @@ let search_db_for_lib sctx lib =
   Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
 ;;
 
-let setup_lib_html_rules sctx ~search_db lib =
+let setup_lib_html_rules sctx ~search_db ~sidebar lib =
   let target = Lib lib in
   let* odocs = odoc_artefacts sctx target in
   let impls, modules_ =
@@ -1702,9 +1811,9 @@ let setup_lib_html_rules sctx ~search_db lib =
   in
   let* () =
     Memo.parallel_iter modules_ ~f:(fun odoc ->
-      setup_generate_html_and_json sctx ~search_db odoc)
+      setup_generate_html_and_json sctx ~search_db ~sidebar odoc)
   in
-  let* () = Memo.parallel_iter impls ~f:(setup_generate_source sctx) in
+  let* () = Memo.parallel_iter impls ~f:(setup_generate_source sctx ~sidebar) in
   Memo.With_implicit_output.exec setup_lib_html_rules_def (sctx, lib)
 ;;
 
@@ -1729,13 +1838,21 @@ let setup_pkg_html_rules_def =
       in
       Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
     in
-    let* () = Memo.parallel_iter libs ~f:(setup_lib_html_rules sctx ~search_db) in
+    (* The sidebar is built by [setup_package_odoc_rules] in the
+       [_odoc/pkg/<pkg>] scope that owns it (see [setup_index_and_sidebar]);
+       here, in the sibling [_html] scope, only its path is referenced. *)
+    let sidebar = Some (sidebar_path ctx (Pkg pkg)) in
+    let* () =
+      Memo.parallel_iter libs ~f:(setup_lib_html_rules sctx ~search_db ~sidebar)
+    in
     let pkg_assets, pkg_pages =
       List.partition_map pkg_odocs ~f:(fun o ->
         if Artifact.is_asset o then Left o else Right o)
     in
     let* () =
-      Memo.parallel_iter pkg_pages ~f:(setup_generate_html_and_json ~search_db sctx)
+      Memo.parallel_iter
+        pkg_pages
+        ~f:(setup_generate_html_and_json ~search_db ~sidebar sctx)
     in
     let* () = Memo.parallel_iter pkg_assets ~f:(setup_generate_asset sctx) in
     (* Source rendering only produces html, so impls are excluded from the
@@ -1942,8 +2059,22 @@ let setup_package_odoc_rules sctx ~pkg =
     |> Memo.parallel_map ~f:(fun (rel_dir, name) ->
       compile_asset sctx ~pkg_dir ~rel_dir ~parent_id:(hier_parent_id pkg rel_dir) ~name)
   in
-  Path.Set.of_list_map (mld_odocs @ asset_odocs) ~f:Path.build
-  |> Dep.setup_deps ctx (Pkg pkg)
+  let* () =
+    Path.Set.of_list_map (mld_odocs @ asset_odocs) ~f:Path.build
+    |> Dep.setup_deps ctx (Pkg pkg)
+  in
+  (* Build the sidebar here, in the [_odoc/pkg/<pkg>] scope that owns
+     [Paths.odocs ctx (Pkg pkg)] (see [setup_index_and_sidebar]); the
+     sibling [_html] scope can only reference the resulting path. Indexes
+     the package's and its libraries' odocls, mirroring [all_odocs]. *)
+  let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
+  let* lib_odocs =
+    let* libs = Context.name ctx |> libs_of_pkg ~pkg in
+    Memo.List.concat_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib))
+  in
+  let odocls = sidebar_odocls ctx (pkg_odocs @ lib_odocs) in
+  let+ (_ : Path.Build.t) = setup_index_and_sidebar sctx ~target:(Pkg pkg) ~odocls in
+  ()
 ;;
 
 let gen_project_rules sctx project =
@@ -2104,9 +2235,13 @@ let gen_rules sctx ~dir rest =
          | Some lib ->
            (match Lib_info.package (Lib.Local.info lib) with
             | None ->
-              (* lib with no package above it *)
+              (* Private library: its own navigation scope, sidebar built
+                 in [setup_library_odoc_rules] (owns [Obj_dir.odoc_dir];
+                 see [setup_index_and_sidebar]) -- here only the resulting
+                 path is referenced. *)
               let* search_db = search_db_for_lib sctx lib in
-              setup_lib_html_rules sctx ~search_db lib
+              let sidebar = Some (sidebar_path ctx (Lib lib)) in
+              setup_lib_html_rules sctx ~search_db ~sidebar lib
             | Some pkg -> setup_pkg_html_rules sctx ~pkg ~for_)
        and+ () =
          let* packages = Dune_load.packages () in
