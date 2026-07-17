@@ -97,6 +97,18 @@ let warnings_tag = function
      | None -> Lib_name.to_string (Lib.name lib))
 ;;
 
+(* Packages a local package depends on only for docs ([:with-doc]): their
+   page trees get a [-P] at link time so doc comments can reference them. *)
+let with_doc_packages packages pkg_name =
+  match Package.Name.Map.find packages pkg_name with
+  | None -> []
+  | Some pkg ->
+    Package.depends pkg
+    |> List.filter
+         ~f:(Package_dependency.has_constraint_on Package_variable_name.with_doc)
+    |> List.map ~f:(fun (d : Package_dependency.t) -> d.name)
+;;
+
 let add_rule sctx =
   let dir = Super_context.context sctx |> Context.build_dir in
   Super_context.add_rule sctx ~dir
@@ -112,11 +124,20 @@ let stdlib_lib ctx =
   Lib.DB.find public_libs (Lib_name.of_string "stdlib")
 ;;
 
-(* The libraries in the v3 link scope of a set of libraries (one
-   package's libraries, or a single private library): the libraries
-   themselves, their direct requires, and the stdlib. This is the
-   author-facing reference scope from odoc's driver.mld — direct, not
-   transitive. *)
+let libs_of_pkg ctx ~pkg =
+  let+ { Scope.DB.Lib_entry.Set.libraries; _ } =
+    Scope.DB.lib_entries_of_package ctx pkg
+  in
+  (* Filter out all implementations of virtual libraries *)
+  List.filter_map libraries ~f:(fun lib ->
+    match Lib.Local.to_lib lib |> Lib.info |> Lib_info.implements with
+    | None -> Some lib
+    | Some _ -> None)
+;;
+
+(* The v3 link scope of a set of libraries: the libraries themselves,
+   their direct (not transitive) requires, and the stdlib — the
+   author-facing reference scope from odoc's driver.mld. *)
 let link_scope ctx ~for_ (scope_libs : Lib.t list) =
   let* stdlib = stdlib_lib (Context.name ctx) in
   let+ direct =
@@ -516,15 +537,40 @@ let odoc_include_flags ctx ~stdlib_dir pkg requires =
    installs their pages. The stdlib gets no -P: its pages' ids are
    rooted at the compiler's opam package name, which dune cannot
    know. *)
-let link_tree_args ctx ~for_ (scope_libs : Lib.t list) =
-  let* scope = link_scope ctx ~for_ scope_libs >>= Resolve.read_memo in
+let link_tree_args ctx ~for_ ~with_doc_pkgs (scope_libs : Lib.t list) =
+  let* base_scope = link_scope ctx ~for_ scope_libs >>= Resolve.read_memo in
   let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+  let* packages = Dune_load.packages () in
+  (* A [:with-doc] package contributes its page tree ([-P], below) and a
+     module tree ([-L]) for each library it provides, matching the odoc
+     [(packages ...)] convention as implemented by the reference driver.
+     Local packages resolve through the workspace; external ones through
+     findlib (their libraries' odocs are co-located in the switch). *)
+  let* with_doc_libs =
+    let* findlib = Findlib.create (Context.name ctx) in
+    Memo.List.concat_map with_doc_pkgs ~f:(fun pkg ->
+      if Package.Name.Map.mem packages pkg
+      then libs_of_pkg (Context.name ctx) ~pkg >>| List.map ~f:Lib.Local.to_lib
+      else
+        Findlib.find_root_package findlib pkg
+        >>= function
+        | Error _ -> Memo.return []
+        | Ok dpkg ->
+          let { Dune_package.entries; _ } = dpkg in
+          Lib_name.Map.values entries
+          |> List.filter_map ~f:(function
+            | Dune_package.Entry.Library l ->
+              Some (Lib_info.name (Dune_package.Lib.info l))
+            | Deprecated_library_name _ | Hidden_library _ -> None)
+          |> Memo.List.filter_map ~f:(Lib.DB.find public_libs))
+  in
+  let scope = Lib.Set.to_list (Lib.Set.of_list (base_scope @ with_doc_libs)) in
   let lib_dir lib =
     match Lib.Local.of_lib lib with
     | Some l -> Path.build (Paths.odocs ctx (Lib l))
     | None -> Lib_info.src_dir (Lib.info lib)
   in
-  let+ pkgs =
+  let* pkgs =
     Memo.List.filter_map scope ~f:(fun lib ->
       match Lib.Local.of_lib lib with
       | Some _ ->
@@ -543,7 +589,21 @@ let link_tree_args ctx ~for_ (scope_libs : Lib.t list) =
             then None
             else Some (Package.Name.to_string root, Lib_info.src_dir (Lib.info root_lib))))
   in
-  let pkgs = String.Map.of_list_reduce pkgs ~f:(fun a _ -> a) |> String.Map.to_list in
+  let+ with_doc_p =
+    Memo.List.filter_map with_doc_pkgs ~f:(fun pkg ->
+      let name = Package.Name.to_string pkg in
+      if Package.Name.Map.mem packages pkg
+      then Memo.return (Some (name, Path.build (Paths.odocs ctx (Pkg pkg))))
+      else
+        (* external: best-effort — the package's eponymous library's dir,
+           where odd co-locates its page odocs. Absent => no -P (silent). *)
+        Lib.DB.find public_libs (Lib_name.of_package_name pkg)
+        >>| Option.bind ~f:(fun lib ->
+          if Lib.is_local lib then None else Some (name, Lib_info.src_dir (Lib.info lib))))
+  in
+  let pkgs =
+    String.Map.of_list_reduce (pkgs @ with_doc_p) ~f:(fun a _ -> a) |> String.Map.to_list
+  in
   let dirs =
     List.map scope ~f:lib_dir @ List.map pkgs ~f:snd
     |> Path.Set.of_list
@@ -943,17 +1003,6 @@ let setup_remap_rule sctx =
   add_rule sctx (Action_builder.write_file (Paths.remap_file ctx) contents)
 ;;
 
-let libs_of_pkg ctx ~pkg =
-  let+ { Scope.DB.Lib_entry.Set.libraries; _ } =
-    Scope.DB.lib_entries_of_package ctx pkg
-  in
-  (* Filter out all implementations of virtual libraries *)
-  List.filter_map libraries ~f:(fun lib ->
-    match Lib.Local.to_lib lib |> Lib.info |> Lib_info.implements with
-    | None -> Some lib
-    | Some _ -> None)
-;;
-
 let entry_modules_by_lib sctx lib =
   let info = Lib.Local.info lib in
   let for_merlin =
@@ -1077,7 +1126,13 @@ let setup_lib_odocl_rules_def =
       |> Compilation_mode.Set.for_merlin
     in
     let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false ~for_ in
-    let* tree_args = link_tree_args ctx ~for_ scope_libs in
+    let* packages = Dune_load.packages () in
+    let with_doc_pkgs =
+      match pkg with
+      | Some p -> with_doc_packages packages p
+      | None -> []
+    in
+    let* tree_args = link_tree_args ctx ~for_ ~with_doc_pkgs scope_libs in
     Memo.parallel_iter odocs ~f:(fun odoc ->
       link_odoc_rules sctx ~pkg ~requires ~tree_args ~warnings_tags odoc)
   in
@@ -1125,7 +1180,9 @@ let setup_pkg_odocl_rules_def =
       Memo.parallel_iter libs ~f:(setup_lib_odocl_rules sctx ~scope_libs:libs_as_libs)
     and* _ =
       let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
-      let* tree_args = link_tree_args ctx ~for_ libs_as_libs in
+      let* packages = Dune_load.packages () in
+      let with_doc_pkgs = with_doc_packages packages pkg in
+      let* tree_args = link_tree_args ctx ~for_ ~with_doc_pkgs libs_as_libs in
       let warnings_tags = [ Package.Name.to_string pkg ] in
       let pkg = Some pkg in
       let+ () =
