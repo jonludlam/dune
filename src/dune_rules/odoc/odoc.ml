@@ -150,6 +150,7 @@ module Paths = struct
   let odoc_support ctx = html_root ctx ++ odoc_support_dirname
   let toplevel_index ctx = html_root ctx ++ "index.html"
   let markdown_index ctx = markdown_root ctx ++ "index.md"
+  let remap_file ctx = root ctx ++ "_remap" ++ "remap.txt"
 end
 
 module Output_format = struct
@@ -668,6 +669,7 @@ let html_generate_args sctx ~search_db ~html_root ~odoc_support_path odoc_file o
   ; Path (Path.build odoc_support_path)
   ; A "--theme-uri"
   ; Path (Path.build odoc_support_path)
+  ; S [ A "--remap-file"; Dep (Path.build (Paths.remap_file ctx)) ]
   ; Dep (Path.build (Artifact.odocl_file ctx odoc_file))
   ; Output_format.args out
   ]
@@ -867,6 +869,78 @@ let setup_toplevel_index_rule sctx output =
   let ctx = Super_context.context sctx in
   let path = Output_format.toplevel_index_path output ctx in
   add_rule sctx (Action_builder.write_file path content)
+;;
+
+(* Pending ocaml/RFCs#17, an opam package name can't always be derived
+   from its findlib name; odd roots ids at the true opam package, so
+   override the known offenders here. *)
+let package_name_override = function
+  | "findlib" -> "ocamlfind"
+  | other -> other
+;;
+
+(* Compiler libraries (stdlib, unix, ...) have no META and never appear
+   in [Findlib.all_packages]; odd roots them at the compiler package
+   instead, so inject that mapping explicitly (else stdlib links dangle). *)
+let compiler_package_and_version ctx =
+  let+ ocaml = Context.ocaml ctx in
+  let major, minor, patch = Ocaml_config.version ocaml.ocaml_config in
+  let pkg =
+    if major > 5 || (major = 5 && minor >= 3)
+    then "ocaml-compiler"
+    else "ocaml-base-compiler"
+  in
+  pkg, sprintf "%d.%d.%d" major minor patch
+;;
+
+(* Remap every installed (non-local) findlib package: a harmless
+   superset, since odoc ignores unused remap entries. *)
+let remap_mappings ctx =
+  let* findlib = Findlib.create (Context.name ctx) in
+  let* entries = Findlib.all_packages findlib in
+  let* local_packages = Dune_load.packages () in
+  let+ compiler_pkg, compiler_version = compiler_package_and_version ctx in
+  let versions =
+    List.fold_left entries ~init:Package.Name.Map.empty ~f:(fun acc entry ->
+      match (entry : Dune_package.Entry.t) with
+      | Deprecated_library_name _ | Hidden_library _ -> acc
+      | Library l ->
+        let info = Dune_package.Lib.info l in
+        (match Lib_info.package info with
+         | None -> acc
+         | Some pkg ->
+           if Package.Name.Map.mem local_packages pkg
+           then acc
+           else Package.Name.Map.set acc pkg (Lib_info.version info)))
+  in
+  let url p v = sprintf "https://ocaml.org/p/%s/%s/doc/" p v in
+  let findlib_mappings =
+    Package.Name.Map.to_list_map versions ~f:(fun pkg version ->
+      let p = package_name_override (Package.Name.to_string pkg) in
+      let v =
+        match version with
+        | Some v -> Package_version.to_string v
+        | None -> "latest"
+      in
+      sprintf "%s/" p, url p v)
+  in
+  let compiler_mapping = sprintf "%s/" compiler_pkg, url compiler_pkg compiler_version in
+  (* dedup by key: the override can collapse a findlib name onto an opam name
+     that also appears; either mapping is fine (same package). *)
+  compiler_mapping :: findlib_mappings
+  |> String.Map.of_list_reduce ~f:(fun a _ -> a)
+  |> String.Map.to_list
+;;
+
+let setup_remap_rule sctx =
+  let ctx = Super_context.context sctx in
+  let* mappings = remap_mappings ctx in
+  let contents =
+    String.concat
+      ~sep:"\n"
+      (List.map mappings ~f:(fun (local, remote) -> sprintf "%s:%s" local remote))
+  in
+  add_rule sctx (Action_builder.write_file (Paths.remap_file ctx) contents)
 ;;
 
 let libs_of_pkg ctx ~pkg =
@@ -1506,5 +1580,6 @@ let gen_rules sctx ~dir rest =
            setup_pkg_html_rules sctx ~pkg:name ~for_
        in
        ())
+  | [ "_remap" ] -> has_rules (setup_remap_rule sctx)
   | _ -> Memo.return (Gen_rules.redirect_to_parent Gen_rules.Rules.empty)
 ;;
