@@ -88,6 +88,11 @@ let add_rule sctx =
   Super_context.add_rule sctx ~dir
 ;;
 
+let stdlib_dir ctx =
+  let+ ocaml = Context.ocaml ctx in
+  ocaml.lib_config.Lib_config.stdlib_dir
+;;
+
 module Paths = struct
   let odoc_support_dirname = "odoc.support"
   let root (context : Context.t) = Path.Build.relative (Context.build_dir context) "_doc"
@@ -438,7 +443,7 @@ let compile_mld sctx (m : Mld.t) ~includes ~doc_dir ~pkg =
   odoc_file
 ;;
 
-let odoc_include_flags ctx pkg requires =
+let odoc_include_flags ctx ~stdlib_dir pkg requires =
   Resolve.args
     (let open Resolve.O in
      let+ paths =
@@ -446,9 +451,13 @@ let odoc_include_flags ctx pkg requires =
        let paths =
          List.fold_left libs ~init:Path.Set.empty ~f:(fun paths lib ->
            match Lib.Local.of_lib lib with
-           | None -> paths
-           | Some lib -> Path.Set.add paths (Path.build (Paths.odocs ctx (Lib lib))))
+           | Some lib -> Path.Set.add paths (Path.build (Paths.odocs ctx (Lib lib)))
+           | None ->
+             (* External library: odd installs .odoc files next to the
+                cmtis; if absent, references silently don't resolve. *)
+             Path.Set.add paths (Lib_info.src_dir (Lib.info lib)))
        in
+       let paths = Path.Set.add paths stdlib_dir in
        let paths =
          match pkg with
          | Some p -> Path.Set.add paths (Path.build (Paths.odocs ctx (Pkg p)))
@@ -463,6 +472,7 @@ let odoc_include_flags ctx pkg requires =
 
 let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
   let ctx = Super_context.context sctx in
+  let* stdlib_dir = stdlib_dir ctx in
   let deps = Dep.deps ctx pkg requires in
   let dir = Path.build (Path.Build.parent_exn (Artifact.odocl_file ctx odoc_file)) in
   let run_odoc =
@@ -472,7 +482,7 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
       "link"
       ~quiet:false
       ~flags_for:(Some (Artifact.odoc_file odoc_file))
-      [ odoc_include_flags ctx pkg requires
+      [ odoc_include_flags ctx ~stdlib_dir pkg requires
       ; A "-o"
       ; Target (Artifact.odocl_file ctx odoc_file)
       ; Dep (Path.build (Artifact.odoc_file odoc_file))
@@ -492,10 +502,11 @@ let setup_library_odoc_rules cctx (local_lib : Lib.Local.t) =
   let obj_dir = Compilation_context.obj_dir cctx in
   let modules = Compilation_context.modules cctx in
   let* includes =
+    let* stdlib_dir = stdlib_dir ctx in
     let+ requires = Compilation_context.requires_compile cctx in
     let package = Lib_info.package info in
     let odoc_include_flags =
-      Command.Args.memo (odoc_include_flags ctx package requires)
+      Command.Args.memo (odoc_include_flags ctx ~stdlib_dir package requires)
     in
     Dep.deps ctx package requires, odoc_include_flags
   in
