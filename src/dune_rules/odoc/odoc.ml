@@ -264,6 +264,12 @@ module Artifact = struct
      [is_asset] above and the [impl-] prefix odoc's [compile-impl] expects. *)
   let is_impl t = String.starts_with (basename t) ~prefix:"impl-"
 
+  (* Modules whose name contains a double underscore (e.g. [Eio__core]) are
+     hidden by odoc convention: they are compiled and linked (a visible
+     library's expansion may reference them) but never rendered as standalone
+     pages, listed in the sidebar/index/search, or the package index. *)
+  let is_hidden t = String.contains_double_underscore (basename t)
+
   let odocl_file ctx t =
     Path.Build.append_local (Paths.odocl ctx t.target) t.rel_dir ++ (basename t ^ ".odocl")
   ;;
@@ -971,14 +977,13 @@ let setup_index_and_sidebar sctx ~target ~odocls =
   sidebar_file
 ;;
 
-(* The odocls a scope's navigation sidebar indexes: pages and modules,
-   excluding assets (an asset has no id of its own to navigate to) and impls
-   (source-rendering units, likewise not part of the navigation tree) -- the
-   same filter used to build the search db (see [search_db_for_lib],
-   [setup_pkg_html_rules_def]). *)
+(* The odocls a scope's sidebar indexes: pages and modules only -- assets
+   and impls have no navigation entry, and hidden double-underscore
+   modules are excluded too (see [Artifact.is_hidden]), same filter as
+   the search db (see [search_db_for_lib]). *)
 let sidebar_odocls ctx odocs =
   List.filter_map odocs ~f:(fun o ->
-    if Artifact.is_asset o || Artifact.is_impl o
+    if Artifact.is_asset o || Artifact.is_impl o || Artifact.is_hidden o
     then None
     else Some (Artifact.odocl_file ctx o))
 ;;
@@ -1775,6 +1780,14 @@ let setup_lib_html_rules_def =
     let ctx = Super_context.context sctx in
     let target = Lib lib in
     let* odocs = odoc_artefacts sctx target in
+    (* Hidden modules are compiled+linked but not rendered; see
+       [Artifact.is_hidden]. Impls are exempt from that filter: an impl's
+       basename is the mangled compiled-unit name (e.g. [subl__Aa] for
+       submodule [Aa]), which always contains a double underscore, so the
+       predicate can't be applied to source rendering. *)
+    let odocs =
+      List.filter odocs ~f:(fun o -> Artifact.is_impl o || not (Artifact.is_hidden o))
+    in
     (* Source rendering only produces html (see [setup_generate_source]),
        so impls are excluded from the Json alias. *)
     let json_odocs = List.filter odocs ~f:(fun o -> not (Artifact.is_impl o)) in
@@ -1793,12 +1806,14 @@ let search_db_for_lib sctx lib =
   let ctx = Super_context.context sctx in
   let dir = Paths.html ctx target in
   let* odocs = odoc_artefacts sctx target in
-  (* Impls carry no searchable content, and odoc's indexer only accepts
-     pages and modules as input (see the similar filter in
-     [setup_pkg_html_rules_def], which also excludes assets). *)
+  (* Impls carry no searchable content, and odoc's indexer only takes
+     pages and modules; hidden modules are excluded too, since they're
+     never rendered and have no search page (see [Artifact.is_hidden]). *)
   let odocls =
     List.filter_map odocs ~f:(fun o ->
-      if Artifact.is_impl o then None else Some (Artifact.odocl_file ctx o))
+      if Artifact.is_impl o || Artifact.is_hidden o
+      then None
+      else Some (Artifact.odocl_file ctx o))
   in
   Sherlodoc.search_db sctx ~dir ~external_odocls:[] odocls
 ;;
@@ -1809,6 +1824,9 @@ let setup_lib_html_rules sctx ~search_db ~sidebar lib =
   let impls, modules_ =
     List.partition_map odocs ~f:(fun o -> if Artifact.is_impl o then Left o else Right o)
   in
+  (* Hidden modules are compiled+linked but not rendered; see
+     [Artifact.is_hidden]. *)
+  let modules_ = List.filter modules_ ~f:(fun o -> not (Artifact.is_hidden o)) in
   let* () =
     Memo.parallel_iter modules_ ~f:(fun odoc ->
       setup_generate_html_and_json sctx ~search_db ~sidebar odoc)
@@ -1828,11 +1846,11 @@ let setup_pkg_html_rules_def =
     in
     let all_odocs = pkg_odocs @ lib_odocs in
     let* search_db =
-      (* Assets and impls carry no searchable content, and odoc's indexer
-         only accepts pages and modules as input. *)
+      (* Assets, impls, and hidden modules are excluded from the search db,
+         same as [search_db_for_lib]; see there and [Artifact.is_hidden]. *)
       let odocls =
         List.filter_map all_odocs ~f:(fun o ->
-          if Artifact.is_asset o || Artifact.is_impl o
+          if Artifact.is_asset o || Artifact.is_impl o || Artifact.is_hidden o
           then None
           else Some (Artifact.odocl_file ctx o))
       in
@@ -1855,10 +1873,14 @@ let setup_pkg_html_rules_def =
         ~f:(setup_generate_html_and_json ~search_db ~sidebar sctx)
     in
     let* () = Memo.parallel_iter pkg_assets ~f:(setup_generate_asset sctx) in
-    (* Source rendering only produces html, so impls are excluded from the
-       Json alias (see [setup_lib_html_rules_def]). *)
-    let json_odocs = List.filter all_odocs ~f:(fun o -> not (Artifact.is_impl o)) in
-    let* () = add_format_alias_deps ctx Html (Pkg pkg) all_odocs in
+    (* Hidden modules are excluded from both aliases (see
+       [setup_lib_html_rules_def]); impls aren't (same file), but source
+       rendering only produces html, so they're excluded from Json below. *)
+    let visible_odocs =
+      List.filter all_odocs ~f:(fun o -> Artifact.is_impl o || not (Artifact.is_hidden o))
+    in
+    let json_odocs = List.filter visible_odocs ~f:(fun o -> not (Artifact.is_impl o)) in
+    let* () = add_format_alias_deps ctx Html (Pkg pkg) visible_odocs in
     add_format_alias_deps ctx Json (Pkg pkg) json_odocs
   in
   setup_pkg_rules_def "setup-package-html-rules" f
@@ -1870,9 +1892,12 @@ let setup_pkg_html_rules sctx ~pkg ~for_ : unit Memo.t =
 
 let setup_lib_markdown_rules sctx lib =
   let target = Lib lib in
-  (* Source rendering has no markdown output: odoc's [markdown-generate]
-     only applies to modules and pages (see [setup_pkg_markdown_rules]). *)
-  let no_impls odocs = List.filter odocs ~f:(fun o -> not (Artifact.is_impl o)) in
+  (* Impls have no markdown output (see [setup_generate_source]), and
+     hidden modules get no markdown page either (see [Artifact.is_hidden]). *)
+  let no_impls odocs =
+    List.filter odocs ~f:(fun o ->
+      (not (Artifact.is_impl o)) && not (Artifact.is_hidden o))
+  in
   let* () =
     match Lib_info.package (Lib.Local.info lib) with
     | Some _ -> Memo.return ()
@@ -1896,11 +1921,14 @@ let setup_pkg_markdown_rules sctx ~pkg =
     in
     pkg_odocs @ lib_odocs
   in
-  (* Assets and impls have no markdown rendering: odoc's [markdown-generate]
-     only applies to modules and pages. *)
+  (* Assets and impls have no markdown rendering (see
+     [setup_generate_source]); hidden modules get none either (see
+     [Artifact.is_hidden]). *)
   let markdown_odocs =
     List.filter all_odocs ~f:(fun o ->
-      (not (Artifact.is_asset o)) && not (Artifact.is_impl o))
+      (not (Artifact.is_asset o))
+      && (not (Artifact.is_impl o))
+      && not (Artifact.is_hidden o))
   in
   let* () =
     if List.is_empty markdown_odocs
@@ -1977,10 +2005,19 @@ let default_index ~pkg entry_modules =
     Lib_name.compare (name x) (name y))
   |> List.iter ~f:(fun (lib, modules) ->
     let lib = Lib.Local.to_lib lib in
+    (* Hidden modules (see [Artifact.is_hidden]) get no standalone page, so
+       they must be filtered here too; [Module.visibility] is [Public] for
+       them (they're entry modules), so the [Visibility.Public] filter
+       below doesn't catch them. *)
+    let modules =
+      List.filter modules ~f:(fun m ->
+        Module_name.to_string (Module.name m) |> String.contains_double_underscore |> not)
+    in
     Printf.bprintf b "{1 Library %s}\n" (Lib_name.to_string (Lib.name lib));
     Buffer.add_string
       b
       (match modules with
+       | [] -> ""
        | [ x ] ->
          sprintf
            "The entry point of this library is the module:\n{!module-%s}.\n"
