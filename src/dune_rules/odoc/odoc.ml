@@ -93,6 +93,27 @@ let stdlib_dir ctx =
   ocaml.lib_config.Lib_config.stdlib_dir
 ;;
 
+let stdlib_lib ctx =
+  let* public_libs = Scope.DB.public_libs ctx in
+  Lib.DB.find public_libs (Lib_name.of_string "stdlib")
+;;
+
+(* The libraries in the v3 link scope of a set of libraries (one
+   package's libraries, or a single private library): the libraries
+   themselves, their direct requires, and the stdlib. This is the
+   author-facing reference scope from odoc's driver.mld — direct, not
+   transitive. *)
+let link_scope ctx ~for_ (scope_libs : Lib.t list) =
+  let* stdlib = stdlib_lib (Context.name ctx) in
+  let+ direct =
+    Memo.List.map scope_libs ~f:(fun lib -> Lib.requires lib ~for_)
+    >>| Resolve.all
+    >>| Resolve.map ~f:List.concat
+  in
+  Resolve.map direct ~f:(fun direct ->
+    Lib.Set.to_list (Lib.Set.of_list (scope_libs @ direct @ Option.to_list stdlib)))
+;;
+
 module Paths = struct
   let odoc_support_dirname = "odoc.support"
   let root (context : Context.t) = Path.Build.relative (Context.build_dir context) "_doc"
@@ -470,7 +491,57 @@ let odoc_include_flags ctx ~stdlib_dir pkg requires =
         :: List.concat_map paths ~f:(fun dir -> [ Command.Args.A "-I"; Path dir ])))
 ;;
 
-let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
+(* -L/-P arguments for the link phase. [-L <libname>:<dir>] for every
+   library in the scope; [-P <pkgname>:<dir>] for every package owning
+   one: local packages point at their page odocs under _odoc/pkg,
+   external packages at their findlib root directory, where odd
+   installs their pages. The stdlib gets no -P: its pages' ids are
+   rooted at the compiler's opam package name, which dune cannot
+   know. *)
+let link_tree_args ctx ~for_ (scope_libs : Lib.t list) =
+  let* scope = link_scope ctx ~for_ scope_libs >>= Resolve.read_memo in
+  let* public_libs = Scope.DB.public_libs (Context.name ctx) in
+  let lib_dir lib =
+    match Lib.Local.of_lib lib with
+    | Some l -> Path.build (Paths.odocs ctx (Lib l))
+    | None -> Lib_info.src_dir (Lib.info lib)
+  in
+  let+ pkgs =
+    Memo.List.filter_map scope ~f:(fun lib ->
+      match Lib.Local.of_lib lib with
+      | Some _ ->
+        Memo.return
+          (Lib_info.package (Lib.info lib)
+           |> Option.map ~f:(fun p ->
+             Package.Name.to_string p, Path.build (Paths.odocs ctx (Pkg p))))
+      | None ->
+        let root = Lib_name.package_name (Lib.name lib) in
+        if Package.Name.to_string root = "stdlib"
+        then Memo.return None
+        else
+          Lib.DB.find public_libs (Lib_name.of_package_name root)
+          >>| Option.bind ~f:(fun root_lib ->
+            if Lib.is_local root_lib
+            then None
+            else Some (Package.Name.to_string root, Lib_info.src_dir (Lib.info root_lib))))
+  in
+  let pkgs = String.Map.of_list_reduce pkgs ~f:(fun a _ -> a) |> String.Map.to_list in
+  let dirs =
+    List.map scope ~f:lib_dir @ List.map pkgs ~f:snd
+    |> Path.Set.of_list
+    |> Path.Set.to_list
+  in
+  Command.Args.S
+    ((odoc_files_in_dirs dirs
+      :: List.concat_map scope ~f:(fun lib ->
+        [ Command.Args.A "-L"
+        ; Concat (":", [ A (Lib_name.to_string (Lib.name lib)); Path (lib_dir lib) ])
+        ]))
+     @ List.concat_map pkgs ~f:(fun (name, dir) ->
+       [ Command.Args.A "-P"; Concat (":", [ A name; Path dir ]) ]))
+;;
+
+let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires ~tree_args =
   let ctx = Super_context.context sctx in
   let* stdlib_dir = stdlib_dir ctx in
   let deps = Dep.deps ctx pkg requires in
@@ -482,7 +553,9 @@ let link_odoc_rules sctx (odoc_file : Artifact.t) ~pkg ~requires =
       "link"
       ~quiet:false
       ~flags_for:(Some (Artifact.odoc_file odoc_file))
-      [ odoc_include_flags ctx ~stdlib_dir pkg requires
+      [ A "--custom-layout"
+      ; odoc_include_flags ctx ~stdlib_dir pkg requires
+      ; tree_args
       ; A "-o"
       ; Target (Artifact.odocl_file ctx odoc_file)
       ; Dep (Path.build (Artifact.odoc_file odoc_file))
@@ -883,26 +956,32 @@ let setup_lib_odocl_rules_def =
   let module Input = struct
     module Super_context = Super_context.As_memo_key
 
-    type t = Super_context.t * Lib.Local.t * Lib.t list Resolve.t
+    type t = Super_context.t * Lib.Local.t * Lib.t list
 
     let equal (sc1, l1, r1) (sc2, l2, r2) =
-      Super_context.equal sc1 sc2
-      && Lib.Local.equal l1 l2
-      && Resolve.equal (List.equal Lib.equal) r1 r2
+      Super_context.equal sc1 sc2 && Lib.Local.equal l1 l2 && List.equal Lib.equal r1 r2
     ;;
 
     let hash (sc, l, r) =
-      Poly.hash
-        (Super_context.hash sc, Lib.Local.hash l, Resolve.hash (List.hash Lib.hash) r)
+      Poly.hash (Super_context.hash sc, Lib.Local.hash l, List.hash Lib.hash r)
     ;;
 
     let to_dyn _ = Dyn.Opaque
   end
   in
-  let f (sctx, lib, requires) =
+  let f (sctx, lib, scope_libs) =
+    let ctx = Super_context.context sctx in
     let* odocs = odoc_artefacts sctx (Lib lib) in
     let pkg = Lib_info.package (Lib.Local.info lib) in
-    Memo.parallel_iter odocs ~f:(fun odoc -> link_odoc_rules sctx ~pkg ~requires odoc)
+    let for_ =
+      Lib_info.modes (Lib.Local.info lib)
+      |> Compilation_mode.Set.of_lib_mode_set
+      |> Compilation_mode.Set.for_merlin
+    in
+    let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false ~for_ in
+    let* tree_args = link_tree_args ctx ~for_ scope_libs in
+    Memo.parallel_iter odocs ~f:(fun odoc ->
+      link_odoc_rules sctx ~pkg ~requires ~tree_args odoc)
   in
   Memo.With_implicit_output.create
     "setup_library_odocls_rules"
@@ -911,8 +990,8 @@ let setup_lib_odocl_rules_def =
     f
 ;;
 
-let setup_lib_odocl_rules sctx lib ~requires =
-  Memo.With_implicit_output.exec setup_lib_odocl_rules_def (sctx, lib, requires)
+let setup_lib_odocl_rules sctx lib ~scope_libs =
+  Memo.With_implicit_output.exec setup_lib_odocl_rules_def (sctx, lib, scope_libs)
 ;;
 
 let setup_pkg_rules_def memo_name f =
@@ -940,18 +1019,19 @@ let setup_pkg_rules_def memo_name f =
 
 let setup_pkg_odocl_rules_def =
   let f (sctx, pkg, for_) =
-    let* libs = Super_context.context sctx |> Context.name |> libs_of_pkg ~pkg in
-    let* requires =
-      let libs = (libs :> Lib.t list) in
-      Lib.closure libs ~linking:false ~for_
-    in
-    let* () = Memo.parallel_iter libs ~f:(setup_lib_odocl_rules sctx ~requires)
+    let ctx = Super_context.context sctx in
+    let* libs = Context.name ctx |> libs_of_pkg ~pkg in
+    let libs_as_libs = (libs :> Lib.t list) in
+    let* requires = Lib.closure libs_as_libs ~linking:false ~for_ in
+    let* () =
+      Memo.parallel_iter libs ~f:(setup_lib_odocl_rules sctx ~scope_libs:libs_as_libs)
     and* _ =
       let* pkg_odocs = odoc_artefacts sctx (Pkg pkg) in
+      let* tree_args = link_tree_args ctx ~for_ libs_as_libs in
       let pkg = Some pkg in
       let+ () =
         Memo.parallel_iter pkg_odocs ~f:(fun odoc ->
-          link_odoc_rules sctx ~pkg ~requires odoc)
+          link_odoc_rules sctx ~pkg ~requires ~tree_args odoc)
       in
       pkg_odocs
     and* _ = Memo.parallel_map libs ~f:(fun lib -> odoc_artefacts sctx (Lib lib)) in
@@ -1347,9 +1427,7 @@ let gen_rules sctx ~dir rest =
          | None -> Memo.return ()
          | Some lib ->
            (match Lib_info.package (Lib.Local.info lib) with
-            | None ->
-              let* requires = Lib.closure [ Lib.Local.to_lib lib ] ~linking:false ~for_ in
-              setup_lib_odocl_rules sctx lib ~requires
+            | None -> setup_lib_odocl_rules sctx lib ~scope_libs:[ Lib.Local.to_lib lib ]
             | Some pkg -> setup_pkg_odocl_rules sctx ~pkg ~for_)
        and+ () =
          let* packages = Dune_load.packages () in

@@ -1,0 +1,3 @@
+(library
+ (public_name xref)
+ (name xref_a))
